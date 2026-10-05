@@ -1,0 +1,508 @@
+/* The walkthrough, after the web prototype's viewer screen: a full-bleed
+   scene, a top bar, glass panels with a gradient edge, a bottom toolbar and
+   the standing disclaimer. */
+
+.wt {
+  --wt-bg: #01060a;
+  --wt-panel: rgba(1, 6, 10, 0.92);
+  --wt-cool: #3f6773;
+  --wt-line: #393939;
+  --wt-muted: #7b8188;
+  --wt-accent: #00cab2;
+  --wt-accent-bg: #06232d;
+  --wt-edge: linear-gradient(135deg, #575f61 0%, rgba(57, 57, 57, 0.6) 50%, #6f7e83 100%);
+
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100dvh;
+  min-height: 420px;
+  background: var(--wt-bg);
+  color: #fff;
+  overflow: hidden;
+}
+
+.wt-top {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  padding: 8px 20px;
+  background: linear-gradient(180deg, rgba(1, 6, 10, 0.96) 0%, rgba(1, 6, 10, 0.75) 100%);
+  flex-wrap: wrap;
+}
+
+.wt-wordmark {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+
+.wt-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--wt-line);
+}
+
+.wt-title {
+  margin: 0;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wt-muted {
+  color: var(--wt-muted);
+  font-weight: 500;
+}
+
+.wt-spacer {
+  flex: 1;
+}
+
+.wt-pills {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 17px;
+  background: rgba(7, 13, 21, 0.9);
+  border: 1px solid var(--wt-cool);
+}
+
+.wt-pill {
+  height: 28px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--wt-muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wt-pill.on {
+  background: var(--wt-accent-bg);
+  color: var(--wt-accent);
+}
+
+.wt-button {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 18px;
+  background: rgba(7, 13, 21, 0.9);
+  border: 1px solid var(--wt-cool);
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wt-button:hover,
+.wt-pill:hover {
+  border-color: var(--wt-accent);
+}
+
+.wt-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wt-toast {
+  position: absolute;
+  z-index: 4;
+  top: 66px;
+  right: 20px;
+  max-width: min(520px, calc(100% - 40px));
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--wt-accent-bg);
+  color: var(--wt-accent);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.wt-toast a {
+  color: #fff;
+}
+
+.wt-toast.error {
+  background: rgba(251, 72, 91, 0.12);
+  color: #fb485b;
+}
+
+.wt-stage {
+  position: relative;
+  min-height: 0;
+  touch-action: none;
+}
+
+.wt-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  cursor: grab;
+}
+
+.wt-canvas:active {
+  cursor: grabbing;
+}
+
+.wt-stage.measuring .wt-canvas {
+  cursor: crosshair;
+}
+
+.wt-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  display: none;
+  padding: 6px 14px;
+  border-radius: 17px;
+  background: var(--wt-bg);
+  border: 1.5px solid var(--wt-accent);
+  color: var(--wt-accent);
+  font-size: 15px;
+  font-weight: 700;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Glass panels. */
+.wt-panel {
+  position: absolute;
+  z-index: 2;
+  top: 16px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--wt-panel);
+  border: 1px solid transparent;
+  background-image: linear-gradient(var(--wt-panel), var(--wt-panel)), var(--wt-edge);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+.wt-eyebrow {
+  margin-bottom: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--wt-muted);
+}
+
+.wt-minimap {
+  left: 20px;
+}
+
+.wt-minimap canvas {
+  display: block;
+}
+
+.wt-measure {
+  right: 20px;
+  width: 216px;
+  padding: 14px;
+}
+
+.wt-measure-value {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.6px;
+  line-height: 1;
+  color: var(--wt-accent);
+}
+
+.wt-measure-help {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 16px;
+  color: var(--wt-muted);
+}
+
+/* Bottom toolbar. */
+.wt-toolbar {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 28px;
+  border: 1px solid transparent;
+  background-image: linear-gradient(rgba(7, 13, 21, 0.94), rgba(7, 13, 21, 0.94)), var(--wt-edge);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  white-space: nowrap;
+}
+
+.wt-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  color: var(--wt-muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wt-tool.on {
+  background: var(--wt-accent-bg);
+  color: var(--wt-accent);
+}
+
+.wt-tool:focus-visible,
+.wt-button:focus-visible,
+.wt-pill:focus-visible,
+.wt-canvas:focus-visible {
+  outline: 2px solid var(--wt-accent);
+  outline-offset: 2px;
+}
+
+.wt-sep {
+  width: 1px;
+  height: 26px;
+  background: var(--wt-line);
+}
+
+.wt-keys {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-right: 6px;
+  font-size: 11.5px;
+  color: var(--wt-muted);
+}
+
+.wt-keycaps {
+  display: flex;
+  gap: 3px;
+}
+
+.wt-keycaps kbd {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  border: 1px solid var(--wt-cool);
+  color: #fff;
+  font: inherit;
+  font-size: 10px;
+}
+
+/* Touch joystick: only on touch screens. */
+.wt-joystick {
+  display: none;
+  position: absolute;
+  z-index: 2;
+  left: 24px;
+  bottom: 96px;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  border: 1.5px solid var(--wt-cool);
+  background: rgba(7, 13, 21, 0.6);
+  touch-action: none;
+}
+
+.wt-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  background: var(--wt-accent);
+  opacity: 0.85;
+}
+
+@media (pointer: coarse) {
+  .wt-joystick {
+    display: block;
+  }
+
+  .wt-keys-only {
+    display: none;
+  }
+}
+
+.wt-stage.overhead .wt-joystick {
+  display: none;
+}
+
+/* The standing disclaimer (VIEW-08): always there, never dismissable. */
+.wt-disclaimer {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 11px;
+  min-height: 52px;
+  padding: 10px 20px;
+  background: rgba(1, 6, 10, 0.97);
+  border-top: 1px solid var(--wt-line);
+}
+
+.wt-warn {
+  display: flex;
+  flex-shrink: 0;
+  color: #fc0;
+}
+
+.wt-disclaimer-text {
+  flex: 1 1 320px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.wt-meta {
+  font-size: 11.5px;
+  color: var(--wt-muted);
+}
+
+/* No WebGL: the plan from above. */
+.wt-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 12px;
+  padding: 20px;
+}
+
+.wt-fallback p {
+  margin: 0 auto;
+  max-width: 560px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--wt-muted);
+}
+
+.wt-plan-svg {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+@media (max-width: 700px) {
+  .wt-top {
+    gap: 10px;
+    padding: 8px 12px;
+  }
+
+  .wt-minimap {
+    left: 12px;
+    top: 12px;
+    padding: 8px;
+  }
+
+  .wt-minimap canvas {
+    width: 128px !important;
+    height: 88px !important;
+  }
+
+  .wt-measure {
+    right: 12px;
+    top: 12px;
+    width: 150px;
+    padding: 10px;
+  }
+
+  .wt-measure-value {
+    font-size: 20px;
+  }
+
+  .wt-toolbar {
+    bottom: 12px;
+    padding: 5px 8px;
+    gap: 2px;
+  }
+
+  .wt-tool {
+    padding: 0 10px;
+    height: 36px;
+  }
+
+  .wt-joystick {
+    bottom: 80px;
+    left: 16px;
+  }
+
+  .wt-disclaimer {
+    padding: 8px 12px;
+  }
+
+  .wt-disclaimer-text {
+    font-size: 11.5px;
+  }
+}
+
+/* Loading and error states around the viewer. */
+.wt-status {
+  min-height: 100dvh;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  padding: 24px 16px;
+  background: #01060a;
+  color: #fff;
+  text-align: center;
+}
+
+.wt-status h1 {
+  margin: 8px 0 0;
+  font-size: 19px;
+}
+
+.wt-status p {
+  margin: 0;
+  max-width: 420px;
+  color: #7b8188;
+  font-size: 13.5px;
+}
+
+.wt-status-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.wt-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid #06232d;
+  border-top-color: #00cab2;
+  animation: wt-spin 0.9s linear infinite;
+}
+
+@keyframes wt-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

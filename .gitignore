@@ -1,0 +1,48 @@
+# This repository tracks only backend/, web/ and mobile/.
+# Everything else in this folder is local working material.
+
+# Specification and design documents
+/*.docx
+/*.pdf
+
+# Standalone HTML prototypes
+/*.html
+
+# Shared plan-format package (not part of this repository)
+/shared/
+
+# OS and editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# --- backend ---
+backend/node_modules/
+backend/data/
+backend/.env
+
+# --- web ---
+web/node_modules/
+web/dist/
+web/.env
+
+# --- mobile (Flutter) ---
+mobile/build/
+mobile/.dart_tool/
+mobile/.idea/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/*.iml
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/ios/Pods/
+mobile/ios/Flutter/Flutter.framework
+mobile/ios/Flutter/ephemeral/
+mobile/ios/.symlinks/
+mobile/macos/Pods/
+mobile/macos/Flutter/ephemeral/
+mobile/linux/flutter/ephemeral/
+mobile/windows/flutter/ephemeral/
+mobile/packages/*/build/
+mobile/packages/*/.dart_tool/

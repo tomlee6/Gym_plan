@@ -1,0 +1,3 @@
+CREATE DATABASE IF NOT EXISTS gymplan_test;
+GRANT ALL PRIVILEGES ON gymplan_test.* TO 'gymplan'@'%';
+FLUSH PRIVILEGES;

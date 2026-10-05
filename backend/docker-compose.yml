@@ -1,0 +1,24 @@
+# Local MySQL for development and tests. Runs on port 3317 so it does not
+# clash with a MySQL server already installed on the machine.
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: gymplan-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: gymplan-root
+      MYSQL_DATABASE: gymplan
+      MYSQL_USER: gymplan
+      MYSQL_PASSWORD: gymplan-dev
+    ports:
+      - "3317:3306"
+    volumes:
+      - gymplan-mysql:/var/lib/mysql
+      # Creates the test database and grants the app user access to it.
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pgymplan-root"]
+      interval: 5s
+      retries: 20
+
+volumes:
+  gymplan-mysql:

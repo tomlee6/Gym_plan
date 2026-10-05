@@ -1,0 +1,258 @@
+/* Colours and surfaces from the Gym Scan web prototype's walkthrough viewer. */
+:root {
+  --bg: #01060a;
+  --bg-viewer: #050a0c;
+  --panel: rgba(1, 6, 10, 0.92);
+  --panel-solid: #070d15;
+  --line: #393939;
+  --line-cool: #3f6773;
+  --grid: #0f1f25;
+  --text: #ffffff;
+  --muted: #7b8188;
+  --accent: #00cab2;
+  --accent-bg: #06232d;
+  --warn: #ffcc00;
+  --glass-edge: linear-gradient(135deg, #575f61 0%, rgba(57, 57, 57, 0.6) 50%, #6f7e83 100%);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Layout */
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 68px;
+  padding: 0 24px;
+  background: linear-gradient(180deg, rgba(1, 6, 10, 0.92) 0%, rgba(1, 6, 10, 0) 100%);
+}
+
+.wordmark {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+
+.divider {
+  width: 1px;
+  height: 22px;
+  background: var(--line);
+}
+
+.topbar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-level {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.spacer {
+  flex-grow: 1;
+}
+
+.pill {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 14px;
+  background: var(--panel-solid);
+  border: 1px solid var(--line-cool);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.eyebrow {
+  margin-bottom: 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+
+
+/* Status screens */
+
+.status {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 14px;
+  padding: 24px 16px;
+}
+
+.empty-card {
+  max-width: 420px;
+  text-align: center;
+}
+
+.empty-card h2 {
+  margin-bottom: 8px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.empty-card p {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.empty-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.empty-icon.warn {
+  background: rgba(255, 204, 0, 0.1);
+  color: var(--warn);
+}
+
+.primary-button {
+  margin-top: 18px;
+  height: 40px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 20px;
+  background: var(--accent);
+  color: var(--bg);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--accent-bg);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 3s;
+  }
+}
+
+/* Disclaimer bar */
+
+.disclaimer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 11px;
+  min-height: 52px;
+  padding: 10px 24px;
+  background: rgba(1, 6, 10, 0.95);
+  border-top: 1px solid var(--line);
+}
+
+.disclaimer-icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--warn);
+}
+
+.disclaimer-text {
+  flex: 1 1 320px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.disclaimer-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* Phones and narrow windows */
+
+@media (max-width: 860px) {
+  .topbar {
+    gap: 12px;
+    height: 56px;
+    padding: 0 16px;
+  }
+
+  .disclaimer {
+    padding: 10px 16px;
+  }
+}
+
+@media (max-width: 420px) {
+  .topbar-level,
+  .pill {
+    display: none;
+  }
+
+}

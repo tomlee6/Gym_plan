@@ -1,0 +1,423 @@
+/* Owner pages: status, plan detail, upload. Tokens from styles.css and app.css. */
+
+.ow-block {
+  display: block;
+}
+
+.ow-gap {
+  margin-top: 12px;
+}
+
+.ow-section-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+/* State pills (PRD section 4 wording). */
+.ow-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 11px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #0f2027;
+  color: var(--muted);
+}
+
+.ow-pill.good {
+  background: rgba(0, 194, 96, 0.15);
+  color: var(--rv-good);
+}
+
+.ow-pill.fair {
+  background: rgba(0, 170, 226, 0.15);
+  color: var(--rv-fair);
+}
+
+.ow-pill.accent {
+  background: rgba(0, 202, 178, 0.15);
+  color: var(--accent);
+}
+
+.ow-pill.danger {
+  background: rgba(251, 72, 91, 0.15);
+  color: var(--rv-danger);
+}
+
+/* Status page. */
+.ow-facility {
+  padding: 0;
+  overflow: hidden;
+}
+
+.ow-facility-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 16px 18px 12px;
+}
+
+.ow-facility-head h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.ow-empty-row {
+  padding: 0 18px 16px;
+}
+
+.ow-empty-row a,
+.ow-rejection a {
+  color: var(--accent);
+}
+
+.ow-levels {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ow-level {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr) auto;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 14px 18px;
+  border-top: 1px solid #0f2027;
+}
+
+.ow-level-main {
+  display: grid;
+  gap: 2px;
+}
+
+.ow-level-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.ow-level-title:hover,
+.ow-level-title:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.ow-level-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+}
+
+.ow-level-action {
+  justify-self: end;
+}
+
+.ow-rejection {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(251, 72, 91, 0.08);
+  border: 1px solid rgba(251, 72, 91, 0.35);
+}
+
+.ow-rejection .eyebrow {
+  margin: 0;
+  color: var(--rv-danger);
+}
+
+.ow-rejection strong {
+  font-size: 13.5px;
+}
+
+.ow-rejection p {
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.ow-rejection.standalone {
+  padding: 16px 18px;
+}
+
+/* Plan page. */
+.ow-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.ow-detail-grid .rv-card > .eyebrow {
+  margin-bottom: 12px;
+}
+
+.ow-share-row {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.ow-share-url {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--rv-border);
+  background: var(--rv-field);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.ow-revoke {
+  margin-top: 4px;
+}
+
+.ow-hash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Upload. */
+.ow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ow-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ow-steps li.current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ow-step-num {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--line-cool);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ow-steps li.current .ow-step-num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.ow-steps li.done .ow-step-num {
+  background: var(--accent-bg);
+  border-color: var(--accent-bg);
+  color: var(--accent);
+}
+
+.ow-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.ow-upload .rv-field select {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--rv-border);
+  background: var(--rv-field);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+}
+
+.ow-upload .rv-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.ow-upload .rv-field input[aria-invalid='true'] {
+  border-color: var(--rv-poor);
+}
+
+.ow-inline-field {
+  max-width: 320px;
+  margin: 0 0 12px;
+}
+
+.ow-metres {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.ow-drop {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 22px 18px;
+  border-radius: 12px;
+  border: 1.5px dashed var(--line-cool);
+  background: var(--rv-field);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13.5px;
+}
+
+.ow-drop strong {
+  color: var(--text);
+}
+
+.ow-drop.over,
+.ow-drop:hover,
+.ow-drop:focus-within {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ow-scale {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.ow-zoom {
+  display: flex;
+  gap: 6px;
+}
+
+.ow-scale-viewport {
+  --ow-scale-h: 65vh;
+  max-height: calc(var(--ow-scale-h) + 2px);
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid var(--rv-border);
+  background: #0b1419;
+}
+
+.ow-scale-stage {
+  position: relative;
+  margin: 0 auto;
+}
+
+.ow-scale-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+}
+
+.ow-scale-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.ow-scale-line,
+.ow-scale-line-halo {
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+}
+
+.ow-scale-line-halo {
+  stroke: rgba(1, 6, 10, 0.55);
+  stroke-width: 7;
+}
+
+.ow-scale-line {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.ow-handle {
+  cursor: grab;
+  outline: none;
+}
+
+.ow-handle.active {
+  cursor: grabbing;
+}
+
+.ow-handle-hit {
+  fill: rgba(0, 202, 178, 0.18);
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.ow-handle-dot {
+  fill: var(--accent);
+}
+
+.ow-handle:focus-visible .ow-handle-hit {
+  stroke: #fff;
+  stroke-width: 3;
+  fill: rgba(0, 202, 178, 0.35);
+}
+
+.ow-progress {
+  height: 8px;
+  border-radius: 4px;
+  background: #0f2027;
+  overflow: hidden;
+  margin-top: 14px;
+}
+
+.ow-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.ow-step-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 860px) {
+  .ow-detail-grid,
+  .ow-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ow-level {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ow-level-action {
+    justify-self: stretch;
+  }
+
+  .ow-level-action .rv-button {
+    width: 100%;
+  }
+
+  .ow-share-row {
+    flex-direction: column;
+  }
+}
