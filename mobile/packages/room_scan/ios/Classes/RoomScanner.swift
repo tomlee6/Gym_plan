@@ -311,11 +311,16 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
 
   /// The four floor-plane corners of a box.
   private static func footprint(transform t: simd_float4x4, dimensions d: simd_float3) -> [SIMD2<Float>] {
-    let centre = simd_make_float3(t.columns.3)
-    let x = simd_make_float3(t.columns.0) * (d.x / 2)
-    let z = simd_make_float3(t.columns.2) * (d.z / 2)
-    return [centre - x - z, centre + x - z, centre + x + z, centre - x + z]
-      .map { SIMD2($0.x, $0.z) }
+    let centre: simd_float3 = simd_make_float3(t.columns.3)
+    let x: simd_float3 = simd_make_float3(t.columns.0) * (d.x / 2)
+    let z: simd_float3 = simd_make_float3(t.columns.2) * (d.z / 2)
+    // One corner per statement: the type checker times out on all four in one literal.
+    let c0: simd_float3 = centre - x - z
+    let c1: simd_float3 = centre + x - z
+    let c2: simd_float3 = centre + x + z
+    let c3: simd_float3 = centre - x + z
+    let corners: [simd_float3] = [c0, c1, c2, c3]
+    return corners.map { SIMD2<Float>($0.x, $0.z) }
   }
 
   private static func name(of confidence: CapturedRoom.Confidence) -> String {
