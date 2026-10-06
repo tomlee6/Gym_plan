@@ -22,6 +22,27 @@ import { pool, transaction } from './pool.js';
 const ago = ({ days = 0, hours = 0, minutes = 0 }) =>
   new Date(Date.now() - ((days * 24 + hours) * 60 + minutes) * 60000);
 
+/**
+ * Like `ago`, for the plans that have to count against this month's quota.
+ *
+ * The demo shows 6 of 10 used this month, and the count resets on the 1st,
+ * so a plan seeded "13 days ago" fell into last month whenever the seed ran
+ * before the 14th — the quota quietly changed with the day it was run.
+ *
+ * When the month so far is shorter than the oldest of these plans needs,
+ * the whole run of them is squeezed into the part of the month that has
+ * happened. Squeezing everything by one factor keeps the events in the same
+ * order and the same proportions, just closer together; on the 14th or
+ * later nothing is squeezed and these are ordinary `ago` dates.
+ */
+function monthWindow(oldestDays) {
+  const now = Date.now();
+  const start = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1) + 3600000;
+  const squeeze = Math.min(1, (now - start) / (oldestDays * 86400000));
+  return ({ days = 0, hours = 0, minutes = 0 }) =>
+    new Date(now - ((days * 24 + hours) * 60 + minutes) * 60000 * squeeze);
+}
+
 export const DEMO = {
   org: 'org_northgate',
   flexOrg: 'org_flex',
@@ -203,6 +224,10 @@ export async function seed() {
       );
 
     const maya = DEMO.reviewer.id;
+    // Both of these are meant to count against this month's quota, so they
+    // are kept inside the month however early in it the seed is run.
+    // 13 days is the oldest of the two, so it sets the squeeze for both.
+    const inMonth = monthWindow(13);
     // Level 1: version 1 approved last month, superseded by version 2. The
     // quota then shows 6 of 10 this month, as in the prototype.
     await version({
@@ -230,14 +255,14 @@ export async function seed() {
     await version({
       id: 'pv_rv0_1', plan_id: 'plan_rv0', version: 1, status: 'recapture', coverage: 0.71,
       plan: planFor(18, 12, { lowWall: true, studio: false }),
-      override: 'Wall behind fixed rig, cannot pass', submitted: ago({ days: 10 }),
-      reviewStarted: ago({ days: 9, hours: 1 }), reviewer: maya, reviewed: ago({ days: 9 }),
+      override: 'Wall behind fixed rig, cannot pass', submitted: inMonth({ days: 10 }),
+      reviewStarted: inMonth({ days: 9, hours: 1 }), reviewer: maya, reviewed: inMonth({ days: 9 }),
       reviewSeconds: 540, reason: 'Incomplete coverage',
       note:
         'The north-east corner is missing about 6 m of wall and the free-weight area reads as ' +
         'one block, so the plan cannot be closed. Please rewalk that corner slowly and keep the ' +
         'phone at waist height.',
-      created: ago({ days: 10 }), updated: ago({ days: 9 }),
+      created: inMonth({ days: 10 }), updated: inMonth({ days: 9 }),
     });
     await version({
       id: 'pv_rv1_1', plan_id: 'plan_rv1', version: 1, status: 'processing', coverage: 0.95,
@@ -247,17 +272,17 @@ export async function seed() {
     await version({
       id: 'pv_eb0_1', plan_id: 'plan_eb0', version: 1, status: 'ready', coverage: 0.96,
       plan: planFor(16, 12, {}, { resolved: true }),
-      submitted: ago({ days: 13 }), reviewStarted: ago({ days: 12, minutes: 9 }), reviewer: maya,
-      reviewed: ago({ days: 12 }), reviewSeconds: 485, created: ago({ days: 13 }), updated: ago({ days: 12 }),
+      submitted: inMonth({ days: 13 }), reviewStarted: inMonth({ days: 12, minutes: 9 }), reviewer: maya,
+      reviewed: inMonth({ days: 12 }), reviewSeconds: 485, created: inMonth({ days: 13 }), updated: inMonth({ days: 12 }),
     });
 
     // The history those versions imply.
     await log('CAPTURED', 'plan_ng1', 1, ago({ days: 45 }), DEMO.owner.id, { input: 'lidar' });
     await log('APPROVED', 'plan_ng1', 1, ago({ days: 44 }));
-    await log('CAPTURED', 'plan_eb0', 1, ago({ days: 13 }), DEMO.owner.id, { input: 'lidar' });
-    await log('APPROVED', 'plan_eb0', 1, ago({ days: 12 }));
-    await log('CAPTURED', 'plan_rv0', 1, ago({ days: 10 }), DEMO.owner.id, { input: 'lidar' });
-    await log('REJECTED', 'plan_rv0', 1, ago({ days: 9 }), maya, { reason: 'Incomplete coverage' });
+    await log('CAPTURED', 'plan_eb0', 1, inMonth({ days: 13 }), DEMO.owner.id, { input: 'lidar' });
+    await log('APPROVED', 'plan_eb0', 1, inMonth({ days: 12 }));
+    await log('CAPTURED', 'plan_rv0', 1, inMonth({ days: 10 }), DEMO.owner.id, { input: 'lidar' });
+    await log('REJECTED', 'plan_rv0', 1, inMonth({ days: 9 }), maya, { reason: 'Incomplete coverage' });
     await log('CAPTURED', 'plan_ng1', 2, ago({ days: 3 }), DEMO.owner.id, { input: 'lidar' });
     await log('APPROVED', 'plan_ng1', 2, ago({ days: 2 }));
     await log('SUPERSEDED', 'plan_ng1', 1, ago({ days: 2 }), maya, { by: 2 });

@@ -14,6 +14,9 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   /// only exists on iOS 16+.
   private var scanner: AnyObject?
 
+  /// The 360 degree equipment recorder, made on first use (iOS 13+).
+  private var recorderStorage: AnyObject?
+
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = RoomScanPlugin()
     let methods = FlutterMethodChannel(
@@ -22,6 +25,20 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     let events = FlutterEventChannel(
       name: "flex/room_scan/events", binaryMessenger: registrar.messenger())
     events.setStreamHandler(instance)
+
+    if #available(iOS 13.0, *) {
+      registrar.register(
+        EquipmentVideoPreviewFactory(recorder: { instance.recorder() }),
+        withId: "flex/equipment_video_preview")
+    }
+  }
+
+  @available(iOS 13.0, *)
+  private func recorder() -> EquipmentVideoRecorder {
+    if let existing = recorderStorage as? EquipmentVideoRecorder { return existing }
+    let made = EquipmentVideoRecorder()
+    recorderStorage = made
+    return made
   }
 
   // MARK: - Methods
@@ -29,6 +46,20 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     if call.method == "deviceInfo" {
       result(deviceInfo())
+      return
+    }
+
+    // The 360 equipment recorder (CHANGE 3). It needs no LiDAR, so it is
+    // handled before the RoomPlan availability check below.
+    if call.method.hasPrefix("video.") {
+      if #available(iOS 13.0, *) {
+        handleVideo(call, result: result)
+      } else {
+        result(
+          FlutterError(
+            code: "unsupported",
+            message: "Recording equipment video needs iOS 13 or later.", details: nil))
+      }
       return
     }
 
@@ -140,6 +171,74 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
   private func noScan() -> FlutterError {
     FlutterError(code: "no_scan", message: "No scan is running.", details: nil)
+  }
+
+  // MARK: - Equipment video
+
+  /**
+   The 360 degree walkaround (CHANGE 3).
+
+   A recording is refused while a scan is running: ARKit holds the camera
+   for the length of a `RoomCaptureSession`, and two capture sessions
+   cannot share one. The workflow records equipment after the room scan,
+   so this only ever fires if the two are asked for out of order.
+   */
+  @available(iOS 13.0, *)
+  private func handleVideo(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
+    let recorder = self.recorder()
+
+    func fail(_ error: Error) {
+      result(
+        FlutterError(
+          code: "video_failed", message: error.localizedDescription, details: nil))
+    }
+
+    switch call.method {
+    case "video.prepare":
+      if scanner != nil {
+        result(
+          FlutterError(
+            code: "scan_running",
+            message: "Finish the room scan before recording equipment.", details: nil))
+        return
+      }
+      Task { @MainActor in
+        do {
+          try await recorder.prepare()
+          result(nil)
+        } catch { fail(error) }
+      }
+
+    case "video.start":
+      guard let equipmentId = args["equipmentId"] as? String else {
+        result(
+          FlutterError(code: "bad_args", message: "An equipment id is required.", details: nil))
+        return
+      }
+      do {
+        try recorder.start(equipmentId: equipmentId)
+        result(nil)
+      } catch { fail(error) }
+
+    case "video.stop":
+      Task { @MainActor in
+        do {
+          result(try await recorder.stop())
+        } catch { fail(error) }
+      }
+
+    case "video.discard":
+      if let path = args["path"] as? String { recorder.discard(path: path) }
+      result(nil)
+
+    case "video.dispose":
+      recorder.dispose()
+      result(nil)
+
+    default:
+      result(FlutterMethodNotImplemented)
+    }
   }
 
   // MARK: - Events

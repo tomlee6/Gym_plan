@@ -3,6 +3,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffec
 import { bounds, dist, openingSegment, project, rectCorners } from '@shared/plan/index.js';
 
 import { TAG_LABELS } from '../../lib/format.js';
+import { clearanceToWall, nearestEquipment, wallLabels } from './measure.js';
 import {
   addColumn,
   addOpening,
@@ -65,6 +66,7 @@ const Canvas = forwardRef(function Canvas(
     history,
     flagged,
     problems,
+    showMeasurements = true,
     onScaleLine,
     onZoomChange,
   },
@@ -368,6 +370,7 @@ const Canvas = forwardRef(function Canvas(
     return '#FFFFFF';
   };
   const selectedWall = plan.walls.find((w) => w.id === selected);
+  const selectedObject = plan.objects.find((o) => o.id === selected);
   const anchor = draft?.anchor ?? draft?.a ?? draft?.points?.at(-1);
 
   return (
@@ -436,7 +439,7 @@ const Canvas = forwardRef(function Canvas(
           <polygon
             key={o.id}
             data-hit={`object:${o.id}`}
-            className={`ed-object ${o.id === selected ? 'selected' : ''} ${flagged.has(o.id) ? 'flagged' : ''}`}
+            className={`ed-object ${o.id === selected ? 'selected' : ''} ${flagged.has(o.id) ? 'flagged' : ''} ${o.equipment ? 'equipment' : ''}`}
             points={polygonPoints(rectCorners(o))}
           />
         ))}
@@ -484,6 +487,72 @@ const Canvas = forwardRef(function Canvas(
             </g>
           );
         })}
+
+        {/*
+          Measurements on the plan itself (CHANGE 1.7), so the reviewer can
+          read a dimension off the drawing and check it against the gym
+          without selecting anything first.
+
+          Labels are hidden below a zoom where they would overlap each other
+          into noise, and the selected wall keeps its own label either way.
+        */}
+        {showMeasurements && view.s > 14 && (
+          <g className="ed-measure" aria-hidden="true">
+            {wallLabels(plan, { minLengthM: px(44) }).map((label) => (
+              <text
+                key={label.id}
+                className={label.id === selected ? 'on' : ''}
+                x={label.mid[0] + label.normal[0] * px(11)}
+                y={label.mid[1] + label.normal[1] * px(11)}
+                fontSize={px(11)}
+                strokeWidth={px(3)}
+                textAnchor="middle"
+                transform={`rotate(${label.angleDeg} ${label.mid[0] + label.normal[0] * px(11)} ${label.mid[1] + label.normal[1] * px(11)})`}
+              >
+                {label.text}
+              </text>
+            ))}
+            {plan.objects
+              .filter((o) => o.equipment)
+              .map((o) => (
+                <text
+                  key={o.id}
+                  className="ed-equipment-label"
+                  x={o.x}
+                  y={o.y + px(4)}
+                  fontSize={px(10)}
+                  strokeWidth={px(3)}
+                  textAnchor="middle"
+                >
+                  {o.equipment.name}
+                </text>
+              ))}
+          </g>
+        )}
+
+        {/*
+          How far the selected machine stands from the wall behind it and
+          from its nearest neighbour: the two numbers that say whether a gym
+          floor actually works.
+        */}
+        {showMeasurements && selectedObject?.equipment && (
+          <g className="ed-clearance" aria-hidden="true">
+            {[clearanceToWall(plan, selectedObject), nearestEquipment(plan, selectedObject)]
+              .filter((near) => near && near.distanceM < 12)
+              .map((near, i) => (
+                <text
+                  key={i}
+                  x={selectedObject.x}
+                  y={selectedObject.y + px(16) + i * px(13)}
+                  fontSize={px(10)}
+                  strokeWidth={px(3)}
+                  textAnchor="middle"
+                >
+                  {near.wall ? 'wall' : near.object.equipment.name} · {near.distanceM.toFixed(2)} m
+                </text>
+              ))}
+          </g>
+        )}
 
         {selectedWall && (
           <g className="ed-selected-wall">

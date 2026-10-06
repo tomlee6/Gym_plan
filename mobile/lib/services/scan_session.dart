@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
+import 'package:room_scan/room_scan.dart';
 
 import '../models/scan.dart';
 
@@ -22,6 +23,10 @@ abstract class ScanSession extends ChangeNotifier {
 
   /// Quality of each wall in [geometry], in the same order.
   List<WallQuality> get walls;
+
+  /// Objects the scanner recognised, with their measurements. Only a real
+  /// LiDAR scan finds any.
+  List<RoomScanObject> get detected => const <RoomScanObject>[];
 
   /// 0–1 per wall, when the scanner knows how far along each wall the
   /// surveyor is. The live LiDAR scan only reports whole walls.
@@ -85,6 +90,7 @@ abstract class ScanSession extends ChangeNotifier {
   /// is paused, not ended, so the surveyor can go back and keep scanning.
   ScanResult finish({String? overrideReason}) {
     return ScanResult(
+      detected: detected,
       config: config,
       geometry: geometry,
       coverage: coverage,

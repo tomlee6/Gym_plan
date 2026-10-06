@@ -9,6 +9,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 
 /// How sure RoomPlan is about a surface.
 enum RoomScanConfidence { low, medium, high }
@@ -64,6 +65,7 @@ class RoomScanUpdate {
   const RoomScanUpdate({
     required this.walls,
     required this.objects,
+    this.detected = const <RoomScanObject>[],
     required this.coverage,
     required this.closed,
     required this.elapsed,
@@ -81,6 +83,7 @@ class RoomScanUpdate {
 
     final List<Object?> walls = map['walls'] as List<Object?>? ?? const [];
     final List<Object?> objects = map['objects'] as List<Object?>? ?? const [];
+    final List<Object?> detected = map['detected'] as List<Object?>? ?? const [];
     final Object? position = map['position'];
 
     return RoomScanUpdate(
@@ -102,6 +105,10 @@ class RoomScanUpdate {
         for (final Object? raw in objects)
           <Offset>[for (final Object? p in raw! as List<Object?>) point(p)],
       ],
+      detected: <RoomScanObject>[
+        for (final Object? raw in detected)
+          RoomScanObject.fromMap(raw! as Map<Object?, Object?>),
+      ],
       coverage: (map['coverage'] as num? ?? 0).toDouble(),
       closed: map['closed'] == true,
       elapsed: Duration(milliseconds: (map['elapsedMs'] as num? ?? 0).round()),
@@ -121,6 +128,10 @@ class RoomScanUpdate {
   );
 
   final List<RoomScanWall> walls;
+
+  /// Every recognised object with its measurements, for marking machines
+  /// (CHANGE 2.1). [objects] stays the plain footprints the plan draws.
+  final List<RoomScanObject> detected;
 
   /// Furniture and equipment footprints, four corners each.
   final List<List<Offset>> objects;
@@ -271,5 +282,155 @@ class RoomScan {
       throw const RoomScanException('export_failed', 'Nothing was exported.');
     }
     return RoomScanExport.fromMap(map);
+  }
+}
+
+/// One object RoomPlan recognised, with the measurements needed to mark it
+/// as a gym machine (CHANGE 2.1).
+///
+/// [category] is RoomPlan's own, and it has no gym machine categories at
+/// all: most gym equipment arrives as `object`. What makes this a treadmill
+/// is the surveyor naming it.
+@immutable
+class RoomScanObject {
+  const RoomScanObject({
+    required this.index,
+    required this.centre,
+    required this.widthM,
+    required this.depthM,
+    required this.heightM,
+    required this.elevationM,
+    required this.rotationDeg,
+    required this.category,
+    required this.confidence,
+  });
+
+  factory RoomScanObject.fromMap(Map<Object?, Object?> map) {
+    double number(String key) => (map[key]! as num).toDouble();
+    return RoomScanObject(
+      index: (map['index']! as num).toInt(),
+      centre: Offset(number('x'), number('z')),
+      widthM: number('widthM'),
+      depthM: number('depthM'),
+      heightM: number('heightM'),
+      elevationM: number('elevationM'),
+      rotationDeg: number('rotationDeg'),
+      category: map['category'] as String? ?? 'object',
+      confidence: RoomScanConfidence.values.firstWhere(
+        (RoomScanConfidence c) => c.name == map['confidence'],
+        orElse: () => RoomScanConfidence.low,
+      ),
+    );
+  }
+
+  /// Stable within one scan, so a mark follows its object as the scan is
+  /// refined.
+  final int index;
+
+  /// Centre on the floor plane, in the same frame as the walls.
+  final Offset centre;
+  final double widthM;
+  final double depthM;
+  final double heightM;
+
+  /// How far the object's underside sits above the floor.
+  final double elevationM;
+  final double rotationDeg;
+  final String category;
+  final RoomScanConfidence confidence;
+}
+
+/// A finished 360 degree walkaround, waiting to be kept or retaken.
+@immutable
+class EquipmentVideo {
+  const EquipmentVideo({
+    required this.equipmentId,
+    required this.path,
+    required this.thumbnailPath,
+    required this.bytes,
+    required this.duration,
+    required this.contentType,
+    this.simulated = false,
+  });
+
+  factory EquipmentVideo.fromMap(Map<Object?, Object?> map) => EquipmentVideo(
+    equipmentId: map['equipmentId']! as String,
+    path: map['path']! as String,
+    thumbnailPath: map['thumbnailPath'] as String?,
+    bytes: (map['bytes']! as num).toInt(),
+    duration: Duration(
+      milliseconds: ((map['durationSeconds']! as num) * 1000).round(),
+    ),
+    contentType: map['contentType'] as String? ?? 'video/quicktime',
+  );
+
+  final String equipmentId;
+  final String path;
+
+  /// A poster frame taken on the phone, so the reviewer sees one without
+  /// the server having to transcode anything.
+  final String? thumbnailPath;
+  final int bytes;
+  final Duration duration;
+  final String contentType;
+
+  /// A demo walkaround from a device with no camera for it. It carries no
+  /// file and is never uploaded: a made-up video in front of a reviewer
+  /// would be worse than none.
+  final bool simulated;
+}
+
+/// The 360 degree equipment recorder (CHANGE 3).
+///
+/// Recording is a separate step from the room scan, not part of it: ARKit
+/// holds the camera for as long as a RoomPlan scan is running, so the
+/// walkaround happens once the scan is done. The video is a reference
+/// asset and never produces geometry.
+class EquipmentRecorder {
+  const EquipmentRecorder._();
+
+  /// Starts the camera and asks for access if it has not been given.
+  /// Throws [RoomScanException] with code `scan_running` if a scan is still
+  /// going, and `video_failed` if there is no camera (a simulator).
+  static Future<void> prepare() => RoomScan._call<void>('video.prepare');
+
+  static Future<void> start(String equipmentId) => RoomScan._call<void>(
+    'video.start',
+    <String, Object?>{'equipmentId': equipmentId},
+  );
+
+  /// Ends the recording and returns the file, its length and poster frame.
+  static Future<EquipmentVideo> stop() async {
+    final Map<Object?, Object?>? map = await RoomScan._call<Map<Object?, Object?>>(
+      'video.stop',
+    );
+    return EquipmentVideo.fromMap(map ?? const <Object?, Object?>{});
+  }
+
+  /// Throws away a take the surveyor did not keep.
+  static Future<void> discard(EquipmentVideo video) => RoomScan._call<void>(
+    'video.discard',
+    <String, Object?>{'path': video.path},
+  );
+
+  /// Releases the camera once the equipment step is over.
+  static Future<void> dispose() => RoomScan._call<void>('video.dispose');
+}
+
+/// The viewfinder for [EquipmentRecorder]. Shows nothing until
+/// [EquipmentRecorder.prepare] has finished.
+class EquipmentVideoPreview extends StatelessWidget {
+  const EquipmentVideoPreview({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (defaultTargetPlatform != TargetPlatform.iOS) {
+      // Android has no recorder yet, for the same reason it has no scanner.
+      return const ColoredBox(color: Color(0xFF000000));
+    }
+    return const UiKitView(
+      viewType: 'flex/equipment_video_preview',
+      creationParamsCodec: StandardMessageCodec(),
+    );
   }
 }

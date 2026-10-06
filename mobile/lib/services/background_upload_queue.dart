@@ -7,6 +7,9 @@ import 'gym_plan_api.dart';
 import 'part_transport.dart';
 import 'upload_manifest.dart';
 import 'upload_queue.dart';
+import '../models/equipment.dart';
+import 'equipment_service.dart';
+import 'package:room_scan/room_scan.dart';
 
 /// The real upload queue.
 ///
@@ -28,17 +31,22 @@ class BackgroundUploadQueue extends UploadQueue {
     required this.api,
     required this.transport,
     required this.root,
+    EquipmentService? equipmentApi,
     this.partSize = defaultPartSize,
     this.retryDelay = const Duration(seconds: 15),
     this.maxFailures = 12,
     bool uploadOnMobileData = true,
-  }) : _mobileData = uploadOnMobileData;
+  }) : equipmentApi = equipmentApi ?? EquipmentService(),
+       _mobileData = uploadOnMobileData;
 
   /// 8 MiB: above S3's 5 MiB minimum part size, and small enough that a
   /// dropped connection costs little.
   static const int defaultPartSize = 8 * 1024 * 1024;
 
   final GymPlanApi api;
+
+  /// The equipment and 360 video endpoints (CHANGE 2, CHANGE 4).
+  final EquipmentService equipmentApi;
   final PartTransport transport;
 
   /// Application Support. Uploads live under `Uploads/<job id>/`.
@@ -165,7 +173,12 @@ class BackgroundUploadQueue extends UploadQueue {
   // -- Queueing -----------------------------------------------------------
 
   @override
-  Future<void> enqueue(ScanResult result, {ScanExport? export}) async {
+  Future<void> enqueue(
+    ScanResult result, {
+    ScanExport? export,
+    List<Equipment> equipment = const <Equipment>[],
+    Map<String, EquipmentVideo> videos = const <String, EquipmentVideo>{},
+  }) async {
     _events ??= transport.events.listen(_onEvent);
 
     final List<(String, String, String)> sources = <(String, String, String)>[
@@ -201,11 +214,84 @@ class BackgroundUploadQueue extends UploadQueue {
       metadata: _metadata(result, lidar: export != null),
       files: files,
       createdAt: DateTime.now(),
+      equipment: <Map<String, Object?>>[
+        for (final Equipment e in equipment) e.toJson(),
+      ],
+      // The video files stay where the recorder wrote them until the
+      // platform confirms it has them.
+      videos: <Map<String, Object?>>[
+        // A simulated walkaround has no file and is not sent: a made-up
+        // video in front of a reviewer would be worse than none, the same
+        // reason a simulated scan uploads no model. The machine itself is
+        // still registered, so the plan still places it.
+        for (final MapEntry<String, EquipmentVideo> v in videos.entries)
+          if (!v.value.simulated)
+            <String, Object?>{
+              'equipmentId': v.key,
+              'path': v.value.path,
+              'thumbnailPath': v.value.thumbnailPath,
+              'bytes': v.value.bytes,
+              'durationSeconds': v.value.duration.inMilliseconds / 1000,
+              'contentType': v.value.contentType,
+            },
+      ],
     );
     await _save(job);
     _jobs.add(job);
     notifyListeners();
     unawaited(_drive(job));
+  }
+
+  /// Sends the marked machines and their 360 videos (CHANGE 2, CHANGE 4).
+  ///
+  /// The machines go first: a video is filed against a machine, so one
+  /// cannot be uploaded before the machine it belongs to exists. Both
+  /// calls are safe to repeat, so a retry after a lost response does not
+  /// double anything up.
+  Future<void> _sendEquipment(UploadManifest job) async {
+    final String captureId = job.captureId!;
+    if (job.equipment.isNotEmpty) {
+      await equipmentApi.saveEquipment(captureId, <Equipment>[
+        for (final Map<String, Object?> e in job.equipment)
+          Equipment(
+            equipmentId: e['equipmentId']! as String,
+            type: e['type']! as String,
+            name: e['name']! as String,
+            x: (e['x'] as num?)?.toDouble(),
+            z: (e['z'] as num?)?.toDouble(),
+            elevationM: (e['elevationM'] as num?)?.toDouble(),
+            rotationDeg: (e['rotationDeg'] as num?)?.toDouble(),
+            widthM: (e['widthM'] as num?)?.toDouble(),
+            depthM: (e['depthM'] as num?)?.toDouble(),
+            heightM: (e['heightM'] as num?)?.toDouble(),
+            confidence: (e['confidence'] as num?)?.toDouble(),
+            source: e['source'] as String? ?? 'surveyor',
+          ),
+      ]);
+    }
+
+    for (final Map<String, Object?> v in job.videos) {
+      final File file = File(v['path']! as String);
+      // A take whose file has gone is skipped rather than failing the whole
+      // capture: the scan matters more than one walkaround.
+      if (!file.existsSync()) continue;
+      await equipmentApi.uploadVideo(
+        captureId,
+        EquipmentVideo(
+          equipmentId: v['equipmentId']! as String,
+          path: file.path,
+          thumbnailPath: v['thumbnailPath'] as String?,
+          bytes: (v['bytes']! as num).toInt(),
+          duration: Duration(
+            milliseconds: ((v['durationSeconds']! as num) * 1000).round(),
+          ),
+          contentType: v['contentType'] as String? ?? 'video/quicktime',
+        ),
+      );
+    }
+
+    job.equipmentSent = true;
+    await _save(job);
   }
 
   Map<String, Object?> _metadata(ScanResult r, {required bool lidar}) =>
@@ -278,6 +364,15 @@ class BackgroundUploadQueue extends UploadQueue {
           idempotencyKey: job.id,
         );
         await _save(job);
+      }
+
+      // 1b. Register the machines and send their walkarounds. This runs
+      // before the scan files so the platform has the equipment by the
+      // time it reads the plan, and so a failure here is reported while
+      // the surveyor is still looking at the upload.
+      if (!job.equipmentSent &&
+          (job.equipment.isNotEmpty || job.videos.isNotEmpty)) {
+        await _sendEquipment(job);
       }
 
       // 2. Open the uploads, or refresh URLs that failed or expired.

@@ -24,6 +24,8 @@ import { newId } from '../ids.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { planReadyForReview } from '../notify.js';
 import { StorageIncomplete, storage } from '../storage/index.js';
+import { captureOr404, partCount, partTargets } from './capture-uploads.js';
+import { equipmentForPlan } from './equipment.js';
 import { facilityInOrg } from './facilities.js';
 import { plansUsedThisMonth } from './profile.js';
 
@@ -89,17 +91,6 @@ const drawingBody = z
     message: 'The scale line is too short. Drag its ends further apart.',
     path: ['scale'],
   });
-
-/** A capture in the caller's organisation, or 404. */
-async function captureOr404(db, req, { lock = false } = {}) {
-  const capture = await one(
-    db,
-    `SELECT * FROM captures WHERE id = ? AND org_id = ?${lock ? ' FOR UPDATE' : ''}`,
-    [req.params.captureId, req.user.orgId],
-  );
-  if (!capture) throw notFound('This capture does not exist.');
-  return capture;
-}
 
 /**
  * Creates the capture and a new "uploading" version of the facility
@@ -261,20 +252,7 @@ const KINDS = {
   upload: ['source', 'source_image'],
 };
 
-function partCount(bytes, partSize) {
-  return Math.max(1, Math.ceil(bytes / partSize));
-}
 
-async function partTargets(file, numbers) {
-  const s = storage();
-  return {
-    name: file.name,
-    fileId: file.id,
-    parts: await Promise.all(
-      numbers.map(async (n) => ({ number: n, url: await s.presignPart(file.storage_key, file.upload_id, n) })),
-    ),
-  };
-}
 
 router.post('/:captureId/uploads', async (req, res) => {
   const body = z
@@ -386,7 +364,13 @@ async function readPlan(capture, files) {
       problem = 'The room data in scan.json could not be read.';
     }
   }
-  const plan = planFromScan(room, metadata);
+  /*
+   * The machines the surveyor marked are read in with the room, so the 2D
+   * plan carries where each one is (CHANGE 2.1). They are part of the same
+   * capture, and arrive in the same coordinate frame as the walls.
+   */
+  const equipment = await equipmentForPlan(pool, capture.id);
+  const plan = planFromScan(room, { ...metadata, equipment });
   if (problem) {
     plan.flags.push({
       id: newId('f'),
@@ -450,11 +434,33 @@ router.post('/:captureId/complete', async (req, res) => {
       [capture.id],
     );
     if (!v) return null;
+    /*
+     * The overall room measurements are copied onto the row so the owner's
+     * list and the reviewer queue can show a plan's size without reading
+     * its JSON (CHANGE 1.1). `plan_json` remains the source of truth; these
+     * are refreshed from it whenever the plan is written.
+     */
     await db.query(
       `UPDATE plan_versions
-       SET status = 'processing', submitted_at = UTC_TIMESTAMP(3), plan_json = ?, area_m2 = ?
+       SET status = 'processing', submitted_at = UTC_TIMESTAMP(3), plan_json = ?,
+           plan_format = ?, area_m2 = ?, width_m = ?, length_m = ?, perimeter_m = ?,
+           elevation_m = ?, wall_count = ?, opening_count = ?, object_count = ?,
+           equipment_count = ?
        WHERE id = ?`,
-      [JSON.stringify(plan), v.area_m2 ?? facts.areaM2, v.id],
+      [
+        JSON.stringify(plan),
+        plan.format ?? null,
+        v.area_m2 ?? facts.areaM2,
+        facts.widthM,
+        facts.lengthM,
+        facts.perimeterM,
+        plan.room?.elevationM ?? null,
+        facts.walls,
+        facts.openings,
+        facts.objects,
+        facts.equipment,
+        v.id,
+      ],
     );
     await audit(db, {
       orgId: capture.org_id,

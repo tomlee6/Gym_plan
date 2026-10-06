@@ -10,6 +10,9 @@ import '../widgets/hairline_container.dart';
 import '../widgets/nav_bar.dart';
 import '../widgets/primary_button.dart';
 import 'uploading_screen.dart';
+import 'package:room_scan/room_scan.dart';
+import '../models/equipment.dart';
+import 'equipment_capture_screen.dart';
 
 /// Last look before the scan leaves the phone: the captured outline, any
 /// coverage warnings, and what was tagged and photographed.
@@ -28,6 +31,16 @@ class ReviewSubmitScreen extends StatefulWidget {
 
 class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
   bool _submitting = false;
+
+  /// Machines marked and walkarounds recorded in the equipment step
+  /// (CHANGE 3). They travel with the capture when it is submitted.
+  List<Equipment> _equipment = const <Equipment>[];
+  Map<String, EquipmentVideo> _videos = const <String, EquipmentVideo>{};
+
+  /// The equipment step has been finished. Submit stays disabled until it
+  /// is: a scan without equipment leaves the reviewer naming machines from
+  /// nothing but an unlabelled block on the plan.
+  bool _equipmentDone = false;
 
   ScanResult get _result => widget.result;
 
@@ -78,7 +91,12 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
     try {
       // Writes the upload's manifest to disk before anything leaves the
       // phone, so the capture survives the app closing from here on.
-      await UploadQueue.instance.enqueue(_result, export: export);
+      await UploadQueue.instance.enqueue(
+        _result,
+        export: export,
+        equipment: _equipment,
+        videos: _videos,
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() => _submitting = false);
@@ -92,6 +110,27 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
       MaterialPageRoute<void>(builder: (_) => const UploadingScreen()),
       (Route<dynamic> route) => route.isFirst,
     );
+  }
+
+  /// Step 3 of the capture: name the machines and walk round each one.
+  Future<void> _captureEquipment() async {
+    final EquipmentCaptureOutcome? outcome = await Navigator.of(context)
+        .push<EquipmentCaptureOutcome>(
+          MaterialPageRoute<EquipmentCaptureOutcome>(
+            builder: (_) => EquipmentCaptureScreen(
+              result: _result,
+              equipment: _equipment,
+              videos: _videos,
+            ),
+          ),
+        );
+    if (outcome == null || !mounted) return;
+    setState(() {
+      _equipment = outcome.equipment;
+      _videos = outcome.videos;
+      // Stepping back out keeps the work but does not finish the step.
+      _equipmentDone = outcome.complete;
+    });
   }
 
   @override
@@ -153,10 +192,20 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
               padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
               child: Column(
                 children: <Widget>[
+                  _EquipmentStep(
+                    marked: _equipment.length,
+                    recorded: _videos.length,
+                    done: _equipmentDone,
+                    onOpen: _captureEquipment,
+                  ),
+                  const SizedBox(height: 12),
                   PrimaryButton(
                     label: 'Submit scan',
                     busy: _submitting,
-                    onPressed: _submit,
+                    // The equipment step comes before submitting: a scan
+                    // without it leaves the reviewer naming machines from
+                    // nothing but a block on the plan.
+                    onPressed: _equipmentDone ? _submit : null,
                   ),
                   const SizedBox(height: 8),
                   SecondaryAction(
@@ -358,6 +407,68 @@ class _StatCard extends StatelessWidget {
           const SizedBox(height: 11),
           footer,
         ],
+      ),
+    );
+  }
+}
+
+/// CHANGE 3.1 step 3: the option to walk round the gym equipment, offered
+/// once the scan has been reviewed and before it is submitted.
+class _EquipmentStep extends StatelessWidget {
+  const _EquipmentStep({
+    required this.marked,
+    required this.recorded,
+    required this.done,
+    required this.onOpen,
+  });
+
+  final int marked;
+  final int recorded;
+
+  /// The step has been finished, which is what unlocks Submit.
+  final bool done;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final String summary = switch ((done, marked)) {
+      (true, 0) => 'No equipment on this level',
+      (true, _) =>
+        '$marked machine${marked == 1 ? '' : 's'} · '
+            '$recorded walkaround${recorded == 1 ? '' : 's'}',
+      (false, 0) => 'Required before submitting. Name each machine and walk once around it.',
+      (false, _) =>
+        '$marked marked, $recorded recorded · finish this step to submit',
+    };
+    return HairlineContainer(
+      radius: 12,
+      child: ListTile(
+        title: Row(
+          children: <Widget>[
+            // Flexible so a narrow phone shortens the label rather than
+            // pushing the status dot off the edge.
+            const Flexible(
+              child: Text(
+                'Capture Equipment 360°',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (done)
+              const Icon(Icons.check_circle, size: 16, color: AppColors.accent)
+            else
+              const Icon(Icons.circle_outlined, size: 16, color: AppColors.warning),
+          ],
+        ),
+        subtitle: Text(
+          summary,
+          style: done
+              ? AppTheme.footnote
+              : AppTheme.footnote.copyWith(color: AppColors.warning),
+        ),
+        trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
+        onTap: onOpen,
       ),
     );
   }

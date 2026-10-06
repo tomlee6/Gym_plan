@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 
 import '../models/scan.dart';
 import '../theme/app_theme.dart';
+import '../models/equipment.dart';
+import 'package:room_scan/room_scan.dart';
 
 /// What the upload is doing right now, as shown on the upload screen.
 enum UploadStatus {
@@ -78,7 +80,17 @@ abstract class UploadQueue extends ChangeNotifier {
   int get pendingCount;
 
   /// Queues a finished scan for upload.
-  Future<void> enqueue(ScanResult result, {ScanExport? export});
+  ///
+  /// [equipment] are the gym machines marked during the capture and
+  /// [videos] their 360 walkarounds (CHANGE 2, CHANGE 3). Both travel with
+  /// the capture: the machines are registered before the scan files go up,
+  /// so plan reading can place them.
+  Future<void> enqueue(
+    ScanResult result, {
+    ScanExport? export,
+    List<Equipment> equipment = const <Equipment>[],
+    Map<String, EquipmentVideo> videos = const <String, EquipmentVideo>{},
+  });
 
   /// Tries a stopped upload again now, rather than waiting for the next
   /// automatic retry.

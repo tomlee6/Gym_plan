@@ -336,3 +336,85 @@ export function rescale(plan, a, b, lengthM) {
   if (next.underlay?.metresPerPixel > 0) next.underlay = { ...next.underlay, metresPerPixel: next.underlay.metresPerPixel * k };
   return next;
 }
+
+/* -------------------------------------------------------------------------
+ * Measurement editing (CHANGE 1.7). The reviewer types the dimension they
+ * measured on site and the geometry follows, rather than nudging a corner
+ * until the readout looks right.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Sets a wall to an exact length by sliding one end along the wall's own
+ * direction. The anchored end does not move, so a corner the reviewer has
+ * already placed stays where they put it.
+ *
+ * Openings are clamped back inside the wall by `updateElement`, so
+ * shortening a wall cannot leave a door hanging off the end of it.
+ */
+export function setWallLength(plan, wallId, lengthM, { anchor = 'a' } = {}) {
+  const wall = plan.walls.find((w) => w.id === wallId);
+  if (!wall || !(lengthM > 0)) return plan;
+  const current = dist(wall.a, wall.b);
+  if (current < 1e-9) return plan;
+  const from = anchor === 'b' ? wall.b : wall.a;
+  const to = anchor === 'b' ? wall.a : wall.b;
+  const moved = [
+    round(from[0] + ((to[0] - from[0]) / current) * lengthM),
+    round(from[1] + ((to[1] - from[1]) / current) * lengthM),
+  ];
+  return updateElement(plan, wallId, anchor === 'b' ? { a: moved } : { b: moved });
+}
+
+/** Turns an object to an exact bearing, in degrees. */
+export function rotateObject(plan, id, degrees) {
+  if (!Number.isFinite(degrees)) return plan;
+  return updateElement(plan, id, { angle: round((degrees * Math.PI) / 180) });
+}
+
+/**
+ * Names an object as a piece of gym equipment, or clears the name
+ * (CHANGE 2.1). RoomPlan cannot tell a treadmill from a shelf, so this is
+ * how a scanned block becomes a machine the walkthrough can label.
+ *
+ * Naming records the reviewer as the source: the shape was measured, the
+ * name was not.
+ */
+export function setEquipment(plan, objectId, equipment) {
+  const found = findElement(plan, objectId);
+  if (!found || found.kind !== 'objects') return plan;
+  if (!equipment) return updateElement(plan, objectId, { equipment: null });
+  const { equipmentId, type, name } = equipment;
+  if (!equipmentId || !type || !name) return plan;
+  return updateElement(plan, objectId, {
+    equipment: { equipmentId, type, name },
+    source: found.el.source === 'roomplan' ? 'roomplan' : 'reviewer',
+  });
+}
+
+/** An equipment id that is not already used in this plan. */
+export function nextEquipmentId(plan) {
+  const used = new Set(plan.objects.map((o) => o.equipment?.equipmentId).filter(Boolean));
+  for (let n = 1; n <= 999; n++) {
+    const id = `EQ-${String(n).padStart(3, '0')}`;
+    if (!used.has(id)) return id;
+  }
+  return `EQ-${Date.now()}`;
+}
+
+/**
+ * Raises a flag against an element (CHANGE 5: "flag incorrect equipment").
+ *
+ * An open flag blocks approval, which is the point: a machine the reviewer
+ * cannot identify from the scan or the 360 video must be settled by a
+ * person before the plan is frozen, not waved through.
+ */
+export function flagElement(plan, id, { kind = 'equipment_wrong', title, detail = '' } = {}) {
+  const found = findElement(plan, id);
+  if (!found || !title) return plan;
+  // One open flag of a kind per element: raising it twice says no more.
+  if (plan.flags.some((f) => f.elementId === id && f.kind === kind && f.status === 'open')) return plan;
+  return {
+    ...plan,
+    flags: [...plan.flags, { id: newElementId('f'), kind, elementId: id, title, detail, status: 'open' }],
+  };
+}

@@ -106,6 +106,9 @@ class UploadManifest {
     this.failures = 0,
     this.received = false,
     this.error,
+    this.equipment = const <Map<String, Object?>>[],
+    this.videos = const <Map<String, Object?>>[],
+    this.equipmentSent = false,
   });
 
   factory UploadManifest.fromJson(Map<String, Object?> json) => UploadManifest(
@@ -124,6 +127,15 @@ class UploadManifest {
     failures: (json['failures'] as num? ?? 0).toInt(),
     received: json['received'] == true,
     error: json['error'] as String?,
+    equipment: <Map<String, Object?>>[
+      for (final Object? e in json['equipment'] as List<Object?>? ?? const [])
+        (e! as Map<String, Object?>),
+    ],
+    videos: <Map<String, Object?>>[
+      for (final Object? v in json['videos'] as List<Object?>? ?? const [])
+        (v! as Map<String, Object?>),
+    ],
+    equipmentSent: json['equipmentSent'] == true,
   );
 
   static const String fileName = 'manifest.json';
@@ -153,6 +165,17 @@ class UploadManifest {
   /// Set when the upload has stopped and needs the user.
   String? error;
 
+  /// The gym machines marked during the capture (CHANGE 2). Kept in the
+  /// manifest so they survive the app closing, like everything else here.
+  final List<Map<String, Object?>> equipment;
+
+  /// The 360 walkarounds waiting to go up, by equipment id. Their files
+  /// stay on the phone until the platform confirms it has them.
+  final List<Map<String, Object?>> videos;
+
+  /// The machines and their videos have reached the platform.
+  bool equipmentSent;
+
   int get totalBytes =>
       files.fold(0, (int sum, ManifestFile f) => sum + f.bytes);
 
@@ -177,6 +200,9 @@ class UploadManifest {
     'failures': failures,
     'received': received,
     'error': error,
+    'equipment': equipment,
+    'videos': videos,
+    'equipmentSent': equipmentSent,
   };
 
   /// Writes atomically: a crash mid-write leaves the previous version.

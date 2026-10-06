@@ -772,3 +772,72 @@
     grid-auto-flow: column;
   }
 }
+
+/* -------------------------------------------------------------------------
+ * Measurements on the plan, and the equipment panel (CHANGE 1.7, CHANGE 5).
+ * ---------------------------------------------------------------------- */
+
+/* A named machine reads as equipment rather than an unidentified block. */
+.ed-object.equipment {
+  fill: #10303a;
+  stroke: #4fd1c5;
+}
+
+.ed-measure text,
+.ed-clearance text {
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--bg-viewer);
+  /* stroke-width is set in plan units on each label, from the zoom. */
+  fill: var(--rv-muted);
+  pointer-events: none;
+}
+
+/* The selected wall's dimension leads; the rest sit back. */
+.ed-measure text.on {
+  fill: var(--accent);
+}
+
+.ed-measure .ed-equipment-label {
+  fill: #9fe8e0;
+}
+
+.ed-clearance text {
+  fill: #ffc46b;
+}
+
+.ed-equipment {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rv-border);
+}
+
+.ed-equipment h3 {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--rv-muted);
+}
+
+.ed-equipment-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ed-video {
+  margin: 10px 0 0;
+}
+
+.ed-video video {
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  /* Tall enough to see a machine, short enough to leave the plan room. */
+  max-height: 220px;
+}
+
+.ed-video figcaption {
+  margin-top: 4px;
+}

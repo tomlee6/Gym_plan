@@ -13,6 +13,7 @@ import 'package:mobile/theme/app_theme.dart';
 
 import 'phone_size.dart';
 import 'support/fake_backend.dart';
+import 'package:mobile/widgets/primary_button.dart';
 
 const MethodChannel _methods = MethodChannel('flex/room_scan');
 const EventChannel _events = EventChannel('flex/room_scan/events');
@@ -383,6 +384,7 @@ void main() {
       expect(find.text('Review before submit'), findsOneWidget);
       expect(find.text('Northgate Fitness · Level 2 · 60 m²'), findsOneWidget);
 
+      await _finishEquipmentStep(tester);
       await tester.tap(find.text('Submit scan'));
       await tester.pump();
       await tester.pump(const Duration(seconds: 2));
@@ -395,4 +397,15 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     });
   });
+}
+
+/// Finishes the equipment step, which is what unlocks Submit. These scans
+/// carry no equipment, so the step is finished by confirming there is none.
+Future<void> _finishEquipmentStep(WidgetTester tester) async {
+  await tester.tap(find.text('Capture Equipment 360°'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.widgetWithText(PrimaryButton, 'Done'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('No equipment'));
+  await tester.pumpAndSettle();
 }

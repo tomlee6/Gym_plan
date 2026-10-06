@@ -1,20 +1,52 @@
 import { useState } from 'react';
 
-import { dist, OPENING_TYPES, summary as summarise, TAG_TYPES } from '@shared/plan/index.js';
+import {
+  dist,
+  EQUIPMENT_TYPES,
+  equipmentLabel,
+  OPENING_TYPES,
+  summary as summarise,
+  TAG_TYPES,
+  wallAngleDeg,
+  wallName,
+} from '@shared/plan/index.js';
 
 import { bytes, inputLabel, stamp, STATUS_LABELS, TAG_LABELS } from '../../lib/format.js';
 import { CheckIcon, DownloadIcon, FileIcon, TrashIcon } from '../../lib/icons.jsx';
+import { clearanceToWall, nearestEquipment } from './measure.js';
 import {
   confirmAllFlags,
   confirmFlag,
   deleteElement,
   findElement,
+  flagElement,
   joinCandidate,
   joinWalls,
+  nextEquipmentId,
   objectToColumn,
+  rotateObject,
+  setEquipment,
+  setWallLength,
   splitWall,
   updateElement,
 } from './ops.js';
+
+/** RoomPlan reports no swing, so these are the reviewer's to choose. */
+const SWINGS = [
+  ['inward', 'Opens inward'],
+  ['outward', 'Opens outward'],
+  ['left', 'Hinged left'],
+  ['right', 'Hinged right'],
+];
+
+const degreesOf = (radians) => (((((radians ?? 0) * 180) / Math.PI) % 360) + 360) % 360;
+
+/** The 360 video recorded for an object's machine, if there is one. */
+function videoFor(v, object) {
+  if (!object.equipment) return null;
+  const match = (v.equipment ?? []).find((e) => e.equipmentId === object.equipment.equipmentId);
+  return match?.video ?? null;
+}
 
 const KIND_NAMES = {
   walls: 'Wall',
@@ -58,7 +90,7 @@ export default function Sidebar({ v, plan, issues, readOnly, selection, onSelect
       <div className="ed-side-body" role="tabpanel">
         {tab === 'review' && (
           <>
-            <Inspector plan={plan} selection={selection} readOnly={readOnly} onSelect={onSelect} history={history} />
+            <Inspector v={v} plan={plan} selection={selection} readOnly={readOnly} onSelect={onSelect} history={history} />
             <Flags plan={plan} readOnly={readOnly} onFocus={onFocus} history={history} />
             <Validation plan={plan} issues={issues} onFocus={onFocus} history={history} readOnly={readOnly} />
           </>
@@ -215,11 +247,29 @@ function Validation({ plan, issues, onFocus, history, readOnly }) {
 }
 
 /** A number input that applies on Enter or blur, so typing is one undo step. */
-function NumberField({ id, value, min, max, step = 0.01, suffix, onCommit, label }) {
+/**
+ * A measurement that was never taken shows as blank, never as 0: RoomPlan
+ * does not measure every wall's thickness, and a nought would read as a
+ * measurement of nothing rather than nothing measured (CHANGE 1).
+ *
+ * With `clearable`, emptying the box puts it back to not measured.
+ */
+function Measured({ value, suffix = 'm' }) {
+  if (value === null || value === undefined) return <span className="muted">Not measured</span>;
+  return `${Number(value).toFixed(2)} ${suffix}`;
+}
+
+function NumberField({ id, value, min, max, step = 0.01, suffix, onCommit, label, clearable = false }) {
   const [text, setText] = useState(null);
-  const shown = text ?? String(Math.round(value * 1000) / 1000);
+  const blank = value === null || value === undefined;
+  const shown = text ?? (blank ? '' : String(Math.round(value * 1000) / 1000));
   const commit = () => {
     if (text === null) return;
+    if (text.trim() === '') {
+      if (clearable && !blank) onCommit(null);
+      setText(null);
+      return;
+    }
     const n = Number(text);
     if (Number.isFinite(n) && n >= min && n <= max && n !== value) onCommit(n);
     setText(null);
@@ -250,7 +300,7 @@ function NumberField({ id, value, min, max, step = 0.01, suffix, onCommit, label
   );
 }
 
-function Inspector({ plan, selection, readOnly, onSelect, history }) {
+function Inspector({ v, plan, selection, readOnly, onSelect, history }) {
   const found = selection ? findElement(plan, selection) : null;
   if (!found) {
     return (
@@ -289,13 +339,62 @@ function Inspector({ plan, selection, readOnly, onSelect, history }) {
           <dl className="ed-facts">
             <div>
               <dt>Length</dt>
-              <dd>{dist(el.a, el.b).toFixed(2)} m</dd>
+              <dd>
+                {ro ? (
+                  `${dist(el.a, el.b).toFixed(2)} m`
+                ) : (
+                  /*
+                   * Typing a length slides the far end along the wall's own
+                   * direction (CHANGE 1.7), so the reviewer can enter the
+                   * dimension they measured instead of dragging a corner
+                   * until the readout happens to agree.
+                   */
+                  <NumberField
+                    value={Number(dist(el.a, el.b).toFixed(3))}
+                    min={0.1}
+                    max={200}
+                    suffix="m"
+                    label="Wall length"
+                    onCommit={(n) => history.change(setWallLength(plan, el.id, n))}
+                  />
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Bearing</dt>
+              <dd>{wallAngleDeg(el).toFixed(1)}°</dd>
+            </div>
+            <div>
+              <dt>Height</dt>
+              <dd>
+                {ro ? (
+                  <Measured value={el.heightM} />
+                ) : (
+                  <NumberField value={el.heightM} min={1} max={20} suffix="m" label="Wall height" clearable onCommit={(n) => set({ heightM: n })} />
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Thickness</dt>
+              <dd>
+                {ro ? (
+                  <Measured value={el.thicknessM} />
+                ) : (
+                  <NumberField value={el.thicknessM} min={0.01} max={2} suffix="m" label="Wall thickness" clearable onCommit={(n) => set({ thicknessM: n })} />
+                )}
+              </dd>
             </div>
             <div>
               <dt>Read confidence</dt>
               <dd>{el.confidence.toFixed(2)}</dd>
             </div>
           </dl>
+          {(el.heightM === null || el.heightM === undefined || el.thicknessM === null || el.thicknessM === undefined) && !ro && (
+            <p className="muted small">
+              RoomPlan reports a wall as a flat surface, so it rarely measures a thickness. Type one in if you
+              took it on site.
+            </p>
+          )}
           <fieldset className="ed-coords" disabled={ro}>
             <legend className="small muted">Ends (m)</legend>
             {['a', 'b'].map((end) => (
@@ -374,7 +473,47 @@ function Inspector({ plan, selection, readOnly, onSelect, history }) {
               <dt>From wall start</dt>
               <dd>{ro ? `${el.offset.toFixed(2)} m` : <NumberField value={el.offset} min={0} max={1000} suffix="m" onCommit={(n) => set({ offset: n })} label="Offset from wall start" />}</dd>
             </div>
+            {/* CHANGE 1.3 and 1.4: an opening's height, and a window's sill. */}
+            <div>
+              <dt>Height</dt>
+              <dd>
+                {ro ? (
+                  <Measured value={el.heightM} />
+                ) : (
+                  <NumberField value={el.heightM} min={0.1} max={10} suffix="m" label="Opening height" clearable onCommit={(n) => set({ heightM: n })} />
+                )}
+              </dd>
+            </div>
+            {el.type === 'window' && (
+              <div>
+                <dt>Sill height</dt>
+                <dd>
+                  {ro ? (
+                    <Measured value={el.sillHeightM} />
+                  ) : (
+                    <NumberField value={el.sillHeightM} min={0} max={10} suffix="m" label="Sill height" clearable onCommit={(n) => set({ sillHeightM: n })} />
+                  )}
+                </dd>
+              </div>
+            )}
           </dl>
+          {el.type === 'door' && (
+            <label className="rv-field">
+              <span>Swing</span>
+              <select value={el.swing ?? ''} disabled={ro} onChange={(e) => set({ swing: e.target.value || null })}>
+                {/* RoomPlan does not report a swing, so it starts unknown. */}
+                <option value="">Not recorded</option>
+                {SWINGS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <p className="muted small">
+            On the {el.wallId ? wallName(plan, plan.walls.find((w) => w.id === el.wallId) ?? { a: [0, 0], b: [1, 0] }).toLowerCase() : 'no wall yet'}.
+          </p>
         </>
       )}
 
@@ -407,18 +546,44 @@ function Inspector({ plan, selection, readOnly, onSelect, history }) {
               </div>
             ))}
           </dl>
-          {kind === 'objects' && !ro && (
-            <button
-              type="button"
-              className="rv-button ghost small"
-              onClick={() => {
-                const r = objectToColumn(plan, el.id);
-                history.change(r.plan);
-                onSelect(r.id);
-              }}
-            >
-              It is a column
-            </button>
+          {kind === 'objects' && (
+            <>
+              {/* CHANGE 1.5: turning a machine to an exact bearing. */}
+              <dl className="ed-facts">
+                <div>
+                  <dt>Rotation</dt>
+                  <dd>
+                    {ro ? (
+                      `${degreesOf(el.angle).toFixed(1)}°`
+                    ) : (
+                      <NumberField
+                        value={Number(degreesOf(el.angle).toFixed(1))}
+                        min={-360}
+                        max={360}
+                        step={1}
+                        suffix="°"
+                        label="Rotation"
+                        onCommit={(n) => history.change(rotateObject(plan, el.id, n))}
+                      />
+                    )}
+                  </dd>
+                </div>
+              </dl>
+              <Equipment plan={plan} object={el} readOnly={ro} history={history} video={videoFor(v, el)} />
+              {!ro && (
+                <button
+                  type="button"
+                  className="rv-button ghost small"
+                  onClick={() => {
+                    const r = objectToColumn(plan, el.id);
+                    history.change(r.plan);
+                    onSelect(r.id);
+                  }}
+                >
+                  It is a column
+                </button>
+              )}
+            </>
           )}
         </>
       )}
@@ -461,6 +626,179 @@ function Inspector({ plan, selection, readOnly, onSelect, history }) {
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * The equipment panel (CHANGE 2 and CHANGE 5): what this machine is, how
+ * much room is around it, and the 360 walk round it if one was recorded.
+ *
+ * RoomPlan recognises a shape but has no gym machine categories at all, so
+ * every machine is named here or on the phone. The catalogue is a list of
+ * suggestions, not a closed set: any name may be typed in.
+ */
+function Equipment({ plan, object, readOnly, history, video }) {
+  const current = object.equipment;
+  const [draft, setDraft] = useState(null);
+  const open = draft !== null;
+
+  const start = () =>
+    setDraft(
+      current
+        ? { ...current }
+        : { equipmentId: nextEquipmentId(plan), type: EQUIPMENT_TYPES[0], name: equipmentLabel(EQUIPMENT_TYPES[0]) },
+    );
+  const save = () => {
+    history.change(setEquipment(plan, object.id, draft));
+    setDraft(null);
+  };
+
+  const flaggedWrong = plan.flags.some(
+    (f) => f.elementId === object.id && f.kind === 'equipment_wrong' && f.status === 'open',
+  );
+  const wall = clearanceToWall(plan, object);
+  const neighbour = nearestEquipment(plan, object);
+
+  return (
+    <section className="ed-equipment">
+      <div className="ed-card-head">
+        <h3>Equipment</h3>
+        {!readOnly && !open && (
+          <button type="button" className="rv-button ghost small" onClick={start}>
+            {current ? 'Change' : 'Name this machine'}
+          </button>
+        )}
+      </div>
+
+      {!open && !current && <p className="muted small">Not identified. RoomPlan cannot name a gym machine.</p>}
+
+      {!open && current && (
+        <>
+          <dl className="ed-facts">
+            <div>
+              <dt>Name</dt>
+              <dd>{current.name}</dd>
+            </div>
+            <div>
+              <dt>Type</dt>
+              <dd>{equipmentLabel(current.type)}</dd>
+            </div>
+            <div>
+              <dt>Reference</dt>
+              <dd>{current.equipmentId}</dd>
+            </div>
+          </dl>
+          {!readOnly && (
+            <div className="ed-actions">
+              <button type="button" className="rv-button ghost small" onClick={() => history.change(setEquipment(plan, object.id, null))}>
+                Not a machine
+              </button>
+              {/*
+                CHANGE 5: a machine that does not match the scan or the 360
+                video is flagged, which blocks approval until it is settled.
+              */}
+              <button
+                type="button"
+                className="rv-button ghost small"
+                disabled={flaggedWrong}
+                onClick={() =>
+                  history.change(
+                    flagElement(plan, object.id, {
+                      title: `${current.name} looks wrong`,
+                      detail: 'The machine on the plan does not match the scan or the 360° video. Check it on site.',
+                    }),
+                  )
+                }
+              >
+                {flaggedWrong ? 'Flagged' : 'Flag as wrong'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {open && (
+        <div className="ed-equipment-form">
+          <label className="rv-field">
+            <span>Type</span>
+            <input
+              list="equipment-types"
+              value={draft.type}
+              onChange={(e) => {
+                const type = e.target.value;
+                // Keep the name following the type until it is edited by hand.
+                const followed = draft.name === equipmentLabel(draft.type);
+                setDraft({ ...draft, type, name: followed ? equipmentLabel(type) : draft.name });
+              }}
+            />
+          </label>
+          <datalist id="equipment-types">
+            {EQUIPMENT_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {equipmentLabel(t)}
+              </option>
+            ))}
+          </datalist>
+          <label className="rv-field">
+            <span>Name</span>
+            <input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+          </label>
+          <label className="rv-field">
+            <span>Reference</span>
+            <input value={draft.equipmentId} onChange={(e) => setDraft({ ...draft, equipmentId: e.target.value })} />
+          </label>
+          <div className="ed-actions">
+            <button type="button" className="rv-button small" disabled={!draft.type.trim() || !draft.name.trim() || !draft.equipmentId.trim()} onClick={save}>
+              Save
+            </button>
+            <button type="button" className="rv-button ghost small" onClick={() => setDraft(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* CHANGE 1.7: the clearances that say whether the floor works. */}
+      {current && (
+        <dl className="ed-facts">
+          {wall && (
+            <div>
+              <dt>To nearest wall</dt>
+              <dd>{wall.distanceM.toFixed(2)} m</dd>
+            </div>
+          )}
+          {neighbour && (
+            <div>
+              <dt>To {neighbour.object.equipment.name}</dt>
+              <dd>{neighbour.distanceM.toFixed(2)} m</dd>
+            </div>
+          )}
+        </dl>
+      )}
+
+      {current && <EquipmentVideo video={video} />}
+    </section>
+  );
+}
+
+/** The 360 walk round a machine, or why there is not one (CHANGE 5). */
+function EquipmentVideo({ video }) {
+  if (!video) return <p className="muted small">No 360° video was recorded for this machine.</p>;
+  if (video.status !== 'ready' || !video.url) {
+    return (
+      <p className="muted small">
+        360° video {video.status === 'failed' ? `failed: ${video.failureReason ?? 'unknown reason'}` : video.status}.
+      </p>
+    );
+  }
+  return (
+    <figure className="ed-video">
+      {/* Controls only: a reviewer plays it when they choose to. */}
+      <video src={video.url} poster={video.thumbnailUrl ?? undefined} controls preload="none" playsInline />
+      <figcaption className="muted small">
+        360° walkaround{video.durationSeconds ? ` · ${Math.round(video.durationSeconds)} s` : ''}
+      </figcaption>
+    </figure>
   );
 }
 

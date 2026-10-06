@@ -8,6 +8,8 @@ import 'package:mobile/services/api_client.dart';
 import 'package:mobile/services/auth_session.dart';
 import 'package:mobile/services/profile_service.dart';
 import 'package:mobile/services/upload_queue.dart';
+import 'package:room_scan/room_scan.dart';
+import 'package:mobile/models/equipment.dart';
 
 /// An in-memory stand-in for the Gym Plan backend, for widget tests. It
 /// answers the same routes with the same shapes as `backend/src/modules`, and
@@ -299,6 +301,11 @@ class FakeBackend {
 class FakeUploadQueue extends UploadQueue {
   UploadJob? job;
   final List<ScanResult> enqueued = <ScanResult>[];
+
+  /// Machines and their 360 walkarounds sent with each capture.
+  final List<List<Equipment>> enqueuedEquipment = <List<Equipment>>[];
+  final List<Map<String, EquipmentVideo>> enqueuedVideos =
+      <Map<String, EquipmentVideo>>[];
   final List<ScanExport?> exports = <ScanExport?>[];
   int retries = 0;
   bool? mobileData;
@@ -310,9 +317,16 @@ class FakeUploadQueue extends UploadQueue {
   int get pendingCount => job != null && !job!.complete ? 1 : 0;
 
   @override
-  Future<void> enqueue(ScanResult result, {ScanExport? export}) async {
+  Future<void> enqueue(
+    ScanResult result, {
+    ScanExport? export,
+    List<Equipment> equipment = const <Equipment>[],
+    Map<String, EquipmentVideo> videos = const <String, EquipmentVideo>{},
+  }) async {
     enqueued.add(result);
     exports.add(export);
+    enqueuedEquipment.add(equipment);
+    enqueuedVideos.add(videos);
     job = UploadJob(
       id: 'job-${enqueued.length}',
       title: result.config.shortTitle,

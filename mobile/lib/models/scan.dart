@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:room_scan/room_scan.dart';
 
 import '../theme/app_theme.dart';
 import 'plan.dart';
@@ -309,6 +310,7 @@ class ScanResult {
     required this.elapsed,
     this.photoPaths = const <String>[],
     this.overrideReason,
+    this.detected = const <RoomScanObject>[],
   });
 
   /// Photos the reviewer asks for: one per corner of the room.
@@ -332,6 +334,10 @@ class ScanResult {
 
   /// Why the surveyor finished before the outline closed.
   final String? overrideReason;
+
+  /// The objects RoomPlan recognised, for marking gym machines on them
+  /// (CHANGE 2.1). Empty for a simulated scan, which has no real objects.
+  final List<RoomScanObject> detected;
 
   double? get areaM2 => geometry.areaM2;
 

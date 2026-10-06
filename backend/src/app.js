@@ -7,6 +7,7 @@ import { cors } from './middleware/cors.js';
 import { router as admin } from './modules/admin.js';
 import { router as auth } from './modules/auth.js';
 import { router as captures } from './modules/captures.js';
+import { router as equipment } from './modules/equipment.js';
 import { router as facilities } from './modules/facilities.js';
 import { router as localStorage } from './modules/local-storage.js';
 import { router as plans } from './modules/plans.js';
@@ -39,6 +40,8 @@ export function createApp() {
   app.use('/v1/facilities', facilities);
   app.use('/v1/plans', plans);
   app.use('/v1/captures', captures);
+  // Equipment and its 360 video hang off a capture, so they share its path.
+  app.use('/v1/captures', equipment);
   app.use('/v1/review', review);
   app.use('/v1/share', share);
   app.use('/v1/admin', admin);

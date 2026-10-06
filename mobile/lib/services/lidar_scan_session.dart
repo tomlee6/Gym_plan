@@ -100,6 +100,9 @@ class LidarScanSession extends ScanSession {
   }
 
   @override
+  List<RoomScanObject> get detected => _latest.detected;
+
+  @override
   Future<String?> takePhoto() => RoomScan.capturePhoto();
 
   @override

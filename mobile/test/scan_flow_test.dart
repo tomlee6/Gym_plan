@@ -13,6 +13,7 @@ import 'package:mobile/theme/app_theme.dart';
 import 'package:mobile/widgets/tag_sheet.dart';
 
 import 'phone_size.dart';
+import 'package:mobile/widgets/primary_button.dart';
 
 const ScanConfig _config = ScanConfig(
   facilityId: 'fac_northgate',
@@ -269,6 +270,43 @@ void main() {
     await _tearDown(tester);
   });
 
+  testWidgets('the equipment step gates Submit, and says so', (
+    WidgetTester tester,
+  ) async {
+    final SimulatedScanSession session = SimulatedScanSession(
+      config: _config,
+      unitsPerTick: 200,
+    );
+    addTearDown(session.dispose);
+    await _openScan(tester, session);
+    await _advance(tester, const Duration(seconds: 2));
+    await tester.tap(find.text('Finish scan'));
+    await _advance(tester, const Duration(milliseconds: 600));
+
+    PrimaryButton submit() => tester.widget<PrimaryButton>(
+      find.widgetWithText(PrimaryButton, 'Submit scan'),
+    );
+
+    // Before the step: Submit is dead, and the card says why.
+    expect(submit().onPressed, isNull);
+    expect(find.textContaining('Required before submitting'), findsOneWidget);
+
+    // Stepping back out of the equipment screen does not finish it.
+    await tester.tap(find.text('Capture Equipment 360°'));
+    await tester.pumpAndSettle();
+    // The app's own nav bar, which labels its back button.
+    await tester.tap(find.text('Review'));
+    await tester.pumpAndSettle();
+    expect(submit().onPressed, isNull, reason: 'backing out does not finish the step');
+
+    // Finishing it does.
+    await _finishEquipmentStep(tester);
+    expect(submit().onPressed, isNotNull);
+    expect(find.text('No equipment on this level'), findsOneWidget);
+
+    await _tearDown(tester);
+  });
+
   testWidgets('submitting queues the upload and leaves the capture flow', (
     WidgetTester tester,
   ) async {
@@ -286,6 +324,17 @@ void main() {
     // A closed lap with one weak wall: one warning, no override.
     expect(find.text('1 coverage warning'), findsOneWidget);
     expect(find.textContaining('Inner east wall reads weak.'), findsOneWidget);
+
+    // The equipment step comes first: Submit is dead until it is done.
+    expect(
+      tester
+          .widget<PrimaryButton>(
+            find.widgetWithText(PrimaryButton, 'Submit scan'),
+          )
+          .onPressed,
+      isNull,
+    );
+    await _finishEquipmentStep(tester);
 
     await tester.tap(find.text('Submit scan'));
     // The save, then the push; the removed routes leave once the new one
@@ -325,4 +374,15 @@ void main() {
 
     await _tearDown(tester);
   });
+}
+
+/// Finishes the equipment step, which is what unlocks Submit. These scans
+/// carry no equipment, so the step is finished by confirming there is none.
+Future<void> _finishEquipmentStep(WidgetTester tester) async {
+  await tester.tap(find.text('Capture Equipment 360°'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.widgetWithText(PrimaryButton, 'Done'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('No equipment'));
+  await tester.pumpAndSettle();
 }

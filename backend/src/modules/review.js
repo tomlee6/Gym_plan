@@ -24,14 +24,18 @@ import {
   approvalBlockers,
   canonicalJson,
   OPENING_TYPES,
+  SOURCES,
   summary,
+  SUPPORTED_FORMATS,
   TAG_TYPES,
   validate,
+  withMeasurements,
 } from '../../../shared/plan/index.js';
 import { audit, planLabel } from '../audit.js';
 import { many, one, pool, transaction } from '../db/pool.js';
 import { conflict, notFound } from '../errors.js';
 import { newId } from '../ids.js';
+import { equipmentForReview } from './equipment.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { planRejected, walkthroughReady } from '../notify.js';
 import { storage } from '../storage/index.js';
@@ -166,13 +170,25 @@ router.get('/versions/:id', async (req, res) => {
   const files = v.capture_id
     ? await many(
         pool,
-        `SELECT id, name, kind, bytes, content_type, storage_key FROM capture_files
+        `SELECT id, name, kind, equipment_id, bytes, content_type, storage_key FROM capture_files
          WHERE capture_id = ? AND status = 'stored' ORDER BY kind, name`,
         [v.capture_id],
       )
     : [];
   const s = storage();
   const plan = v.plan_json;
+
+  /*
+   * The machines on this capture, each with a playable URL for its 360
+   * video and its poster frame (CHANGE 5). The video is a reference asset:
+   * the plan, not the video, says where a machine is.
+   */
+  const signed = new Map(
+    await Promise.all(
+      files.map(async (f) => [f.id, await s.presignDownload(f.storage_key, DOWNLOAD_TTL_SECONDS)]),
+    ),
+  );
+  const equipment = v.capture_id ? await equipmentForReview(pool, v.capture_id) : [];
 
   res.json({
     id: v.id,
@@ -209,16 +225,29 @@ router.get('/versions/:id', async (req, res) => {
     rejectReasons: REJECT_REASONS,
     history: await historyOf(pool, v.plan_id),
     urlsExpireAt: new Date(Date.now() + DOWNLOAD_TTL_SECONDS * 1000),
-    files: await Promise.all(
-      files.map(async (f) => ({
-        id: f.id,
-        name: f.name,
-        kind: f.kind,
-        bytes: Number(f.bytes),
-        contentType: f.content_type,
-        url: await s.presignDownload(f.storage_key, DOWNLOAD_TTL_SECONDS),
-      })),
-    ),
+    equipment: equipment.map((e) => ({
+      ...e,
+      video: e.video
+        ? {
+            videoId: e.video.videoId,
+            status: e.video.status,
+            durationSeconds: e.video.durationSeconds,
+            // Null until the upload has landed, so the player knows to wait.
+            url: signed.get(e.video.fileId) ?? null,
+            thumbnailUrl: signed.get(e.video.thumbnailFileId) ?? null,
+            failureReason: e.video.failureReason,
+          }
+        : null,
+    })),
+    files: files.map((f) => ({
+      id: f.id,
+      name: f.name,
+      kind: f.kind,
+      bytes: Number(f.bytes),
+      contentType: f.content_type,
+      equipmentId: f.equipment_id ?? null,
+      url: signed.get(f.id),
+    })),
   });
 });
 
@@ -301,8 +330,31 @@ const id = z.string().min(1).max(64);
 const num = z.number().finite();
 const pt = z.tuple([num, num]);
 
+/*
+ * A measurement the scan never recorded, which the reviewer may also clear:
+ * absent, null and a real number are all allowed, and null means "unknown"
+ * rather than zero. Never defaulted to a number, so an unmeasured value can
+ * never be mistaken for a measured one (CHANGE 1).
+ */
+const measure = (schema) => schema.nullish();
+
+const equipment = z
+  .object({
+    equipmentId: z.string().min(1).max(64),
+    // Open on purpose: the catalogue is extensible, so a gym may use a type
+    // this server has never heard of (CHANGE 2.1).
+    type: z.string().min(1).max(60),
+    name: z.string().min(1).max(120),
+  })
+  .nullish();
+
 const planBody = z.object({
-  format: z.literal('gymplan/1'),
+  // Both formats are accepted: a version read before CHANGE 1 is still
+  // edited and saved as it was, and is not rewritten into the new format.
+  format: z.enum(SUPPORTED_FORMATS),
+  units: z.literal('m').nullish(),
+  // Derived on the server from the geometry, so whatever arrives is ignored.
+  room: z.unknown().nullish(),
   scale: z.object({
     source: z.enum(['scan', 'line', 'drawn']),
     a: pt.nullish(),
@@ -320,7 +372,21 @@ const planBody = z.object({
     .nullish(),
   ceilingHeightM: num,
   walls: z
-    .array(z.object({ id, a: pt, b: pt, confidence: z.number().min(0).max(1), mirror: z.boolean() }))
+    .array(
+      z.object({
+        id,
+        a: pt,
+        b: pt,
+        confidence: z.number().min(0).max(1),
+        mirror: z.boolean(),
+        // CHANGE 1.2. `lengthM` and `angleDeg` are derived and recomputed.
+        lengthM: measure(num),
+        angleDeg: measure(num),
+        heightM: measure(z.number().positive().max(20)),
+        thicknessM: measure(z.number().positive().max(2)),
+        source: z.enum(SOURCES).nullish(),
+      }),
+    )
     .max(3000),
   openings: z
     .array(
@@ -331,6 +397,12 @@ const planBody = z.object({
         offset: num,
         width: z.number().positive(),
         confidence: z.number().min(0).max(1),
+        // CHANGE 1.3, 1.4.
+        heightM: measure(z.number().positive().max(10)),
+        sillHeightM: measure(num),
+        angleDeg: measure(num),
+        swing: z.enum(['left', 'right', 'inward', 'outward']).nullish(),
+        source: z.enum(SOURCES).nullish(),
       }),
     )
     .max(3000),
@@ -349,6 +421,10 @@ const planBody = z.object({
         heightM: z.number().positive().max(12),
         category: z.string().max(40).optional(),
         confidence: z.number().min(0).max(1),
+        // CHANGE 1.5, 2.4.
+        elevationM: measure(num),
+        equipment,
+        source: z.enum(SOURCES).nullish(),
       }),
     )
     .max(3000),
@@ -373,7 +449,12 @@ const planBody = z.object({
 
 router.put('/versions/:id/plan', async (req, res) => {
   const body = z.object({ plan: planBody, revision: z.number().int().min(0) }).parse(req.body);
-  const plan = body.plan;
+  /*
+   * Derived measurements are recomputed from the geometry the reviewer sent,
+   * never trusted from the client: wall lengths and the room box must always
+   * describe the points actually being saved (CHANGE 1.1).
+   */
+  const plan = withMeasurements(body.plan);
 
   const saved = await transaction(async (db) => {
     const v = await mine(db, req);
@@ -384,9 +465,26 @@ router.put('/versions/:id/plan', async (req, res) => {
     await db.query(
       `UPDATE plan_versions
        SET ${ACCRUE}, plan_json = ?, plan_revision = plan_revision + 1,
-           plan_saved_at = UTC_TIMESTAMP(3), plan_saved_by = ?, area_m2 = COALESCE(?, area_m2)
+           plan_saved_at = UTC_TIMESTAMP(3), plan_saved_by = ?, area_m2 = COALESCE(?, area_m2),
+           plan_format = ?, width_m = ?, length_m = ?, perimeter_m = ?,
+           elevation_m = ?, wall_count = ?, opening_count = ?, object_count = ?,
+           equipment_count = ?
        WHERE id = ?`,
-      [JSON.stringify(plan), req.user.id, facts.areaM2, v.id],
+      [
+        JSON.stringify(plan),
+        req.user.id,
+        facts.areaM2,
+        plan.format ?? null,
+        facts.widthM,
+        facts.lengthM,
+        facts.perimeterM,
+        plan.room?.elevationM ?? null,
+        facts.walls,
+        facts.openings,
+        facts.objects,
+        facts.equipment,
+        v.id,
+      ],
     );
     // "Corrected" (PRD section 4): recorded once, on the first save.
     if (!v.plan_saved_at) {

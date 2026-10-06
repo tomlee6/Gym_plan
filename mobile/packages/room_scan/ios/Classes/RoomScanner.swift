@@ -259,6 +259,34 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
         .map { [Double($0.x), Double($0.y)] }
     }
 
+    /*
+     * Each detected object with enough of its measurements to be marked as
+     * a gym machine on the phone (CHANGE 2.1).
+     *
+     * RoomPlan has no gym machine categories — its list stops at furniture
+     * — so `category` is only a hint. What makes an object a treadmill is
+     * the surveyor naming it, which is what these let them do.
+     */
+    event["detected"] = room.objects.enumerated().map { index, object in
+      let t = object.transform
+      let centre = simd_make_float3(t.columns.3)
+      let x = simd_make_float3(t.columns.0)
+      return [
+        // Stable within one scan, so a mark follows its object as the
+        // scan is refined.
+        "index": index,
+        "x": Double(centre.x),
+        "z": Double(centre.z),
+        "elevationM": Double(centre.y - object.dimensions.y / 2),
+        "widthM": Double(object.dimensions.x),
+        "depthM": Double(object.dimensions.z),
+        "heightM": Double(object.dimensions.y),
+        "rotationDeg": Double(atan2(x.z, x.x) * 180 / .pi),
+        "category": Self.name(of: object.category),
+        "confidence": Self.name(of: object.confidence),
+      ] as [String: Any]
+    }
+
     let (coverage, closed) = Self.coverage(walls: walls, surfaces: room.walls)
     event["coverage"] = coverage
     event["closed"] = closed
@@ -296,6 +324,35 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
     case .medium: return "medium"
     case .low: return "low"
     @unknown default: return "low"
+    }
+  }
+
+  /**
+   RoomPlan's own category for an object, as a plain string.
+
+   These are furniture categories: RoomPlan recognises a table or a sofa,
+   and has nothing for a treadmill or a squat rack. Anything it does not
+   place comes back as "object", which is most of a gym.
+   */
+  private static func name(of category: CapturedRoom.Object.Category) -> String {
+    switch category {
+    case .storage: return "storage"
+    case .refrigerator: return "refrigerator"
+    case .stove: return "stove"
+    case .bed: return "bed"
+    case .sink: return "sink"
+    case .washerDryer: return "washerDryer"
+    case .toilet: return "toilet"
+    case .bathtub: return "bathtub"
+    case .oven: return "oven"
+    case .dishwasher: return "dishwasher"
+    case .table: return "table"
+    case .sofa: return "sofa"
+    case .chair: return "chair"
+    case .fireplace: return "fireplace"
+    case .television: return "television"
+    case .stairs: return "stairs"
+    @unknown default: return "object"
     }
   }
 
