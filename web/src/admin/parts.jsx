@@ -47,10 +47,19 @@ export function QuotaBar({ used, quota }) {
   );
 }
 
-/** "Customer since Feb 2026", the operator account, or a removed one. */
+/** Whether an account's data is gone or going (B-09: removal runs as a background job). */
+export function isRemoved(a) {
+  return Boolean(a.removedAt) || a.status === 'removed';
+}
+
+export function isRemoving(a) {
+  return !isRemoved(a) && a.status === 'removing';
+}
+
+/** "Customer since Feb 2026", or where its removal has got to. */
 export function accountNote(a) {
-  if (a.dataRemovedAt) return `Data removed ${date(a.dataRemovedAt)}`;
-  if (a.operator) return 'Operator account · Flex staff';
+  if (isRemoved(a)) return a.removedAt ? `Data removed ${date(a.removedAt)}` : 'Data removed';
+  if (isRemoving(a)) return 'Removal in progress';
   const d = date(a.createdAt);
   return d ? `Customer since ${d.split(' ').slice(1).join(' ')}` : 'Customer';
 }
@@ -60,6 +69,13 @@ const ACTION_TONES = {
   REJECTED: 'bad',
   ACCOUNT_DATA_REMOVED: 'bad',
   USER_REMOVED: 'bad',
+  MEMBER_REMOVED: 'bad',
+  INVITE_REVOKED: 'bad',
+  ACCOUNT_REMOVAL_STARTED: 'bad',
+  INVITE_SENT: 'info',
+  INVITE_ACCEPTED: 'good',
+  MEMBER_ROLE_CHANGED: 'info',
+  STAFF_ROLE_CHANGED: 'info',
   SHARE_LINK_REVOKED: 'bad',
   CLAIMED: 'info',
   CORRECTED: 'info',
@@ -79,7 +95,12 @@ export function detailText(e) {
   if (e.action === 'QUOTA_CHANGED') return `Quota ${d.from} → ${d.to}`;
   if (e.action === 'ACCOUNT_RENAMED') return `Was “${d.from}”`;
   if (e.action === 'ACCOUNT_CREATED') return `Quota ${d.planQuota}`;
-  if (e.action === 'USER_ADDED') return `Role ${d.role}`;
+  if (e.action === 'USER_ADDED' || e.action === 'INVITE_SENT') {
+    return [d.email, d.role && `Role ${d.role}`].filter(Boolean).join(' · ');
+  }
+  if (e.action === 'MEMBER_ROLE_CHANGED' || e.action === 'STAFF_ROLE_CHANGED') {
+    return `Role ${d.from ?? 'none'} → ${d.to ?? 'none'}`;
+  }
   if (e.action === 'REJECTED') return d.reason ?? '';
   if (e.action === 'APPROVED' && d.contentHash) return `Hash ${d.contentHash.slice(0, 8)}…${d.contentHash.slice(-4)}`;
   if (e.action === 'SUPERSEDED') return `By version ${d.by}`;

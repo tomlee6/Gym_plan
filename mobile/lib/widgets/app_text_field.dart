@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart';
 import 'hairline_container.dart';
@@ -106,44 +105,6 @@ class AppTextField extends StatelessWidget {
           ),
         ],
       ],
-    );
-  }
-}
-
-/// Eye toggle used inside the password field.
-class PasswordVisibilityToggle extends StatelessWidget {
-  const PasswordVisibilityToggle({
-    super.key,
-    required this.obscured,
-    required this.onChanged,
-  });
-
-  final bool obscured;
-  final VoidCallback onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: obscured ? 'Show password' : 'Hide password',
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onChanged();
-        },
-        child: SizedBox(
-          width: 48,
-          height: 46,
-          child: Icon(
-            obscured
-                ? Icons.visibility_off_outlined
-                : Icons.visibility_outlined,
-            size: 19,
-            color: AppColors.textMuted,
-          ),
-        ),
-      ),
     );
   }
 }

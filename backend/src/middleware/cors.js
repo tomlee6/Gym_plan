@@ -13,7 +13,7 @@ export function cors(req, res, next) {
   if (req.method === 'OPTIONS') {
     res.set({
       'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE',
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key, X-Account-Id',
       'Access-Control-Max-Age': '600',
     });
     return res.status(204).end();

@@ -30,7 +30,12 @@ app                              Gym Plan API                     S3
 ```
 
 All calls are `POST`, JSON in and out, over HTTPS, with
-`Authorization: Bearer <access token>`.
+`Authorization: Bearer <access token>` and `X-Account-Id: <account id>`
+(contract v2 §2). The account is the one the capture was **taken in**,
+stored with the capture on the phone, not the account the app happens to be
+in when the upload runs: the surveyor may switch accounts while a capture is
+still waiting for signal. The same goes for the equipment and 360 video
+calls of the capture.
 
 ## 1. Register a capture
 
@@ -57,9 +62,16 @@ Request:
   "photoCount": 3,
   "weakWallCount": 1,
   "tags": [{ "type": "fireExit", "x": 4.1, "y": 0.2, "heightM": null }],
+  "controlDistances": [{ "a": [0.4, 0.3], "b": [24.1, 0.5], "measuredM": 23.71 }],
   "capturedAt": "2026-09-24T09:14:00Z"
 }
 ```
+
+- `controlDistances` (F-03, may be empty) are laser-measured checks of the
+  scan's scale: two points the surveyor tapped on the scanned outline (`a`,
+  `b`, same plan frame as the tags) and what the laser read between them.
+  The app encourages two or more, each 3 m or longer, but never requires
+  them.
 
 - `source` is `lidar` for a real scan or `simulated` for a debug build's demo
   walk; the backend should reject `simulated` in production.
@@ -166,7 +178,8 @@ surveyor when it stops an upload.
 
 | Status          | App behaviour                                               |
 | --------------- | ----------------------------------------------------------- |
-| `401`           | Stops; resumes after the user signs in again.               |
+| `401`           | Refreshes the token and repeats once. If the refresh is refused the phone signs out; the upload stops and resumes after the next sign-in. A relaunch needs no sign-in: the session is in the Keychain. |
+| `403 no_account` | Stops and shows `message` (the user is no longer in the capture's account). |
 | `408`/`429`/`5xx` | Retries with backoff (15 s doubling to 5 min).              |
 | other `4xx`     | Stops and shows `message`; the user can tap *Try again*.    |
 | no connection   | Waits and retries, shown as "Waiting for signal".           |

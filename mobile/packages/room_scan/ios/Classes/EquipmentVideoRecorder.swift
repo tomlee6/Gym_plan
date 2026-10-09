@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMotion
 import Flutter
 import UIKit
 
@@ -18,10 +19,21 @@ import UIKit
  A poster frame is taken here, on the phone, so the server needs no
  transcoding step to show one (CHANGE 4.2).
 
+ The video carries **no sound** (A-04). A walkaround happens on a gym
+ floor with members talking nearby, and their voices must not be stored;
+ the reviewer only needs the picture. The session therefore has no audio
+ input at all, so the movie output has no audio connection and the app
+ never asks for the microphone (Info.plist has no
+ NSMicrophoneUsageDescription; adding an audio input without one gets the
+ app killed by iOS).
+
+ While recording, the camera's heading and pitch are sampled from
+ CoreMotion and sent to Flutter (I-06), so the screen can show how far
+ round the machine the surveyor has walked.
+
  Requires an iOS device to test: the simulator has no camera, so `prepare`
  fails there with `no_camera`.
  */
-@available(iOS 13.0, *)
 final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelegate {
   enum RecorderError: LocalizedError {
     case noCamera
@@ -44,6 +56,11 @@ final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelega
   private let session = AVCaptureSession()
   private let output = AVCaptureMovieFileOutput()
   private let folder: URL
+  private let motion = CMMotionManager()
+
+  /// Receives `{type: "motion", headingDeg, pitchDeg}` about ten times a
+  /// second while recording. Set by the plugin when Flutter listens.
+  var onMotion: (([String: Any]) -> Void)?
 
   /// Which machine is being recorded, so a finished file cannot be filed
   /// against the wrong one.
@@ -77,7 +94,8 @@ final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelega
 
   /**
    Starts the camera. Asks for access first: the usage description already
-   covers the camera, since the LiDAR scan uses it too.
+   covers the camera, since the LiDAR scan uses it too. Only the camera:
+   there is deliberately no microphone input (see the class comment).
    */
   func prepare() async throws {
     if prepared { return }
@@ -102,20 +120,17 @@ final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelega
     }
     session.addInput(videoInput)
 
-    // Sound is useful context on a walkaround, but its absence must not
-    // stop a recording: a denied microphone leaves a silent video.
-    if let mic = AVCaptureDevice.default(for: .audio),
-      let audioInput = try? AVCaptureDeviceInput(device: mic),
-      session.canAddInput(audioInput)
-    {
-      session.addInput(audioInput)
-    }
-
+    // No audio input is added, ever: the walkaround is recorded silent so
+    // members' voices are never stored. With only a video input, the movie
+    // output gets only a video connection.
     guard session.canAddOutput(output) else {
       session.commitConfiguration()
       throw RecorderError.noCamera
     }
     session.addOutput(output)
+    // Belt and braces: should an audio connection ever appear (another
+    // input added by mistake), it records nothing.
+    if let audio = output.connection(with: .audio) { audio.isEnabled = false }
     session.commitConfiguration()
 
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -139,6 +154,54 @@ final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelega
     // Keep the screen awake: a walkaround is slow and mostly hands-off.
     UIApplication.shared.isIdleTimerDisabled = true
     output.startRecording(to: url, recordingDelegate: self)
+    startMotion()
+  }
+
+  // MARK: - Walk-around coverage (I-06)
+
+  /**
+   Samples which way the camera points, ten times a second.
+
+   The heading is worked out from the attitude's rotation matrix rather
+   than its yaw angle: the phone is held upright, which is exactly where
+   Euler angles lose track of yaw (gimbal lock). The camera looks along the
+   device's -z axis; its direction in the reference frame gives the
+   heading (horizontal part) and the pitch (vertical part).
+
+   Which way round the matrix is (reference-to-device or the reverse) is
+   checked against gravity on each sample instead of assumed, so a wrong
+   assumption cannot silently produce a heading that never changes. A
+   camera pointing nearly straight up or down has no useful heading, and
+   that sample is skipped.
+   */
+  private func startMotion() {
+    guard motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive else { return }
+    motion.deviceMotionUpdateInterval = 0.1
+    motion.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: OperationQueue.main) {
+      [weak self] data, _ in
+      guard let self = self, let data = data else { return }
+      let m = data.attitude.rotationMatrix
+      let g = data.gravity
+      // Gravity, in device coordinates, is the reference frame's "down"
+      // seen from the device: -(m13, m23, m33) if the rows are the device
+      // axes, -(m31, m32, m33) if the columns are.
+      let rowsError = abs(g.x + m.m13) + abs(g.y + m.m23)
+      let columnsError = abs(g.x + m.m31) + abs(g.y + m.m32)
+      let forwardX = rowsError <= columnsError ? -m.m31 : -m.m13
+      let forwardY = rowsError <= columnsError ? -m.m32 : -m.m23
+      let forwardZ = -m.m33
+      guard (forwardX * forwardX + forwardY * forwardY).squareRoot() > 0.2 else { return }
+
+      var heading = atan2(forwardY, forwardX) * 180 / Double.pi
+      if heading < 0 { heading += 360 }
+      let pitch = asin(max(-1, min(1, forwardZ))) * 180 / Double.pi
+      guard heading.isFinite, pitch.isFinite else { return }
+      self.onMotion?(["type": "motion", "headingDeg": heading, "pitchDeg": pitch])
+    }
+  }
+
+  private func stopMotion() {
+    if motion.isDeviceMotionActive { motion.stopDeviceMotionUpdates() }
   }
 
   /**
@@ -148,6 +211,7 @@ final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelega
    */
   func stop() async throws -> [String: Any] {
     guard output.isRecording else { throw RecorderError.notRecording }
+    stopMotion()
     return try await withCheckedThrowingContinuation { continuation in
       finish = { continuation.resume(with: $0) }
       output.stopRecording()
@@ -163,6 +227,7 @@ final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelega
 
   /// Releases the camera once the equipment step is over.
   func dispose() {
+    stopMotion()
     if output.isRecording { output.stopRecording() }
     UIApplication.shared.isIdleTimerDisabled = false
     if session.isRunning {
@@ -180,6 +245,7 @@ final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelega
     error: Error?
   ) {
     UIApplication.shared.isIdleTimerDisabled = false
+    stopMotion()
     let callback = finish
     finish = nil
     let id = equipmentId
@@ -249,7 +315,6 @@ final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelega
  The viewfinder, as a Flutter platform view. The layer follows the view's
  bounds so it keeps filling the frame through a rotation.
  */
-@available(iOS 13.0, *)
 final class EquipmentVideoPreview: NSObject, FlutterPlatformView {
   private let container: PreviewView
 
@@ -279,7 +344,6 @@ final class EquipmentVideoPreview: NSObject, FlutterPlatformView {
   }
 }
 
-@available(iOS 13.0, *)
 final class EquipmentVideoPreviewFactory: NSObject, FlutterPlatformViewFactory {
   private let recorder: () -> EquipmentVideoRecorder
 

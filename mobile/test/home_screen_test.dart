@@ -111,6 +111,10 @@ void main() {
 
     expect(find.text('No connection. Check your signal.'), findsOneWidget);
     expect(find.byType(PlanRow), findsNothing);
+    // Signed in from the phone's copy of the session, so a capture can
+    // still be started (I-04).
+    expect(find.byType(CaptureCard), findsOneWidget);
+    expect(find.text('Northgate Group'), findsOneWidget);
 
     fakes.backend.offline = false;
     await tester.tap(find.text('Try again'));

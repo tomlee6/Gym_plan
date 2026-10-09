@@ -16,9 +16,7 @@ const MAYA = {
   name: 'Maya Restrepo',
   initials: 'MR',
   email: 'maya.restrepo@flexmotion.app',
-  role: 'reviewer',
-  roleLabel: 'Reviewer',
-  organisation: 'Flex Motion Technologies',
+  staffRole: 'reviewer',
 };
 
 const wall = (id, a, b, confidence = 0.95) => ({ id, a, b, confidence, mirror: false });
@@ -47,6 +45,10 @@ const REASONS = ['Incomplete coverage', 'Wrong scale', 'Unreadable source', 'Wro
 
 /** An in-memory fake of the review API. `calls` lists "METHOD path". */
 function fakeBackend({ role = 'reviewer' } = {}) {
+  // A gym owner is not staff: they hold a role in an account instead.
+  const me = role === 'owner'
+    ? { ...MAYA, staffRole: null, accounts: [{ id: 'acc_ng', name: 'Northgate Group', role: 'owner' }], account: { id: 'acc_ng', name: 'Northgate Group', role: 'owner' } }
+    : { ...MAYA, staffRole: role, accounts: [], account: null };
   const calls = [];
   const bodies = {};
   const versions = {
@@ -100,14 +102,10 @@ function fakeBackend({ role = 'reviewer' } = {}) {
     const body = init.body ? JSON.parse(init.body) : undefined;
     bodies[`${method} ${path}`] = body;
 
-    if (path === '/v1/auth/login') {
-      if (body.password !== 'review1234') return json(401, { message: 'Incorrect email or password.' });
-      return json(200, { accessToken: 'a1', refreshToken: 'r1', user: { ...MAYA, role } });
-    }
     if (path === '/v1/auth/logout') return json(204);
-    if (path === '/v1/me') return json(200, { ...MAYA, role });
+    if (path === '/v1/me') return json(200, me);
     if (path === '/v1/review/queue') {
-      const list = Object.values(versions).filter((v) => ['processing', 'in_review'].includes(v.status));
+      const list = Object.values(versions).filter((v) => ['processing', 'in_review', 'generation_failed'].includes(v.status));
       return json(200, {
         versions: list,
         stats: { waiting: list.length, unclaimed: list.filter((v) => !v.reviewer).length, oldestSubmittedAt: list[0]?.submittedAt ?? null, myMedianSecondsThisWeek: 680, myReviewsThisWeek: 3, approvedThisWeek: 5, rejectedThisWeek: 2 },
@@ -175,10 +173,12 @@ function renderApp(path = '/review') {
   );
 }
 
-async function signIn(password = 'review1234') {
-  fireEvent.change(await screen.findByLabelText('Email'), { target: { value: 'maya.restrepo@flexmotion.app' } });
-  fireEvent.change(screen.getByLabelText('Password'), { target: { value: password } });
-  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+/**
+ * Signs in as the Hub flow would leave things (lib/auth.test.jsx covers
+ * the flow itself), then lets the provider restore the session.
+ */
+async function signIn() {
+  client.startSession({ accessToken: 'a1', refreshToken: 'r1', accounts: [] });
 }
 
 beforeEach(() => client.resetForTests());
@@ -189,18 +189,11 @@ afterEach(() => {
 });
 
 describe('sign-in', () => {
-  it('shows the backend’s message on a wrong password', async () => {
-    vi.stubGlobal('fetch', fakeBackend());
-    renderApp();
-    await signIn('wrong');
-    expect(await screen.findByRole('alert')).toHaveTextContent('Incorrect email or password.');
-  });
-
   it('sends a gym owner to their own home, not the queue', async () => {
     const fetch = fakeBackend({ role: 'owner' });
     vi.stubGlobal('fetch', fetch);
-    renderApp();
     await signIn();
+    renderApp();
     expect(await screen.findByText('Owner home')).toBeInTheDocument();
     expect(fetch.calls).not.toContain('GET /v1/review/queue');
   });
@@ -209,8 +202,8 @@ describe('sign-in', () => {
 describe('reviewer queue', () => {
   it('lists plans oldest first with input, confidence, flags and who holds them', async () => {
     vi.stubGlobal('fetch', fakeBackend());
-    renderApp();
     await signIn();
+    renderApp();
     const rows = within(await screen.findByRole('table')).getAllByRole('row').slice(1);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent('Riverside Gym · Level 1');
@@ -221,13 +214,61 @@ describe('reviewer queue', () => {
     expect(within(rows[1]).getByText('Taken')).toBeInTheDocument();
     expect(screen.getByText('11m 20s')).toBeInTheDocument();
   });
+
+  it('brings back a version whose 3D build failed, with the reason (E-02)', async () => {
+    const fetch = fakeBackend();
+    fetch.versions.pv_eb0_1.status = 'generation_failed';
+    fetch.versions.pv_eb0_1.reviewer = null;
+    fetch.versions.pv_eb0_1.failureReason = 'Mesh over the triangle budget';
+    vi.stubGlobal('fetch', fetch);
+    await signIn();
+    renderApp();
+    const rows = within(await screen.findByRole('table')).getAllByRole('row').slice(1);
+    const failed = rows.find((r) => r.textContent.includes('Eastbrook'));
+    expect(failed).toHaveTextContent('3D build failed');
+    expect(failed).toHaveTextContent('3D build failed: Mesh over the triangle budget');
+    expect(within(failed).getByRole('button', { name: 'Open Eastbrook Athletic Club, Ground' })).toBeEnabled();
+  });
+
+  it('is accessible: headings, a captioned table with column headers, words not colour (H-04)', async () => {
+    vi.stubGlobal('fetch', fakeBackend());
+    await signIn();
+    renderApp();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Reviewer queue' })).toBeInTheDocument();
+    const table = await screen.findByRole('table', { name: 'Plans waiting for review, oldest first' });
+    const headers = within(table).getAllByRole('columnheader');
+    expect(headers.map((h) => h.getAttribute('scope'))).toEqual(Array(7).fill('col'));
+    expect(headers.at(-1)).toHaveTextContent('ACTION');
+    expect(screen.getByRole('region', { name: 'Queue summary' })).toBeInTheDocument();
+    // The tone of "your median" is also said in words.
+    expect(screen.getByText('11m 20s').closest('.rv-stat-value')).toHaveTextContent('(on target)');
+    // A taken plan says so in text, and every open action is a real button.
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(within(rows[1]).getByText('Taken')).toHaveAttribute('aria-disabled', 'true');
+    expect(within(rows[0]).getByRole('button', { name: 'Open Riverside Gym, Level 1' })).toBeInTheDocument();
+  });
+
+  it('announces loading and a failed load', async () => {
+    vi.stubGlobal('fetch', vi.fn((url) =>
+      Promise.resolve(
+        url.endsWith('/v1/me')
+          ? { ok: true, status: 200, json: () => Promise.resolve({ ...MAYA, accounts: [] }) }
+          : { ok: false, status: 503, json: () => Promise.resolve({ message: 'Queue offline.' }) },
+      ),
+    ));
+    await signIn();
+    renderApp();
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The queue could not be loaded');
+    expect(alert).toHaveTextContent('Queue offline.');
+  });
 });
 
 describe('plan editor', () => {
   async function openRiverside(fetch) {
     vi.stubGlobal('fetch', fetch);
-    renderApp();
     await signIn();
+    renderApp();
     fireEvent.click(await screen.findByRole('button', { name: 'Open Riverside Gym, Level 1' }));
     await screen.findByRole('heading', { name: 'Riverside Gym · Level 1' });
   }
@@ -304,8 +345,8 @@ describe('plan editor', () => {
 
   it('a plan someone else holds is read-only', async () => {
     vi.stubGlobal('fetch', fakeBackend());
-    renderApp();
     await signIn();
+    renderApp();
     await screen.findByRole('table');
     cleanup();
     renderApp('/review/versions/pv_ng2_1');
@@ -317,8 +358,8 @@ describe('plan editor', () => {
   it('an approved plan is read-only and can be revised into a new version', async () => {
     const fetch = fakeBackend();
     vi.stubGlobal('fetch', fetch);
-    renderApp();
     await signIn();
+    renderApp();
     await screen.findByRole('table');
     cleanup();
     renderApp('/review/versions/pv_eb0_1');

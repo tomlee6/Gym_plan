@@ -1,0 +1,118 @@
+# Build and release lanes for the Flex Gym Scan iPhone app (M-13).
+#
+# Run from mobile/ios:
+#   bundle exec fastlane test   Flutter unit and widget tests
+#   bundle exec fastlane beta   signed release build, uploaded to TestFlight
+#
+# Environment (see README.md in this folder for the full list):
+#   APP_IDENTIFIER, APPLE_TEAM_ID       app identity (Appfile)
+#   GYM_PLAN_API                        API base URL baked into the build
+#   ASC_KEY_ID, ASC_ISSUER_ID,          App Store Connect API key
+#   ASC_KEY_CONTENT (base64 .p8)
+#   MATCH_GIT_URL, MATCH_PASSWORD       signing repository (Matchfile)
+
+require "fileutils"
+
+default_platform(:ios)
+
+# mobile/ (where pubspec.yaml lives). fastlane runs actions from the fastlane
+# folder, so Flutter commands are run from here explicitly.
+MOBILE_ROOT = File.expand_path("../..", __dir__)
+IOS_ROOT = File.expand_path("..", __dir__)
+
+def flutter(*args)
+  Dir.chdir(MOBILE_ROOT) { sh("flutter", *args) }
+end
+
+def asc_api_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_content: ENV.fetch("ASC_KEY_CONTENT"),
+    is_key_content_base64: true,
+    in_house: false
+  )
+end
+
+# Export options for `flutter build ipa`: manual signing with the match profile.
+def write_export_options(path, team:, app_id:, profile:)
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, <<~PLIST)
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>method</key><string>app-store-connect</string>
+      <key>teamID</key><string>#{team}</string>
+      <key>signingStyle</key><string>manual</string>
+      <key>provisioningProfiles</key>
+      <dict><key>#{app_id}</key><string>#{profile}</string></dict>
+      <key>uploadSymbols</key><true/>
+    </dict>
+    </plist>
+  PLIST
+end
+
+platform :ios do
+  before_all do
+    # On CI, use a temporary keychain so match can install certificates
+    # without prompting.
+    setup_ci if is_ci
+  end
+
+  desc "Run the Flutter tests"
+  lane :test do
+    flutter("pub", "get")
+    flutter("test")
+  end
+
+  desc "Build a signed release and upload it to TestFlight"
+  lane :beta do
+    api_url = ENV.fetch("GYM_PLAN_API")
+    app_id = ENV.fetch("APP_IDENTIFIER")
+    team = ENV.fetch("APPLE_TEAM_ID")
+    api_key = asc_api_key
+
+    # Signing: CI only ever reads the signing repository. Creating or renewing
+    # certificates is done by hand with `fastlane match appstore`.
+    match(type: "appstore", readonly: is_ci, api_key: api_key)
+    profile = ENV.fetch("sigh_#{app_id}_appstore_profile-name")
+
+    # Switch the Runner target to the match profile for this build. This edits
+    # the checked-out project file only; do not commit the change.
+    update_code_signing_settings(
+      path: File.join(IOS_ROOT, "Runner.xcodeproj"),
+      targets: ["Runner"],
+      use_automatic_signing: false,
+      team_id: team,
+      bundle_identifier: app_id,
+      code_sign_identity: "Apple Distribution",
+      profile_name: profile
+    )
+
+    # Build numbers must increase for every TestFlight upload.
+    build_number = latest_testflight_build_number(api_key: api_key, app_identifier: app_id) + 1
+
+    export_options = File.join(IOS_ROOT, "build", "ExportOptions.plist")
+    write_export_options(export_options, team: team, app_id: app_id, profile: profile)
+
+    flutter("pub", "get")
+    flutter(
+      "build", "ipa", "--release",
+      "--dart-define=GYM_PLAN_API=#{api_url}",
+      "--build-number=#{build_number}",
+      "--export-options-plist=#{export_options}"
+    )
+
+    ipa = Dir[File.join(MOBILE_ROOT, "build", "ios", "ipa", "*.ipa")].first
+    UI.user_error!("flutter build ipa produced no .ipa") unless ipa
+
+    upload_to_testflight(
+      api_key: api_key,
+      ipa: ipa,
+      app_identifier: app_id,
+      skip_waiting_for_build_processing: true,
+      changelog: ENV["TESTFLIGHT_CHANGELOG"]
+    )
+  end
+end

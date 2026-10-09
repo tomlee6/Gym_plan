@@ -11,7 +11,9 @@ import { useLoader, useNow } from '../../lib/useLoader.js';
 import { useTitle } from '../../lib/useTitle.js';
 import { ApproveDialog, RejectDialog } from '../DecisionDialogs.jsx';
 import Canvas from './Canvas.jsx';
-import { deleteElement, findElement } from './ops.js';
+import { keyframesIndexFile, readKeyframes } from './keyframes.js';
+import { deleteElement, findElement, movePolygon } from './ops.js';
+import { floorTriangles, meshFile, parseObj, trianglesPath } from './scanMesh.js';
 import Sidebar from './Sidebar.jsx';
 import Toolbar, { TOOLS } from './Toolbar.jsx';
 import { useActivity, useAutosave, usePlanHistory } from './useEditorState.js';
@@ -115,6 +117,62 @@ function useSource(v) {
   return { source, underlay };
 }
 
+/** The file's address without its signature, so re-signing a URL is not a new file. */
+const unsigned = (file) => (file ? file.url.split('?')[0] : null);
+
+/**
+ * The scan mesh (H-03), fetched the first time the reviewer turns it on and
+ * kept for the rest of the visit: a LiDAR mesh is megabytes, and most
+ * reviews never need it. `status` is null until asked, then 'loading',
+ * 'ready' or 'error'.
+ */
+function useScanMesh(v, wanted) {
+  const file = meshFile(v.files);
+  const key = unsigned(file);
+  const [state, setState] = useState({ key: null, status: null, path: '' });
+  const url = file?.url;
+  useEffect(() => {
+    if (!wanted || !url || state.key === key) return undefined;
+    const controller = new AbortController();
+    setState({ key, status: 'loading', path: '' });
+    fetch(url, { signal: controller.signal })
+      .then((res) => (res.ok ? res.text() : Promise.reject(new Error(String(res.status)))))
+      .then((text) => setState({ key, status: 'ready', path: trianglesPath(floorTriangles(parseObj(text))) }))
+      .catch((err) => {
+        // An abandoned load is forgotten, so turning the mesh on again retries it.
+        setState(err?.name === 'AbortError' ? { key: null, status: null, path: '' } : { key, status: 'error', path: '' });
+      });
+    return () => controller.abort();
+    // Fetch once per file, not once per re-signed URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted, key]);
+  return file ? state : { status: null, path: '' };
+}
+
+/**
+ * The scan's keyframes (H-03), loaded the first time a machine is
+ * selected. Null while there are none: no keyframes.json, or it could not
+ * be read, in which case the inspector simply shows no photos.
+ */
+function useKeyframes(v, wanted) {
+  const file = keyframesIndexFile(v.files);
+  const key = unsigned(file);
+  const [state, setState] = useState({ key: null, frames: null });
+  const url = file?.url;
+  useEffect(() => {
+    if (!wanted || !url || state.key === key) return undefined;
+    const controller = new AbortController();
+    setState({ key, frames: null });
+    fetch(url, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => setState({ key, frames: json ? readKeyframes(json) : [] }))
+      .catch((err) => setState(err?.name === 'AbortError' ? { key: null, frames: null } : { key, frames: [] }));
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted, key]);
+  return file && state.frames ? { frames: state.frames, files: v.files } : null;
+}
+
 function Editor({ v, reload }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -124,7 +182,10 @@ function Editor({ v, reload }) {
   const history = usePlanHistory(v.plan ?? emptyPlan());
   const plan = history.plan;
   const [tool, setTool] = useState('select');
-  const [options, setOptions] = useState({ openingType: 'door', tagType: 'fireExit' });
+  const [options, setOptions] = useState({ openingKind: 'single_door', tagType: 'fireExit' });
+  // H-02: a machine from the phone waiting for the reviewer to click where it stands.
+  const [placing, setPlacing] = useState(null);
+  const [showMesh, setShowMesh] = useState(false);
   const [selection, setSelection] = useState(null);
   const [showSource, setShowSource] = useState(true);
   const [zoom, setZoom] = useState(null);
@@ -134,6 +195,20 @@ function Editor({ v, reload }) {
   const [acting, setActing] = useState(false);
   const loadedAt = useRef(Date.now());
   const { source, underlay } = useSource(v);
+  const mesh = useScanMesh(v, showMesh);
+  const selectedObject = selection ? plan.objects.find((o) => o.id === selection) : null;
+  const keyframes = useKeyframes(v, Boolean(selectedObject));
+
+  const startPlacing = useCallback((item) => {
+    setPlacing(item);
+    setSelection(null);
+    setTool('place');
+  }, []);
+
+  // Leaving the placing tool by any route forgets the machine being placed.
+  useEffect(() => {
+    if (tool !== 'place') setPlacing(null);
+  }, [tool]);
 
   const issues = useMemo(() => validate(plan), [plan]);
   const blockers = useMemo(() => approvalBlockers(plan), [plan]);
@@ -208,7 +283,8 @@ function Editor({ v, reload }) {
         history.change(deleteElement(plan, selection));
         setSelection(null);
       } else if (k === 'escape') {
-        if (canvas.current?.hasDraft()) canvas.current.cancelDraft();
+        if (tool === 'place') setTool('select');
+        else if (canvas.current?.hasDraft()) canvas.current.cancelDraft();
         else if (selection) setSelection(null);
         else setTool('select');
       } else if (k === 'enter') {
@@ -242,6 +318,8 @@ function Editor({ v, reload }) {
         ...plan,
         walls: plan.walls.map((w) => (w.id === el.id ? { ...w, a: [r(w.a[0] + d[0]), r(w.a[1] + d[1])], b: [r(w.b[0] + d[0]), r(w.b[1] + d[1])] } : w)),
       });
+    } else if (Array.isArray(el.points)) {
+      history.change(movePolygon(plan, el.id, d));
     } else if ('x' in el) {
       history.change({ ...plan, [kind]: plan[kind].map((e) => (e.id === el.id ? { ...e, x: r(e.x + d[0]), y: r(e.y + d[1]) } : e)) });
     }
@@ -299,6 +377,11 @@ function Editor({ v, reload }) {
             showSource={showSource}
             onShowSource={setShowSource}
             hasSource={Boolean(source || underlay)}
+            hasMesh={Boolean(meshFile(v.files))}
+            showMesh={showMesh}
+            onShowMesh={setShowMesh}
+            meshStatus={mesh.status}
+            placing={placing}
           />
           {scaleLine && (
             <ScaleForm
@@ -327,6 +410,9 @@ function Editor({ v, reload }) {
             problems={problems}
             onScaleLine={(a, b) => setScaleLine({ a, b })}
             onZoomChange={setZoom}
+            placing={placing}
+            onPlaced={() => setTool('select')}
+            meshPath={showMesh ? mesh.path : ''}
           />
         </div>
         <Sidebar
@@ -338,6 +424,9 @@ function Editor({ v, reload }) {
           onSelect={setSelection}
           onFocus={focus}
           history={history}
+          placing={placing}
+          onPlace={startPlacing}
+          keyframes={keyframes}
         />
       </div>
 
@@ -353,7 +442,7 @@ function Editor({ v, reload }) {
             if (!(await save.flush())) throw new Error(save.error ?? 'The plan could not be saved.');
             const r = await reviewApi.approve(v.id);
             navigate('/review', {
-              state: { notice: `${title}, version ${v.version} approved · hash ${r.contentHash.slice(0, 12)}…` },
+              state: { notice: `${title}, version ${v.version} approved · hash ${r.contentHash.slice(0, 12)}…${r.status === 'generating' ? ' · building the 3D walkthrough' : ''}` },
             });
           }}
         />

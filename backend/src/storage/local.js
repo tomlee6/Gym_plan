@@ -171,4 +171,9 @@ export class LocalStorage {
   async abort(_key, uploadId) {
     await rm(this.#pending(uploadId), { recursive: true, force: true });
   }
+
+  /** Cold storage has no local equivalent: the file stays where it is. */
+  async archive(key) {
+    await stat(this.#object(key));
+  }
 }

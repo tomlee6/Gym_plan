@@ -1,0 +1,10 @@
+# App identity for fastlane. Values come from the environment so the same
+# files work for every bundle id (the bundle id is not final yet) and in CI.
+#
+#   APP_IDENTIFIER   bundle id, e.g. com.goalcert.flexgymscan
+#   APPLE_TEAM_ID    Apple Developer team id (10 characters)
+#   APPLE_ID         optional; only for local use without an API key
+
+app_identifier(ENV.fetch("APP_IDENTIFIER"))
+team_id(ENV.fetch("APPLE_TEAM_ID"))
+apple_id(ENV["APPLE_ID"]) if ENV["APPLE_ID"]

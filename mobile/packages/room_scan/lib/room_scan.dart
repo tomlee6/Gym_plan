@@ -83,7 +83,8 @@ class RoomScanUpdate {
 
     final List<Object?> walls = map['walls'] as List<Object?>? ?? const [];
     final List<Object?> objects = map['objects'] as List<Object?>? ?? const [];
-    final List<Object?> detected = map['detected'] as List<Object?>? ?? const [];
+    final List<Object?> detected =
+        map['detected'] as List<Object?>? ?? const [];
     final Object? position = map['position'];
 
     return RoomScanUpdate(
@@ -380,6 +381,25 @@ class EquipmentVideo {
   final bool simulated;
 }
 
+/// One sample of which way the camera points while a walkaround is being
+/// recorded (I-06), from CoreMotion's device attitude.
+@immutable
+class RecorderMotion {
+  const RecorderMotion({required this.headingDeg, this.pitchDeg});
+
+  factory RecorderMotion.fromMap(Map<Object?, Object?> map) => RecorderMotion(
+    headingDeg: (map['headingDeg']! as num).toDouble(),
+    pitchDeg: (map['pitchDeg'] as num?)?.toDouble(),
+  );
+
+  /// The camera's horizontal direction, 0–360°, against an arbitrary but
+  /// fixed reference: only changes in it mean anything.
+  final double headingDeg;
+
+  /// How far the camera points above (+) or below (−) the horizon.
+  final double? pitchDeg;
+}
+
 /// The 360 degree equipment recorder (CHANGE 3).
 ///
 /// Recording is a separate step from the room scan, not part of it: ARKit
@@ -401,9 +421,8 @@ class EquipmentRecorder {
 
   /// Ends the recording and returns the file, its length and poster frame.
   static Future<EquipmentVideo> stop() async {
-    final Map<Object?, Object?>? map = await RoomScan._call<Map<Object?, Object?>>(
-      'video.stop',
-    );
+    final Map<Object?, Object?>? map =
+        await RoomScan._call<Map<Object?, Object?>>('video.stop');
     return EquipmentVideo.fromMap(map ?? const <Object?, Object?>{});
   }
 
@@ -415,6 +434,23 @@ class EquipmentRecorder {
 
   /// Releases the camera once the equipment step is over.
   static Future<void> dispose() => RoomScan._call<void>('video.dispose');
+
+  static const EventChannel _motion = EventChannel(
+    'flex/room_scan/video_events',
+  );
+
+  /// The camera's heading and pitch, about ten times a second while a
+  /// recording runs, so the screen can show how far round the machine the
+  /// surveyor has walked (I-06). Empty where there is no motion data, e.g.
+  /// a simulator; anything malformed is skipped rather than ending it.
+  static Stream<RecorderMotion> motion() => _motion
+      .receiveBroadcastStream()
+      .where(
+        (Object? e) =>
+            e is Map && e['type'] == 'motion' && e['headingDeg'] is num,
+      )
+      .map((Object? e) => RecorderMotion.fromMap(e! as Map<Object?, Object?>))
+      .handleError((Object _) {});
 }
 
 /// The viewfinder for [EquipmentRecorder]. Shows nothing until

@@ -8,13 +8,24 @@ import { AuditIcon, BackIcon, PlusIcon } from '../lib/icons.jsx';
 import Modal from '../lib/Modal.jsx';
 import { useLoader } from '../lib/useLoader.js';
 import { useTitle } from '../lib/useTitle.js';
-import { accountNote, QuotaBar } from './parts.jsx';
+import { accountNote, isRemoved, isRemoving, QuotaBar } from './parts.jsx';
 import './admin.css';
 
+/** The roles a person can hold in a gym account (api-contract-v2 section 2). */
+export const ACCOUNT_ROLES = [
+  ['owner', 'Owner & Surveyor'],
+  ['surveyor', 'Surveyor'],
+];
+
+const roleLabel = (role) => ACCOUNT_ROLES.find(([value]) => value === role)?.[1] ?? role;
+
 /**
- * One account (ACC-05, ACC-07): its name and monthly quota, users, gyms,
- * and removing its data on request. In this response `users` is the list of
- * users, not the count.
+ * One account (ACC-05, ACC-07, B-09): its name and monthly quota, who is in
+ * it and with what role, open invites, gyms, and removing its data.
+ *
+ * People join by invite only. An invite names an email address and a role;
+ * whoever signs in with GoalCert under that verified address takes it up.
+ * Nobody here is ever given a password.
  */
 export default function AccountPage() {
   const { id } = useParams();
@@ -31,7 +42,7 @@ export default function AccountPage() {
       <h1>{a ? a.name : 'Account'}</h1>
       <span className="spacer" />
       {a && (
-        <Link className="rv-button ghost" to={`/admin/audit?orgId=${encodeURIComponent(a.id)}`}>
+        <Link className="rv-button ghost" to={`/admin/audit?accountId=${encodeURIComponent(a.id)}`}>
           <AuditIcon size={15} />
           Account audit log
         </Link>
@@ -45,7 +56,7 @@ export default function AccountPage() {
         {header}
         <div className="rv-content">
           {error ? (
-            <div className="rv-empty">
+            <div className="rv-empty" role="alert">
               <h2>{error.status === 404 ? 'This account does not exist' : 'The account could not be loaded'}</h2>
               <p className="muted">{error.message}</p>
               {error.status !== 404 && (
@@ -69,6 +80,7 @@ export default function AccountPage() {
     setNotice(message);
     reload();
   };
+  const gone = isRemoved(a) || isRemoving(a);
 
   return (
     <>
@@ -84,12 +96,13 @@ export default function AccountPage() {
         )}
         <div className="ad-grid">
           <div className="ad-stack">
-            <UsersCard account={a} onChanged={done} />
-            {!a.operator && !a.dataRemovedAt && <FacilitiesCard account={a} onChanged={done} />}
+            <MembersCard account={a} onChanged={done} />
+            {!gone && <InvitesCard account={a} onChanged={done} />}
+            {!gone && <FacilitiesCard account={a} onChanged={done} />}
           </div>
           <div className="ad-stack">
-            {!a.dataRemovedAt && <DetailsCard account={a} onChanged={done} />}
-            <RemovalCard account={a} onRemoved={done} />
+            {!gone && <DetailsCard account={a} onChanged={done} />}
+            <RemovalCard account={a} onStarted={done} />
           </div>
         </div>
       </div>
@@ -108,7 +121,7 @@ function DetailsCard({ account: a, onChanged }) {
   }, [a.name, a.planQuota]);
 
   const q = Number(quota);
-  const changed = name.trim() !== a.name || (!a.operator && q !== a.planQuota);
+  const changed = name.trim() !== a.name || q !== a.planQuota;
   const valid = name.trim().length >= 2 && Number.isInteger(q) && q >= 0 && q <= 10000;
 
   async function save(e) {
@@ -118,7 +131,7 @@ function DetailsCard({ account: a, onChanged }) {
     try {
       const body = {};
       if (name.trim() !== a.name) body.name = name.trim();
-      if (!a.operator && q !== a.planQuota) body.planQuota = q;
+      if (q !== a.planQuota) body.planQuota = q;
       await adminApi.updateAccount(a.id, body);
       onChanged('Account saved.');
     } catch (err) {
@@ -130,34 +143,30 @@ function DetailsCard({ account: a, onChanged }) {
 
   return (
     <section className="rv-card" aria-labelledby="details-title">
-      <div className="eyebrow" id="details-title">
+      <h2 className="eyebrow" id="details-title">
         ACCOUNT
-      </div>
+      </h2>
       <form className="ad-stack" onSubmit={save} noValidate>
         <label className="rv-field">
           <span>Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} />
         </label>
-        {!a.operator && (
-          <>
-            <label className="rv-field">
-              <span>Monthly plan quota</span>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                inputMode="numeric"
-                value={quota}
-                onChange={(e) => setQuota(e.target.value)}
-                aria-describedby="quota-use"
-              />
-            </label>
-            <div id="quota-use" className="small">
-              <span className="muted">Used this month: </span>
-              <QuotaBar used={a.plansUsed} quota={a.planQuota} />
-            </div>
-          </>
-        )}
+        <label className="rv-field">
+          <span>Monthly plan quota</span>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            inputMode="numeric"
+            value={quota}
+            onChange={(e) => setQuota(e.target.value)}
+            aria-describedby="quota-use"
+          />
+        </label>
+        <div id="quota-use" className="small">
+          <span className="muted">Used this month: </span>
+          <QuotaBar used={a.plansUsed} quota={a.planQuota} />
+        </div>
         {error && (
           <p className="rv-error" role="alert">
             {error}
@@ -173,29 +182,39 @@ function DetailsCard({ account: a, onChanged }) {
   );
 }
 
-function UsersCard({ account: a, onChanged }) {
+/** Who is in the account: change a role, or take someone out of it. */
+function MembersCard({ account: a, onChanged }) {
   const { user: me } = useAuth();
-  const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState(null);
-  const users = a.users ?? [];
-  const active = users.filter((u) => u.active).length;
-  const removed = Boolean(a.dataRemovedAt);
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState(null);
+  const members = a.members ?? [];
+  const gone = isRemoved(a) || isRemoving(a);
+
+  async function changeRole(m, role) {
+    setBusy(m.userId);
+    setError(null);
+    try {
+      await adminApi.setMemberRole(a.id, m.userId, role);
+      onChanged(`${m.name ?? m.email} is now ${roleLabel(role)}.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
-    <section className="rv-card" aria-labelledby="users-title">
+    <section className="rv-card" aria-labelledby="members-title">
       <div className="rv-card-head">
-        <div className="eyebrow" id="users-title">
-          USERS · {active} ACTIVE
-        </div>
-        {!removed && (
-          <button type="button" className="rv-button ghost" onClick={() => setAdding(true)}>
-            <PlusIcon size={15} />
-            Add user
-          </button>
-        )}
+        <h2 className="eyebrow" id="members-title">
+          MEMBERS · {members.length}
+        </h2>
       </div>
-      {users.length === 0 ? (
-        <p className="muted small">{removed ? 'The users were removed with the account’s data.' : 'No users yet.'}</p>
+      {members.length === 0 ? (
+        <p className="muted small">
+          {gone ? 'The members were removed with the account’s data.' : 'Nobody has joined yet. Invite the owner below.'}
+        </p>
       ) : (
         <div className="rv-table-wrap">
           <table className="rv-table">
@@ -203,28 +222,47 @@ function UsersCard({ account: a, onChanged }) {
               <tr>
                 <th scope="col">NAME</th>
                 <th scope="col">ROLE</th>
-                <th scope="col">STATUS</th>
                 <th scope="col">
                   <span className="sr-only">ACTION</span>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className={u.active ? undefined : 'taken'}>
+              {members.map((m) => (
+                <tr key={m.userId} className={m.status && m.status !== 'active' ? 'taken' : undefined}>
                   <td data-label="Name">
-                    <div className="rv-cell-title">{u.name}</div>
-                    <div className="rv-cell-sub">{u.email}</div>
+                    <div className="rv-cell-title">{m.name ?? m.email}</div>
+                    <div className="rv-cell-sub">
+                      {m.email}
+                      {m.status && m.status !== 'active' ? ` · ${m.status}` : ''}
+                    </div>
                   </td>
-                  <td data-label="Role">{u.roleLabel}</td>
-                  <td data-label="Status">{u.active ? 'Active' : 'Removed'}</td>
+                  <td data-label="Role">
+                    {gone ? (
+                      roleLabel(m.role)
+                    ) : (
+                      <select
+                        className="ad-role-select"
+                        value={m.role}
+                        disabled={busy === m.userId}
+                        onChange={(e) => changeRole(m, e.target.value)}
+                        aria-label={`Role of ${m.name ?? m.email}`}
+                      >
+                        {ACCOUNT_ROLES.map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </td>
                   <td className="rv-action">
-                    {u.active && u.id !== me?.id && (
+                    {!gone && m.userId !== me?.id && (
                       <button
                         type="button"
                         className="rv-button danger-ghost"
-                        onClick={() => setRemoving(u)}
-                        aria-label={`Remove ${u.name}`}
+                        onClick={() => setRemoving(m)}
+                        aria-label={`Remove ${m.name ?? m.email}`}
                       >
                         Remove
                       </button>
@@ -236,24 +274,19 @@ function UsersCard({ account: a, onChanged }) {
           </table>
         </div>
       )}
-      {adding && (
-        <AddUserDialog
-          account={a}
-          onCancel={() => setAdding(false)}
-          onAdded={(name) => {
-            setAdding(false);
-            onChanged(`${name} was added.`);
-          }}
-        />
+      {error && (
+        <p className="rv-error" role="alert" style={{ marginTop: 10 }}>
+          {error}
+        </p>
       )}
       {removing && (
-        <RemoveUserDialog
+        <RemoveMemberDialog
           account={a}
-          user={removing}
+          member={removing}
           onCancel={() => setRemoving(null)}
           onRemoved={() => {
             setRemoving(null);
-            onChanged(`${removing.name} was removed. Their sessions have ended.`);
+            onChanged(`${removing.name ?? removing.email} was removed from ${a.name}.`);
           }}
         />
       )}
@@ -261,108 +294,16 @@ function UsersCard({ account: a, onChanged }) {
   );
 }
 
-const ROLE_OPTIONS = {
-  customer: [
-    ['owner', 'Owner & Surveyor'],
-    ['surveyor', 'Surveyor'],
-  ],
-  operator: [
-    ['reviewer', 'Reviewer'],
-    ['admin', 'Platform admin'],
-  ],
-};
-
-function AddUserDialog({ account: a, onCancel, onAdded }) {
-  const roles = a.operator ? ROLE_OPTIONS.operator : ROLE_OPTIONS.customer;
-  const [form, setForm] = useState({ name: '', email: '', role: roles[0][0], password: '' });
+function RemoveMemberDialog({ account: a, member, onCancel, onRemoved }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-  const valid = form.name.trim().length >= 2 && /\S+@\S+\.\S+/.test(form.email) && form.password.length >= 8;
-
-  async function submit(e) {
-    e?.preventDefault();
-    if (!valid) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await adminApi.addUser(a.id, { ...form, name: form.name.trim(), email: form.email.trim() });
-      onAdded(form.name.trim());
-    } catch (err) {
-      setError(err.message);
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal
-      title="Add user"
-      subtitle={a.name}
-      onClose={onCancel}
-      busy={busy}
-      footer={
-        <>
-          <button type="button" className="rv-button ghost" onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
-          <button type="button" className="rv-button primary" onClick={submit} disabled={busy || !valid}>
-            {busy ? 'Adding…' : 'Add user'}
-          </button>
-        </>
-      }
-    >
-      <form className="ad-form-grid" onSubmit={submit} noValidate>
-        <label className="rv-field wide">
-          <span>Name</span>
-          <input value={form.name} onChange={set('name')} autoComplete="off" />
-        </label>
-        <label className="rv-field wide">
-          <span>Email</span>
-          <input type="email" value={form.email} onChange={set('email')} autoComplete="off" />
-        </label>
-        <label className="rv-field">
-          <span>Role</span>
-          <select value={form.role} onChange={set('role')}>
-            {roles.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="rv-field">
-          <span>Temporary password</span>
-          <input
-            type="password"
-            value={form.password}
-            onChange={set('password')}
-            autoComplete="new-password"
-            aria-describedby="add-user-password-help"
-          />
-        </label>
-        <p id="add-user-password-help" className="small muted wide">
-          At least 8 characters.
-        </p>
-        <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
-      </form>
-      {error && (
-        <p className="rv-error" role="alert">
-          {error}
-        </p>
-      )}
-    </Modal>
-  );
-}
-
-function RemoveUserDialog({ account: a, user, onCancel, onRemoved }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState(null);
+  const name = member.name ?? member.email;
 
   async function confirm() {
     setBusy(true);
     setError(null);
     try {
-      await adminApi.removeUser(a.id, user.id);
+      await adminApi.removeMember(a.id, member.userId);
       onRemoved();
     } catch (err) {
       setError(err.message);
@@ -372,8 +313,8 @@ function RemoveUserDialog({ account: a, user, onCancel, onRemoved }) {
 
   return (
     <Modal
-      title={`Remove ${user.name}?`}
-      subtitle={user.email}
+      title={`Remove ${name}?`}
+      subtitle={member.email}
       onClose={onCancel}
       busy={busy}
       footer={
@@ -382,14 +323,14 @@ function RemoveUserDialog({ account: a, user, onCancel, onRemoved }) {
             Cancel
           </button>
           <button type="button" className="rv-button danger" onClick={confirm} disabled={busy}>
-            {busy ? 'Removing…' : 'Remove user'}
+            {busy ? 'Removing…' : 'Remove from account'}
           </button>
         </>
       }
     >
       <p className="small muted">
-        They can no longer sign in to the app or the web, and their current sessions end. What they captured
-        or approved stays attributed to them.
+        They lose access to {a.name}’s plans straight away. Their GoalCert account and any other gym accounts they
+        belong to are not affected. What they captured stays attributed to them.
       </p>
       {error && (
         <p className="rv-error" role="alert">
@@ -400,11 +341,119 @@ function RemoveUserDialog({ account: a, user, onCancel, onRemoved }) {
   );
 }
 
+/**
+ * B-09: invite someone by email with a role. Open invites are listed until
+ * taken up or revoked; the backend refuses a second open invite for the
+ * same address (409) and its message is shown as is.
+ */
+function InvitesCard({ account: a, onChanged }) {
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('surveyor');
+  const [busy, setBusy] = useState(false);
+  const [revoking, setRevoking] = useState(null);
+  const [error, setError] = useState(null);
+  const invites = a.invites ?? [];
+  const valid = /\S+@\S+\.\S+/.test(email.trim());
+
+  async function invite(e) {
+    e.preventDefault();
+    if (!valid) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const address = email.trim();
+      await adminApi.invite(a.id, { email: address, role });
+      setEmail('');
+      onChanged(`${address} was invited as ${roleLabel(role)}.`);
+    } catch (err) {
+      setError(err.status === 409 && !err.body?.message ? `${email.trim()} already has an open invite.` : err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(inv) {
+    setRevoking(inv.id);
+    setError(null);
+    try {
+      await adminApi.revokeInvite(a.id, inv.id);
+      onChanged(`The invite for ${inv.email} was revoked.`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRevoking(null);
+    }
+  }
+
+  return (
+    <section className="rv-card" aria-labelledby="invites-title">
+      <h2 className="eyebrow" id="invites-title">
+        INVITES · {invites.length} OPEN
+      </h2>
+      {invites.length === 0 ? (
+        <p className="muted small">No open invites.</p>
+      ) : (
+        <ul className="ad-list" aria-label="Open invites">
+          {invites.map((inv) => (
+            <li key={inv.id}>
+              <span>
+                {inv.email}
+                <span className="muted small">
+                  {' '}
+                  · {roleLabel(inv.role)}
+                  {inv.expiresAt ? ` · expires ${date(inv.expiresAt)}` : ''}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="rv-button danger-ghost small"
+                onClick={() => revoke(inv)}
+                disabled={revoking === inv.id}
+                aria-label={`Revoke the invite for ${inv.email}`}
+              >
+                {revoking === inv.id ? 'Revoking…' : 'Revoke'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form className="ad-inline-form" onSubmit={invite} style={{ marginTop: 12 }} noValidate>
+        <label className="rv-field">
+          <span>Email</span>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="off" />
+        </label>
+        <label className="rv-field">
+          <span>Role</span>
+          <select value={role} onChange={(e) => setRole(e.target.value)}>
+            {ACCOUNT_ROLES.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" className="rv-button ghost" disabled={busy || !valid}>
+          <PlusIcon size={15} />
+          {busy ? 'Inviting…' : 'Send invite'}
+        </button>
+      </form>
+      <p className="small muted" style={{ marginTop: 8 }}>
+        They join by signing in with GoalCert using this email address.
+      </p>
+      {error && (
+        <p className="rv-error" role="alert" style={{ marginTop: 10 }}>
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function FacilitiesCard({ account: a, onChanged }) {
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const removed = Boolean(a.dataRemovedAt);
+  const facilities = a.facilities ?? [];
 
   async function add(e) {
     e.preventDefault();
@@ -424,35 +473,35 @@ function FacilitiesCard({ account: a, onChanged }) {
 
   return (
     <section className="rv-card" aria-labelledby="facilities-title">
-      <div className="eyebrow" id="facilities-title">
-        FACILITIES · {a.facilities.length}
-      </div>
-      {a.facilities.length === 0 ? (
+      <h2 className="eyebrow" id="facilities-title">
+        FACILITIES · {facilities.length}
+      </h2>
+      {facilities.length === 0 ? (
         <p className="muted small">No gyms yet. Add one so the account can capture it.</p>
       ) : (
         <ul className="ad-list">
-          {a.facilities.map((f) => (
+          {facilities.map((f) => (
             <li key={f.id}>
               <span>{f.name}</span>
-              <span className="muted">
-                {f.levels} level{f.levels === 1 ? '' : 's'}
-              </span>
+              {f.levels != null && (
+                <span className="muted">
+                  {f.levels} level{f.levels === 1 ? '' : 's'}
+                </span>
+              )}
             </li>
           ))}
         </ul>
       )}
-      {!removed && (
-        <form className="ad-inline-form" onSubmit={add} style={{ marginTop: 12 }}>
-          <label className="rv-field">
-            <span>New facility</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Kestrel Fitzroy" />
-          </label>
-          <button type="submit" className="rv-button ghost" disabled={busy || name.trim().length < 2}>
-            <PlusIcon size={15} />
-            {busy ? 'Adding…' : 'Add facility'}
-          </button>
-        </form>
-      )}
+      <form className="ad-inline-form" onSubmit={add} style={{ marginTop: 12 }}>
+        <label className="rv-field">
+          <span>New facility</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Kestrel Fitzroy" />
+        </label>
+        <button type="submit" className="rv-button ghost" disabled={busy || name.trim().length < 2}>
+          <PlusIcon size={15} />
+          {busy ? 'Adding…' : 'Add facility'}
+        </button>
+      </form>
       {error && (
         <p className="rv-error" role="alert" style={{ marginTop: 10 }}>
           {error}
@@ -462,60 +511,64 @@ function FacilitiesCard({ account: a, onChanged }) {
   );
 }
 
-const TALLY = [
-  ['plans', 'plans'],
-  ['versions', 'versions'],
-  ['captures', 'captures'],
-  ['files', 'files'],
-  ['users', 'users'],
-];
-
-/** ACC-07: delete plans, scans, models and files; keep the log by id only. */
-function RemovalCard({ account: a, onRemoved }) {
+/**
+ * ACC-07: delete plans, scans, models and files; keep the log by id only.
+ * Removal is a background job (202 {jobId}): the page says it has started
+ * and finishes on its own, rather than waiting for every file to go.
+ */
+function RemovalCard({ account: a, onStarted }) {
   const [confirming, setConfirming] = useState(false);
-  const [result, setResult] = useState(null);
+  const [jobId, setJobId] = useState(null);
 
-  if (a.dataRemovedAt) {
+  if (isRemoved(a)) {
     return (
       <section className="rv-card ad-danger" aria-labelledby="removal-title">
-        <div className="eyebrow" id="removal-title">
+        <h2 className="eyebrow" id="removal-title">
           ACCOUNT DATA REMOVED
-        </div>
+        </h2>
         <p>
-          Removed on {date(a.dataRemovedAt)}. Plans, scans, models, files and users are gone. The audit log keeps
-          this account’s entries with identifiers only.
+          Removed{a.removedAt ? ` on ${date(a.removedAt)}` : ''}. Plans, scans, models, files and memberships are gone.
+          The audit log keeps this account’s entries with identifiers only.
         </p>
-        {result && <Tally result={result} />}
+      </section>
+    );
+  }
+
+  if (isRemoving(a) || jobId) {
+    return (
+      <section className="rv-card ad-danger" aria-labelledby="removal-title">
+        <h2 className="eyebrow" id="removal-title">
+          REMOVAL STARTED
+        </h2>
+        <p role="status">
+          Removal started. It completes in the background; this page shows the account as removed once every plan,
+          scan and file is gone.
+        </p>
+        {jobId && <p className="small muted">Job {jobId}</p>}
       </section>
     );
   }
 
   return (
     <section className="rv-card ad-danger" aria-labelledby="removal-title">
-      <div className="eyebrow" id="removal-title">
+      <h2 className="eyebrow" id="removal-title">
         REMOVE ACCOUNT DATA
-      </div>
-      {a.operator ? (
-        <p>The operator account holds Flex staff, not customer data, and cannot be removed.</p>
-      ) : (
-        <>
-          <p>
-            Deletes every plan, scan, model and file, and removes the account’s users. The audit log is kept with
-            identifiers only, so approvals stay attributable. This cannot be undone.
-          </p>
-          <button type="button" className="rv-button danger-ghost" onClick={() => setConfirming(true)}>
-            Remove account data…
-          </button>
-        </>
-      )}
+      </h2>
+      <p>
+        Deletes every plan, scan, model and file, and ends every membership. The audit log is kept with identifiers
+        only, so approvals stay attributable. This cannot be undone.
+      </p>
+      <button type="button" className="rv-button danger-ghost" onClick={() => setConfirming(true)}>
+        Remove account data…
+      </button>
       {confirming && (
         <RemovalDialog
           account={a}
           onCancel={() => setConfirming(false)}
-          onRemoved={(res) => {
+          onStarted={(res) => {
             setConfirming(false);
-            setResult(res);
-            onRemoved('The account’s data was removed.');
+            setJobId(res?.jobId ?? 'started');
+            onStarted('Removal started. It completes in the background.');
           }}
         />
       )}
@@ -523,38 +576,19 @@ function RemovalCard({ account: a, onRemoved }) {
   );
 }
 
-function Tally({ result }) {
-  return (
-    <>
-      <p className="ad-tally-title">Deleted</p>
-      <div className="ad-tally">
-        {TALLY.map(([key, label]) => (
-          <div key={key}>
-            <strong>{result.removed[key]}</strong>
-            <span>{label}</span>
-          </div>
-        ))}
-      </div>
-      {result.filesNotDeleted > 0 && (
-        <p className="rv-error" style={{ marginTop: 10 }}>
-          {result.filesNotDeleted} stored file(s) could not be deleted and are listed in the server log.
-        </p>
-      )}
-    </>
-  );
-}
-
-function RemovalDialog({ account: a, onCancel, onRemoved }) {
+function RemovalDialog({ account: a, onCancel, onStarted }) {
   const [typed, setTyped] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const matches = typed.trim() === a.name;
+  const facilities = a.facilities?.length ?? 0;
+  const members = a.members?.length ?? 0;
 
   async function confirm() {
     setBusy(true);
     setError(null);
     try {
-      onRemoved(await adminApi.removeData(a.id, typed.trim()));
+      onStarted(await adminApi.removeData(a.id, typed.trim()));
     } catch (err) {
       setError(err.message);
       setBusy(false);
@@ -573,15 +607,14 @@ function RemovalDialog({ account: a, onCancel, onRemoved }) {
             Cancel
           </button>
           <button type="button" className="rv-button danger" onClick={confirm} disabled={busy || !matches}>
-            {busy ? 'Removing…' : 'Remove everything'}
+            {busy ? 'Starting…' : 'Remove everything'}
           </button>
         </>
       }
     >
       <p className="small muted">
-        {a.facilities.length} facilit{a.facilities.length === 1 ? 'y' : 'ies'} and {a.users.length} user
-        {a.users.length === 1 ? '' : 's'} will be deleted with every plan, scan and file. The audit log is kept with
-        identifiers only.
+        {facilities} facilit{facilities === 1 ? 'y' : 'ies'} and {members} member{members === 1 ? '' : 's'} will be
+        removed with every plan, scan and file. The audit log is kept with identifiers only.
       </p>
       <label className="rv-field">
         <span>

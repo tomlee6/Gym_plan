@@ -1,34 +1,36 @@
 /**
  * Share service: what a share link (`PUBLIC_WEB_URL/s/<token>`) opens
- * (VIEW-07). The viewer calls this without signing in; the token is the only
- * credential, so an unknown, expired, revoked or no-longer-approved link
- * answers 404 and says nothing more. A link always opens the plan's newest
- * approved version (GEN-06).
+ * (VIEW-07). The viewer calls this without signing in; the token is the
+ * only credential, and only its SHA-256 is stored (D-06), so a copy of the
+ * database cannot open anyone's walkthrough. An unknown, expired, revoked
+ * or no-longer-ready link answers 404 and says nothing more. A link always
+ * opens its plan's newest ready version (GEN-06), and never any other plan.
+ *
+ * Request rate limits are enforced in front of the API by AWS WAF (D-10).
  */
 import { Router } from 'express';
 
 import { one, pool } from '../db/pool.js';
 import { notFound } from '../errors.js';
-import { rateLimit } from '../middleware/rate-limit.js';
+import { sha256 } from '../ids.js';
 import { modelFor } from './plans.js';
 
 export const router = Router();
 
-router.use(rateLimit({ windowMs: 60 * 1000, max: 60, key: (req) => `share:${req.ip}` }));
+const TOKEN = /^[A-Za-z0-9_-]{16,64}$/;
 
 router.get('/:token', async (req, res) => {
-  const link = await one(
-    pool,
-    `SELECT COALESCE(s.plan_id, v.plan_id) AS plan_id, s.expires_at
-     FROM share_links s
-     LEFT JOIN plan_versions v ON v.id = s.plan_version_id
-     WHERE s.token = ? AND s.revoked_at IS NULL
-       AND (s.expires_at IS NULL OR s.expires_at > UTC_TIMESTAMP(3))`,
-    [req.params.token],
-  );
-  const model = link?.plan_id
-    ? await modelFor(pool, null, link.plan_id, { withLevels: false })
+  const link = TOKEN.test(req.params.token)
+    ? await one(
+        pool,
+        `SELECT plan_id, account_id, expires_at FROM share_links
+         WHERE token_hash = ? AND revoked_at IS NULL
+           AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP(3))`,
+        [sha256(req.params.token)],
+      )
     : null;
+  // Scoped to the link's own account and plan, so it can reach nothing else.
+  const model = link ? await modelFor(pool, link.account_id, link.plan_id, { withLevels: false }) : null;
   if (!model) throw notFound('This link is no longer available.');
 
   res.set('Cache-Control', 'no-store').json({
@@ -39,6 +41,7 @@ router.get('/:token', async (req, res) => {
     areaM2: model.areaM2,
     approvedAt: model.approvedAt,
     expiresAt: link.expires_at,
+    generatedModel: model.generatedModel,
     plan: model.plan,
   });
 });

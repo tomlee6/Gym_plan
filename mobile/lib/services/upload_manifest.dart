@@ -101,6 +101,7 @@ class UploadManifest {
     required this.metadata,
     required this.files,
     required this.createdAt,
+    this.accountId,
     this.captureId,
     this.resumes = 0,
     this.failures = 0,
@@ -122,6 +123,7 @@ class UploadManifest {
         ManifestFile.fromJson(f! as Map<String, Object?>),
     ],
     createdAt: DateTime.parse(json['createdAt']! as String),
+    accountId: json['accountId'] as String?,
     captureId: json['captureId'] as String?,
     resumes: (json['resumes'] as num? ?? 0).toInt(),
     failures: (json['failures'] as num? ?? 0).toInt(),
@@ -150,6 +152,12 @@ class UploadManifest {
   final Map<String, Object?> metadata;
   final List<ManifestFile> files;
   final DateTime createdAt;
+
+  /// The gym account the capture was made in, sent as `X-Account-Id` on
+  /// every call for it. Kept here because the surveyor may switch account
+  /// before the upload finishes. Null in manifests from older builds, which
+  /// then use the session's current account.
+  final String? accountId;
 
   /// The platform's id for the capture, once registered.
   String? captureId;
@@ -195,6 +203,7 @@ class UploadManifest {
     'metadata': metadata,
     'files': <Object?>[for (final ManifestFile f in files) f.toJson()],
     'createdAt': createdAt.toIso8601String(),
+    'accountId': accountId,
     'captureId': captureId,
     'resumes': resumes,
     'failures': failures,

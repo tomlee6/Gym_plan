@@ -1,7 +1,7 @@
 /**
- * Email notifications (ACC-04): plan ready for review (reviewers), plan
- * rejected (owner), walkthrough ready (owner). Sent after the change has
- * been committed; a failed email never undoes a review.
+ * Email notifications (ACC-04, D-07): plan ready for review (reviewers),
+ * plan rejected (owners), walkthrough ready (owners), and invites. Sent
+ * after the change has been committed; a failed email never undoes it.
  */
 import { config } from './config.js';
 import { many } from './db/pool.js';
@@ -15,11 +15,12 @@ async function safely(send) {
   }
 }
 
-async function ownersOf(db, orgId) {
+async function ownersOf(db, accountId) {
   return many(
     db,
-    `SELECT email, name FROM users WHERE org_id = ? AND role = 'owner' AND active = 1`,
-    [orgId],
+    `SELECT u.email, u.name FROM memberships m JOIN users u ON u.id = m.user_id
+     WHERE m.account_id = ? AND m.role = 'owner' AND u.status = 'active'`,
+    [accountId],
   );
 }
 
@@ -27,7 +28,7 @@ export function planReadyForReview(db, { label, versionId }) {
   return safely(async () => {
     const reviewers = await many(
       db,
-      `SELECT email FROM users WHERE role IN ('reviewer', 'admin') AND active = 1`,
+      `SELECT email FROM users WHERE staff_role IN ('reviewer', 'admin') AND status = 'active'`,
     );
     for (const r of reviewers) {
       await sendMail({
@@ -39,9 +40,9 @@ export function planReadyForReview(db, { label, versionId }) {
   });
 }
 
-export function planRejected(db, { orgId, label, reason, note, planId }) {
+export function planRejected(db, { accountId, label, reason, note, planId }) {
   return safely(async () => {
-    for (const o of await ownersOf(db, orgId)) {
+    for (const o of await ownersOf(db, accountId)) {
       await sendMail({
         to: o.email,
         subject: `Needs recapture: ${label}`,
@@ -53,9 +54,9 @@ export function planRejected(db, { orgId, label, reason, note, planId }) {
   });
 }
 
-export function walkthroughReady(db, { orgId, label, planId }) {
+export function walkthroughReady(db, { accountId, label, planId }) {
   return safely(async () => {
-    for (const o of await ownersOf(db, orgId)) {
+    for (const o of await ownersOf(db, accountId)) {
       await sendMail({
         to: o.email,
         subject: `Walkthrough ready: ${label}`,
@@ -65,4 +66,19 @@ export function walkthroughReady(db, { orgId, label, planId }) {
       });
     }
   });
+}
+
+/** An invite (B-05): access follows the first GoalCert sign-in with this email. */
+export function invited({ email, accountName, role, expiresAt }) {
+  return safely(() =>
+    sendMail({
+      to: email,
+      subject: `You have been invited to ${accountName} on Flex Gym Scan`,
+      text:
+        `You have been invited to ${accountName} as ${role === 'owner' ? 'an owner' : 'a surveyor'}.\n\n` +
+        `Sign in with your GoalCert account using this email address (${email}) at\n` +
+        `${config.publicWebUrl}/login\n\nor in the Flex Gym Scan iPhone app. ` +
+        `The invite works until ${expiresAt.toISOString().slice(0, 10)}.`,
+    }),
+  );
 }

@@ -1,78 +1,65 @@
 import { useState } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router';
+import { Navigate, useLocation } from 'react-router';
 
 import { homeFor, useAuth } from './auth.jsx';
+import { t } from './i18n.js';
 import { useTitle } from './useTitle.js';
 
-/** One sign-in for owners, reviewers and admins; each lands on their home. */
+/** The FLEX · GYM SCAN mark the sign-in pages share. */
+export function Brand() {
+  return (
+    <div className="rv-brand">
+      <div className="rv-wordmark">FLEX</div>
+      <div className="rv-product">GYM SCAN</div>
+    </div>
+  );
+}
+
+/**
+ * Sign-in for every role (B-07). There is no password here: the button
+ * sends the page to the GoalCert Hub, which brings the browser back to
+ * /auth/callback. Where the person was heading is carried through the Hub
+ * in this tab's sessionStorage.
+ */
 export default function LoginPage() {
-  useTitle('Sign in');
+  useTitle(t('auth.title'));
   const { status, user, signIn } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const from = location.state?.from;
+  const from = location.state?.from ?? null;
 
-  if (status === 'signedIn') return <Navigate to={from ?? homeFor(user.role)} replace />;
+  if (status === 'signedIn') return <Navigate to={from ?? homeFor(user)} replace />;
 
-  async function submit(e) {
-    e.preventDefault();
+  async function go() {
     setBusy(true);
     setError(null);
     try {
-      const me = await signIn(email, password);
-      navigate(from ?? homeFor(me.role), { replace: true });
+      await signIn(from);
+      // The page is navigating away; stay busy until it does.
     } catch (err) {
-      setError(err.message);
+      setError(t('auth.errors.config', { detail: err.message }));
       setBusy(false);
     }
   }
 
   return (
-    <div className="rv-login">
-      <form className="rv-login-card" onSubmit={submit} noValidate>
-        <div className="rv-brand">
-          <div className="rv-wordmark">FLEX</div>
-          <div className="rv-product">GYM SCAN</div>
+    <main className="rv-login">
+      <div className="rv-login-card">
+        <Brand />
+        <h1>{t('auth.title')}</h1>
+        <p className="muted">{t('auth.lead')}</p>
+        <div aria-live="assertive">
+          {error && (
+            <p className="rv-error" role="alert">
+              {error}
+            </p>
+          )}
         </div>
-        <h1>Sign in</h1>
-        <p className="muted">Gym owners, reviewers and Flex staff all sign in here.</p>
-
-        <label className="rv-field">
-          <span>Email</span>
-          <input
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            autoFocus
-          />
-        </label>
-        <label className="rv-field">
-          <span>Password</span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </label>
-
-        {error && (
-          <p className="rv-error" role="alert">
-            {error}
-          </p>
-        )}
-
-        <button type="submit" className="rv-button primary wide" disabled={busy || !email || !password}>
-          {busy ? 'Signing in…' : 'Sign in'}
+        <button type="button" className="rv-button primary wide" onClick={go} disabled={busy || status === 'checking'}>
+          {busy ? t('auth.redirecting') : t('auth.button')}
         </button>
-      </form>
-    </div>
+      </div>
+    </main>
   );
 }

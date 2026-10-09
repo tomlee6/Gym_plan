@@ -1,0 +1,6 @@
+# Ruby tools for building and shipping the iPhone app (M-13).
+#   cd mobile/ios && bundle install && bundle exec fastlane beta
+source "https://rubygems.org"
+
+gem "fastlane", "~> 2.228"
+gem "cocoapods", "~> 1.16"

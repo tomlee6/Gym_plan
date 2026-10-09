@@ -112,10 +112,17 @@ class PlansService {
     unawaited(recentCall.then((_) {}, onError: (Object _) {}));
     final Map<String, Object?> me = await meCall;
     final Map<String, Object?> recent = await recentCall;
+    // The account block is the current account's (`X-Account-Id`).
+    final Map<String, Object?>? account =
+        me['account'] as Map<String, Object?>?;
     final Map<String, Object?>? facility =
-        me['defaultFacility'] as Map<String, Object?>?;
+        account?['defaultFacility'] as Map<String, Object?>?;
     return HomeData(
-      gymName: facility?['name'] as String? ?? me['organisation']! as String,
+      gymName:
+          facility?['name'] as String? ??
+          account?['name'] as String? ??
+          _api.session.currentAccount?.name ??
+          'Flex Gym Scan',
       userInitials: me['initials']! as String,
       plans: _plans(recent),
       // Held on this phone, so the phone knows best.

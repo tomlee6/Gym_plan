@@ -12,6 +12,7 @@ import '../widgets/primary_button.dart';
 import 'uploading_screen.dart';
 import 'package:room_scan/room_scan.dart';
 import '../models/equipment.dart';
+import 'control_distance_screen.dart';
 import 'equipment_capture_screen.dart';
 
 /// Last look before the scan leaves the phone: the captured outline, any
@@ -41,6 +42,10 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
   /// is: a scan without equipment leaves the reviewer naming machines from
   /// nothing but an unlabelled block on the plan.
   bool _equipmentDone = false;
+
+  /// Laser checks of the scan's scale (F-03). Optional, but two or more
+  /// long ones are encouraged.
+  List<ControlDistance> _controls = const <ControlDistance>[];
 
   ScanResult get _result => widget.result;
 
@@ -92,7 +97,7 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
       // Writes the upload's manifest to disk before anything leaves the
       // phone, so the capture survives the app closing from here on.
       await UploadQueue.instance.enqueue(
-        _result,
+        _result.copyWith(controlDistances: _controls),
         export: export,
         equipment: _equipment,
         videos: _videos,
@@ -111,6 +116,25 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
       (Route<dynamic> route) => route.isFirst,
     );
   }
+
+  Future<void> _addControlDistance() async {
+    final ControlDistance? added = await Navigator.of(context)
+        .push<ControlDistance>(
+          MaterialPageRoute<ControlDistance>(
+            builder: (_) => ControlDistanceScreen(
+              geometry: _result.geometry,
+              walls: _result.walls,
+              existing: _controls,
+            ),
+          ),
+        );
+    if (added == null || !mounted) return;
+    setState(() => _controls = <ControlDistance>[..._controls, added]);
+  }
+
+  void _removeControlDistance(ControlDistance c) => setState(
+    () => _controls = _controls.where((ControlDistance x) => x != c).toList(),
+  );
 
   /// Step 3 of the capture: name the machines and walk round each one.
   Future<void> _captureEquipment() async {
@@ -171,11 +195,21 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
                         geometry: _result.geometry,
                         walls: _result.walls,
                         tags: _result.tags,
+                        measurements: <(Offset, Offset?)>[
+                          for (final ControlDistance c in _controls) (c.a, c.b),
+                        ],
                         semanticLabel: 'Captured outline with tags marked',
                       ),
                     ),
                     const SizedBox(height: 16),
                     _buildWarnings(),
+                    const SizedBox(height: 16),
+                    _ControlDistances(
+                      controls: _controls,
+                      geometry: _result.geometry,
+                      onAdd: _addControlDistance,
+                      onRemove: _removeControlDistance,
+                    ),
                     const SizedBox(height: 16),
                     _buildStats(),
                     const SizedBox(height: 14),
@@ -412,6 +446,101 @@ class _StatCard extends StatelessWidget {
   }
 }
 
+/// The laser control distances (F-03): what was added, how each compares
+/// with the scan, and a nudge towards two or more long ones. Never blocks
+/// submitting.
+class _ControlDistances extends StatelessWidget {
+  const _ControlDistances({
+    required this.controls,
+    required this.geometry,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  final List<ControlDistance> controls;
+  final PlanGeometry geometry;
+  final VoidCallback onAdd;
+  final ValueChanged<ControlDistance> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final int short = controls
+        .where((ControlDistance c) => c.measuredM < ControlDistance.shortM)
+        .length;
+    final String? advice = controls.length < ControlDistance.recommended
+        ? 'Add at least ${ControlDistance.recommended} long distances, '
+              'measured with a laser across the floor, so the reviewer can '
+              "check the scan's scale."
+        : short > 0
+        ? '$short of these ${short == 1 ? 'is' : 'are'} under '
+              '${ControlDistance.shortM.toStringAsFixed(0)} m. Longer '
+              'distances are a better check.'
+        : null;
+
+    return HairlineContainer(
+      radius: 17,
+      padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Icon(
+                Icons.straighten_rounded,
+                size: 18,
+                color: AppColors.accent,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  controls.isEmpty
+                      ? 'Control distances'
+                      : 'Control distances · ${controls.length}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              TextButton(onPressed: onAdd, child: const Text('Add distance')),
+            ],
+          ),
+          for (final ControlDistance c in controls)
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    'Laser ${c.measuredM.toStringAsFixed(2)} m · scan '
+                    '${c.scannedM(geometry).toStringAsFixed(2)} m',
+                    style: AppTheme.caption,
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => onRemove(c),
+                  tooltip: 'Remove distance',
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    size: 18,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          if (advice != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8, bottom: 6, top: 2),
+              child: Text(
+                advice,
+                style: AppTheme.footnote.copyWith(color: AppColors.warning),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 /// CHANGE 3.1 step 3: the option to walk round the gym equipment, offered
 /// once the scan has been reviewed and before it is submitted.
 class _EquipmentStep extends StatelessWidget {
@@ -436,7 +565,8 @@ class _EquipmentStep extends StatelessWidget {
       (true, _) =>
         '$marked machine${marked == 1 ? '' : 's'} · '
             '$recorded walkaround${recorded == 1 ? '' : 's'}',
-      (false, 0) => 'Required before submitting. Name each machine and walk once around it.',
+      (false, 0) =>
+        'Required before submitting. Name each machine and walk once around it.',
       (false, _) =>
         '$marked marked, $recorded recorded · finish this step to submit',
     };
@@ -451,14 +581,21 @@ class _EquipmentStep extends StatelessWidget {
               child: Text(
                 'Capture Equipment 360°',
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             const SizedBox(width: 8),
             if (done)
               const Icon(Icons.check_circle, size: 16, color: AppColors.accent)
             else
-              const Icon(Icons.circle_outlined, size: 16, color: AppColors.warning),
+              const Icon(
+                Icons.circle_outlined,
+                size: 16,
+                color: AppColors.warning,
+              ),
           ],
         ),
         subtitle: Text(

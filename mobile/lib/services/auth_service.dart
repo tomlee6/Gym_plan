@@ -1,45 +1,112 @@
+import 'dart:io';
+
+import 'package:flutter/services.dart';
+
 import 'api_client.dart';
 import 'auth_session.dart';
+import 'hub_auth.dart';
+import 'offline_cache.dart';
 
-/// Sign-in, sign-out and password reset against the Gym Plan backend
-/// (`backend/src/modules/auth.js`).
+/// Sign-in through the GoalCert Hub, and sign-out (contract v2 §1).
+///
+/// There are no passwords in this app (B-03): the Hub holds them, and the
+/// phone only ever sees an authorisation code, which the backend exchanges
+/// with its client secret.
 class AuthService {
-  AuthService({ApiClient? client}) : _client = client;
+  AuthService({
+    ApiClient? client,
+    WebAuthenticator? webAuth,
+    String? deviceLabel,
+  }) : _client = client,
+       _webAuth = webAuth,
+       deviceLabel = deviceLabel ?? defaultDeviceLabel;
 
   final ApiClient? _client;
+  final WebAuthenticator? _webAuth;
+
+  /// Names this phone in the user's list of sessions. iOS no longer hands
+  /// apps the user-chosen device name, so it is the model family.
+  final String deviceLabel;
+
+  static String get defaultDeviceLabel =>
+      Platform.isIOS ? 'iPhone' : Platform.operatingSystem;
+
   ApiClient get _api => _client ?? ApiClient.instance;
+  WebAuthenticator get _web => _webAuth ?? WebAuthenticator.instance;
 
-  Future<AuthResult> signIn({
-    required String email,
-    required String password,
-  }) async {
+  /// Runs the whole Hub sign-in: fetch the Hub config, open its sign-in
+  /// sheet with a fresh state, nonce and PKCE challenge, check the state on
+  /// the way back, and exchange the code for Flex tokens.
+  Future<AuthResult> signInWithHub() async {
     try {
-      final Map<String, Object?> tokens = await _api.postPublic(
-        '/v1/auth/login',
-        <String, Object?>{'email': email.trim(), 'password': password},
+      final HubConfig config = HubConfig.fromJson(
+        await _api.getPublic('/v1/auth/hub/config'),
       );
-      _api.session.signedInWith(tokens);
+      final PkceAttempt attempt = PkceAttempt.generate();
+
+      final Uri callback = await _web.authenticate(
+        url: attempt.authorizeUrl(config),
+        callbackScheme: config.redirectUri.scheme,
+      );
+
+      final Map<String, String> query = callback.queryParameters;
+      // A callback for some other attempt (or a forged one) is never
+      // exchanged.
+      if (query['state'] != attempt.state) {
+        return const AuthResult.failure(
+          'The sign-in could not be confirmed. Try again.',
+        );
+      }
+      if (query['error'] != null) {
+        return AuthResult.failure(
+          query['error'] == 'access_denied'
+              ? 'Sign-in was cancelled at GoalCert.'
+              : query['error_description'] ??
+                    'GoalCert could not sign you in. Try again.',
+        );
+      }
+      final String? code = query['code'];
+      if (code == null || code.isEmpty) {
+        return const AuthResult.failure(
+          'GoalCert did not return a sign-in code. Try again.',
+        );
+      }
+
+      final Map<String, Object?> body = await _api
+          .postPublic('/v1/auth/hub', <String, Object?>{
+            'code': code,
+            'codeVerifier': attempt.codeVerifier,
+            'redirectUri': config.redirectUri.toString(),
+            'nonce': attempt.nonce,
+            'client': 'ios',
+            'deviceLabel': deviceLabel,
+          });
+      _api.session.signedInWith(body);
       return const AuthResult.success();
+    } on WebAuthCancelled {
+      return const AuthResult.cancelled();
     } on ApiException catch (e) {
-      return AuthResult.failure(e.message);
+      return AuthResult.failure(switch (e.code) {
+        'no_access' =>
+          'You are signed in to GoalCert, but your account has no access to '
+              'Flex Gym Scan. Ask your gym\'s account owner to invite you.',
+        'hub_rejected' => 'GoalCert did not accept the sign-in. Try again.',
+        _ => e.message,
+      }, noAccess: e.code == 'no_access');
+    } on PlatformException catch (e) {
+      return AuthResult.failure(
+        e.message ?? 'The GoalCert sign-in could not be opened.',
+      );
+    } on FormatException {
+      return const AuthResult.failure(
+        'The server sent an unexpected sign-in setup. Try again later.',
+      );
     }
   }
 
-  /// The backend answers the same whether or not the address has an
-  /// account, so this cannot be used to discover who the customers are.
-  Future<AuthResult> sendPasswordReset({required String email}) async {
-    try {
-      await _api.postPublic('/v1/auth/password-reset', <String, Object?>{
-        'email': email.trim(),
-      });
-      return const AuthResult.success();
-    } on ApiException catch (e) {
-      return AuthResult.failure(e.message);
-    }
-  }
-
-  /// Revokes the refresh token on the server, then forgets the session.
-  /// Signing out still works offline; the token then just expires.
+  /// Revokes the refresh token on the server, then forgets the session and
+  /// the offline copies made for it. Signing out still works offline; the
+  /// token then just expires.
   Future<void> signOut() async {
     final AuthSession session = _api.session;
     final String? refreshToken = session.refreshToken;
@@ -53,14 +120,29 @@ class AuthService {
       }
     }
     session.signOut();
+    await FacilityCache.instance.clear();
   }
 }
 
 class AuthResult {
-  const AuthResult.success() : error = null;
-  const AuthResult.failure(this.error);
+  const AuthResult.success()
+    : error = null,
+      cancelled = false,
+      noAccess = false;
+  const AuthResult.cancelled()
+    : error = null,
+      cancelled = true,
+      noAccess = false;
+  const AuthResult.failure(this.error, {this.noAccess = false})
+    : cancelled = false;
 
   final String? error;
 
-  bool get ok => error == null;
+  /// The user closed the sign-in sheet. Not an error worth showing.
+  final bool cancelled;
+
+  /// Signed in at the Hub, but with no Flex membership or invite.
+  final bool noAccess;
+
+  bool get ok => error == null && !cancelled;
 }

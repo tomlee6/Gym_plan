@@ -1,33 +1,26 @@
 /**
- * Facilities service: the gyms the signed-in user can capture.
+ * Facilities service: the gyms of the account the request acts in.
  */
 import { Router } from 'express';
 
 import { many, one, pool } from '../db/pool.js';
-import { requireAuth } from '../middleware/auth.js';
+import { isId } from '../ids.js';
+import { requireAccount, requireAuth } from '../middleware/auth.js';
 
 export const router = Router();
-router.use(requireAuth);
+router.use(requireAuth, requireAccount());
 
 router.get('/', async (req, res) => {
   const facilities = await many(
     pool,
-    'SELECT id, name FROM facilities WHERE org_id = ? ORDER BY name',
-    [req.user.orgId],
+    'SELECT id, name FROM facilities WHERE account_id = ? ORDER BY name',
+    [req.account.id],
   );
-  const user = await one(pool, 'SELECT default_facility_id FROM users WHERE id = ?', [
-    req.user.id,
-  ]);
-  res.json({
-    facilities,
-    defaultFacilityId: user?.default_facility_id ?? facilities[0]?.id ?? null,
-  });
+  res.json({ facilities, defaultFacilityId: facilities[0]?.id ?? null });
 });
 
-/** A facility in the caller's organisation, or null. */
-export function facilityInOrg(db, orgId, facilityId) {
-  return one(db, 'SELECT id, name FROM facilities WHERE id = ? AND org_id = ?', [
-    facilityId,
-    orgId,
-  ]);
+/** A facility in the caller's account, or null. */
+export function facilityInAccount(db, accountId, facilityId) {
+  if (!isId(facilityId)) return null;
+  return one(db, 'SELECT id, name FROM facilities WHERE id = ? AND account_id = ?', [facilityId, accountId]);
 }

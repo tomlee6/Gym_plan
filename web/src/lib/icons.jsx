@@ -156,3 +156,10 @@ export const TrashIcon = (p) => (
     <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
   </Icon>
 );
+
+export const StaffIcon = (p) => (
+  <Icon {...p}>
+    <path d="M12 3 4 6v6c0 4.4 3.4 8.3 8 9 4.6-.7 8-4.6 8-9V6z" />
+    <path d="m9 12 2 2 4-4" />
+  </Icon>
+);

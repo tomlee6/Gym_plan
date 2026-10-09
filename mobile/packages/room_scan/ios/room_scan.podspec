@@ -13,11 +13,12 @@ Pod::Spec.new do |s|
   s.source_files     = 'Classes/**/*'
   s.dependency 'Flutter'
 
-  # The app supports iOS 14+ (background uploads need it); RoomPlan needs iOS 16 and a LiDAR sensor,
-  # so it is weak-linked and every use is behind an availability check.
-  s.platform         = :ios, '14.0'
-  s.weak_frameworks  = 'RoomPlan', 'ARKit'
-  s.frameworks       = 'UIKit', 'CoreImage'
+  # The app's minimum is iOS 17 (I-01), so RoomPlan and ARKit are always present and are
+  # linked normally. A device without LiDAR still runs the app: RoomCaptureSession.isSupported
+  # answers false and the app shows its "needs LiDAR" screen. CoreMotion feeds the
+  # walk-around coverage ring; AVFoundation records the (silent) equipment video.
+  s.platform         = :ios, '17.0'
+  s.frameworks       = 'UIKit', 'CoreImage', 'RoomPlan', 'ARKit', 'AVFoundation', 'CoreMotion'
 
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.swift_version    = '5.0'

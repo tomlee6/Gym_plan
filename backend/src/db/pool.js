@@ -1,13 +1,25 @@
+import { readFileSync } from 'node:fs';
+
 import mysql from 'mysql2/promise';
 
 import { config } from '../config.js';
 
-/** One pool for the process. Dates come back as JS Dates in UTC. */
+const { ssl, sslCa, ...db } = config.db;
+
+/**
+ * One pool for the process. Dates come back as JS Dates in UTC.
+ *
+ * Every connection's session time zone is set to UTC (C-12), so column
+ * defaults (CURRENT_TIMESTAMP) and UTC_TIMESTAMP() agree whatever zone the
+ * server itself runs in. The code writes times with UTC_TIMESTAMP(3) only.
+ */
 export const pool = mysql.createPool({
-  ...config.db,
+  ...db,
+  ...(ssl && { ssl: { rejectUnauthorized: true, ...(sslCa && { ca: readFileSync(sslCa, 'utf8') }) } }),
   connectionLimit: 10,
   timezone: 'Z',
   dateStrings: false,
+  charset: 'utf8mb4_0900_ai_ci',
   // JSON columns come back parsed.
   typeCast(field, next) {
     if (field.type === 'JSON') {
@@ -16,6 +28,11 @@ export const pool = mysql.createPool({
     }
     return next();
   },
+});
+
+// `connection` hands over the callback-style connection underneath.
+pool.pool.on('connection', (conn) => {
+  conn.query("SET time_zone = '+00:00'");
 });
 
 /** Runs [fn] with one connection inside a transaction. */

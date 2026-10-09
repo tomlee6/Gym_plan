@@ -7,11 +7,11 @@ import { DownloadIcon, PlusIcon } from '../lib/icons.jsx';
 import Modal from '../lib/Modal.jsx';
 import { useLoader } from '../lib/useLoader.js';
 import { useTitle } from '../lib/useTitle.js';
-import { accountNote, auditFilename, MedianAgainst, QuotaBar, saveBlob } from './parts.jsx';
+import { accountNote, auditFilename, isRemoved, isRemoving, MedianAgainst, QuotaBar, saveBlob } from './parts.jsx';
 import './admin.css';
 
 /**
- * Admin home (ACC-05): every account with its users, gyms and monthly quota
+ * Admin home (ACC-05): every account with its members, gyms and monthly quota
  * use, a way to create one, the audit log export, and reviewer time
  * (REV-10) for the operator.
  */
@@ -102,7 +102,7 @@ function AccountsTable({ accounts }) {
         <thead>
           <tr>
             <th scope="col">ACCOUNT</th>
-            <th scope="col">USERS</th>
+            <th scope="col">MEMBERS</th>
             <th scope="col">FACILITIES</th>
             <th scope="col">MONTHLY PLAN QUOTA</th>
             <th scope="col">DATA REGION</th>
@@ -112,57 +112,52 @@ function AccountsTable({ accounts }) {
           </tr>
         </thead>
         <tbody>
-          {accounts.map((a) => (
-            <tr key={a.id} className={a.dataRemovedAt ? 'taken' : undefined}>
-              <td data-label="Account">
-                <div className="rv-cell-title">{a.name}</div>
-                <div className="rv-cell-sub">{accountNote(a)}</div>
-              </td>
-              <td data-label="Users">{a.users}</td>
-              <td data-label="Facilities">{a.operator ? '—' : a.facilities}</td>
-              <td data-label="Monthly plan quota">
-                {a.operator ? (
-                  <span className="muted">Not metered</span>
-                ) : a.dataRemovedAt ? (
-                  <span className="muted">—</span>
-                ) : (
-                  <QuotaBar used={a.plansUsed} quota={a.planQuota} />
-                )}
-              </td>
-              <td data-label="Data region">{a.region}</td>
-              <td className="rv-action">
-                <Link className="rv-button ghost" to={`/admin/accounts/${a.id}`} aria-label={`Manage ${a.name}`}>
-                  Manage
-                </Link>
-              </td>
-            </tr>
-          ))}
+          {accounts.map((a) => {
+            const gone = isRemoved(a) || isRemoving(a);
+            return (
+              <tr key={a.id} className={gone ? 'taken' : undefined}>
+                <td data-label="Account">
+                  <div className="rv-cell-title">{a.name}</div>
+                  <div className="rv-cell-sub">{accountNote(a)}</div>
+                </td>
+                <td data-label="Members">{gone ? '—' : a.members}</td>
+                <td data-label="Facilities">{gone ? '—' : a.facilities}</td>
+                <td data-label="Monthly plan quota">
+                  {gone ? <span className="muted">—</span> : <QuotaBar used={a.plansUsed} quota={a.planQuota} />}
+                </td>
+                <td data-label="Data region">{a.region}</td>
+                <td className="rv-action">
+                  <Link className="rv-button ghost" to={`/admin/accounts/${a.id}`} aria-label={`Manage ${a.name}`}>
+                    Manage
+                  </Link>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
+/**
+ * B-09: a new account and its first owner. Nobody is given a password: the
+ * owner gets an invite, and their GoalCert sign-in with that email address
+ * (verified at the Hub) joins them to the account.
+ */
 function NewAccountDialog({ onCancel, onCreated }) {
   const [form, setForm] = useState({
     name: '',
     planQuota: '10',
     region: 'Australia (Sydney)',
-    ownerName: '',
     ownerEmail: '',
-    ownerPassword: '',
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const quota = Number(form.planQuota);
   const valid =
-    form.name.trim().length >= 2 &&
-    Number.isInteger(quota) &&
-    quota >= 0 &&
-    form.ownerName.trim().length >= 2 &&
-    /\S+@\S+\.\S+/.test(form.ownerEmail) &&
-    form.ownerPassword.length >= 8;
+    form.name.trim().length >= 2 && Number.isInteger(quota) && quota >= 0 && /\S+@\S+\.\S+/.test(form.ownerEmail);
 
   async function submit(e) {
     e?.preventDefault();
@@ -173,8 +168,8 @@ function NewAccountDialog({ onCancel, onCreated }) {
       const account = await adminApi.createAccount({
         name: form.name.trim(),
         planQuota: quota,
-        region: form.region.trim(),
-        owner: { name: form.ownerName.trim(), email: form.ownerEmail.trim(), password: form.ownerPassword },
+        region: form.region.trim() || undefined,
+        ownerEmail: form.ownerEmail.trim(),
       });
       onCreated(account);
     } catch (err) {
@@ -186,7 +181,7 @@ function NewAccountDialog({ onCancel, onCreated }) {
   return (
     <Modal
       title="New account"
-      subtitle="A customer account and its first owner, who can then sign in to the app and the web."
+      subtitle="A customer account. Its first owner is invited by email and joins by signing in with GoalCert."
       onClose={onCancel}
       busy={busy}
       footer={
@@ -213,27 +208,18 @@ function NewAccountDialog({ onCancel, onCreated }) {
           <span>Data region</span>
           <input value={form.region} onChange={set('region')} />
         </label>
-        <div className="eyebrow wide">FIRST OWNER</div>
         <label className="rv-field wide">
-          <span>Name</span>
-          <input value={form.ownerName} onChange={set('ownerName')} autoComplete="off" />
-        </label>
-        <label className="rv-field">
-          <span>Email</span>
-          <input type="email" value={form.ownerEmail} onChange={set('ownerEmail')} autoComplete="off" />
-        </label>
-        <label className="rv-field">
-          <span>Temporary password</span>
+          <span>Owner’s email</span>
           <input
-            type="password"
-            value={form.ownerPassword}
-            onChange={set('ownerPassword')}
-            autoComplete="new-password"
-            aria-describedby="new-account-password-help"
+            type="email"
+            value={form.ownerEmail}
+            onChange={set('ownerEmail')}
+            autoComplete="off"
+            aria-describedby="new-account-owner-help"
           />
         </label>
-        <p id="new-account-password-help" className="small muted wide">
-          At least 8 characters. Send it to the owner separately; they can reset it from the app.
+        <p id="new-account-owner-help" className="small muted wide">
+          The address they sign in to GoalCert with. They are invited as Owner &amp; Surveyor.
         </p>
         {/* Enter submits. */}
         <button type="submit" hidden aria-hidden="true" tabIndex={-1} />

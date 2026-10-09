@@ -27,13 +27,13 @@ export default function AuditPage() {
   useTitle('Audit log');
   const [params, setParams] = useSearchParams();
   const filters = {
-    orgId: params.get('orgId') ?? '',
+    accountId: params.get('accountId') ?? '',
     action: params.get('action') ?? '',
     from: params.get('from') ?? '',
     to: params.get('to') ?? '',
   };
   const query = {
-    orgId: filters.orgId || undefined,
+    accountId: filters.accountId || undefined,
     action: filters.action || undefined,
     from: dayStart(filters.from),
     // "To" includes the whole of that day.
@@ -80,8 +80,8 @@ export default function AuditPage() {
     setExporting(true);
     setExportError(null);
     try {
-      const { orgId, action, from, to } = query;
-      saveBlob(await adminApi.auditCsv({ orgId, action, from, to }), auditFilename());
+      const { accountId, action, from, to } = query;
+      saveBlob(await adminApi.auditCsv({ accountId, action, from, to }), auditFilename());
     } catch (err) {
       setExportError(err.message);
     } finally {
@@ -108,14 +108,14 @@ export default function AuditPage() {
         <form className="ad-filters" aria-label="Filter the audit log" onSubmit={(e) => e.preventDefault()}>
           <label className="rv-field">
             <span>Account</span>
-            <select value={filters.orgId} onChange={(e) => setFilter('orgId', e.target.value)}>
+            <select value={filters.accountId} onChange={(e) => setFilter('accountId', e.target.value)}>
               <option value="">All accounts</option>
               {accounts.data?.accounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
                 </option>
               ))}
-              {filters.orgId && !accountName(filters.orgId) && <option value={filters.orgId}>{filters.orgId}</option>}
+              {filters.accountId && !accountName(filters.accountId) && <option value={filters.accountId}>{filters.accountId}</option>}
             </select>
           </label>
           <label className="rv-field">
@@ -200,7 +200,7 @@ export default function AuditPage() {
                         {e.targetLabel ?? <span className="ad-mono">{e.targetId ?? e.targetType}</span>}
                       </td>
                       <td data-label="Account">
-                        {e.organisation ?? <span className="ad-mono">{e.orgId ?? '—'}</span>}
+                        {e.account ?? e.organisation ?? <span className="ad-mono">{e.accountId ?? e.orgId ?? '—'}</span>}
                       </td>
                       <td data-label="Actor">
                         {e.actorName ?? <span className="ad-mono">{e.actorId ?? 'System'}</span>}

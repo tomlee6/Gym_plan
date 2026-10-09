@@ -45,14 +45,22 @@ class EquipmentService {
   /// Records the machines on a capture. Sending the same list again
   /// replaces it rather than doubling it up, so this is safe to retry
   /// after a lost response.
+  ///
+  /// [accountId] is the account the capture was made in (`X-Account-Id`).
   Future<void> saveEquipment(
     String captureId,
-    List<Equipment> equipment,
-  ) async {
+    List<Equipment> equipment, {
+    String? accountId,
+  }) async {
     if (equipment.isEmpty) return;
-    await _api.post('/v1/captures/$captureId/equipment', <String, Object?>{
-      'equipment': <Object?>[for (final Equipment e in equipment) e.toJson()],
-    });
+    await _api.post(
+      '/v1/captures/$captureId/equipment',
+      <String, Object?>{
+        'equipment': <Object?>[for (final Equipment e in equipment) e.toJson()],
+      },
+      const <String, String>{},
+      accountId,
+    );
   }
 
   /// Uploads one machine's 360 walkaround, part by part, and asks the
@@ -65,6 +73,7 @@ class EquipmentService {
     String captureId,
     EquipmentVideo video, {
     void Function(VideoUploadProgress)? onProgress,
+    String? accountId,
   }) async {
     final File file = File(video.path);
     // A poster frame is a convenience, not part of the record: if it was
@@ -91,6 +100,8 @@ class EquipmentService {
             'contentType': 'image/jpeg',
           },
       },
+      const <String, String>{},
+      accountId,
     );
 
     final List<Object?> files = opened['files']! as List<Object?>;
@@ -124,16 +135,25 @@ class EquipmentService {
       }
     }
 
-    await _completeVideo(captureId, video.equipmentId);
+    await _completeVideo(captureId, video.equipmentId, accountId);
   }
 
   /// Asks the platform to assemble the parts. Parts that never arrived are
   /// resent once before giving up, which covers the ordinary case of one
   /// part failing on a weak connection.
-  Future<void> _completeVideo(String captureId, String equipmentId) async {
+  Future<void> _completeVideo(
+    String captureId,
+    String equipmentId,
+    String? accountId,
+  ) async {
     final String path =
         '/v1/captures/$captureId/equipment/$equipmentId/video/complete';
-    Map<String, Object?> body = await _api.post(path);
+    final Map<String, Object?> body = await _api.post(
+      path,
+      const <String, Object?>{},
+      const <String, String>{},
+      accountId,
+    );
     if (body['status'] == 'ready') return;
 
     if (body['status'] == 'incomplete') {
@@ -158,13 +178,18 @@ class EquipmentService {
   /// A part goes straight to the signed URL, never through the API.
   Future<void> _put(String url, List<int> bytes) async {
     final HttpClientRequest request = await _http.putUrl(Uri.parse(url));
-    request.headers.set(HttpHeaders.contentTypeHeader, 'application/octet-stream');
+    request.headers.set(
+      HttpHeaders.contentTypeHeader,
+      'application/octet-stream',
+    );
     request.contentLength = bytes.length;
     request.add(bytes);
     final HttpClientResponse response = await request.close();
     await response.drain<void>();
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException('A part of the video was refused (${response.statusCode}).');
+      throw ApiException(
+        'A part of the video was refused (${response.statusCode}).',
+      );
     }
   }
 }

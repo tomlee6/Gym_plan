@@ -1,4 +1,4 @@
-# This repository tracks only backend/, web/ and mobile/.
+# This repository tracks backend/, web/, mobile/, shared/ and infra/.
 # Everything else in this folder is local working material.
 
 # Specification and design documents
@@ -8,8 +8,6 @@
 # Standalone HTML prototypes
 /*.html
 
-# Shared plan-format package (not part of this repository)
-/shared/
 
 # OS and editor junk
 .DS_Store

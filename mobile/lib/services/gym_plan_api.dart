@@ -81,12 +81,21 @@ class CompletionResult {
 /// The app never talks to storage directly: the API hands out short-lived
 /// signed URLs, and the platform confirms receipt before the app deletes
 /// anything.
+///
+/// Every call takes the [accountId] the capture was made in and sends it as
+/// `X-Account-Id`. It is stored with the capture rather than read from the
+/// session, because the surveyor may switch accounts while an upload is
+/// still waiting for signal. Null falls back to the session's current
+/// account (captures queued by older builds).
 class GymPlanApi {
   GymPlanApi({ApiClient? client}) : _client = client;
 
   final ApiClient? _client;
 
   ApiClient get _api => _client ?? ApiClient.instance;
+
+  /// The session's current account, for a capture being queued now.
+  String? get currentAccountId => _api.session.currentAccountId;
 
   /// Registers a capture and its metadata. Returns the capture id.
   ///
@@ -95,11 +104,13 @@ class GymPlanApi {
   Future<String> createCapture(
     Map<String, Object?> metadata, {
     required String idempotencyKey,
+    String? accountId,
   }) async {
     final Map<String, Object?> body = await _api.post(
       '/v1/captures',
       metadata,
       <String, String>{'Idempotency-Key': idempotencyKey},
+      accountId,
     );
     return body['captureId']! as String;
   }
@@ -110,6 +121,7 @@ class GymPlanApi {
     String captureId, {
     required List<FileDescription> files,
     required int partSize,
+    String? accountId,
   }) async {
     final Map<String, Object?> body = await _api.post(
       '/v1/captures/$captureId/uploads',
@@ -117,6 +129,8 @@ class GymPlanApi {
         'partSize': partSize,
         'files': <Object?>[for (final FileDescription f in files) f.toJson()],
       },
+      const <String, String>{},
+      accountId,
     );
     return _targets(body);
   }
@@ -125,8 +139,9 @@ class GymPlanApi {
   /// could be sent, e.g. after a long spell without signal.
   Future<List<FileTarget>> refreshParts(
     String captureId,
-    Map<String, List<int>> partsByFileId,
-  ) async {
+    Map<String, List<int>> partsByFileId, {
+    String? accountId,
+  }) async {
     final Map<String, Object?> body = await _api.post(
       '/v1/captures/$captureId/uploads/refresh',
       <String, Object?>{
@@ -135,15 +150,23 @@ class GymPlanApi {
             <String, Object?>{'fileId': e.key, 'parts': e.value},
         ],
       },
+      const <String, String>{},
+      accountId,
     );
     return _targets(body);
   }
 
   /// Asks the platform to assemble the parts and confirm it holds the
   /// capture. Only a `received` answer lets the app delete its copy.
-  Future<CompletionResult> complete(String captureId) async {
+  Future<CompletionResult> complete(
+    String captureId, {
+    String? accountId,
+  }) async {
     final Map<String, Object?> body = await _api.post(
       '/v1/captures/$captureId/complete',
+      const <String, Object?>{},
+      const <String, String>{},
+      accountId,
     );
     switch (body['status']) {
       case 'received':

@@ -1,0 +1,12 @@
+# Used when backend/ itself is the build context. The image is normally built
+# from the repository root (see Dockerfile); for that, BuildKit reads
+# backend/Dockerfile.dockerignore instead, which has the same rules.
+node_modules
+data
+.env
+.env.*
+test
+docs
+docker
+docker-compose.yml
+*.log

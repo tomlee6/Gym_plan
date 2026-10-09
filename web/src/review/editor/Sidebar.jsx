@@ -4,17 +4,19 @@ import {
   dist,
   EQUIPMENT_TYPES,
   equipmentLabel,
-  OPENING_TYPES,
   summary as summarise,
   TAG_TYPES,
   wallAngleDeg,
+  wallLength,
   wallName,
 } from '@shared/plan/index.js';
 
 import { bytes, inputLabel, stamp, STATUS_LABELS, TAG_LABELS } from '../../lib/format.js';
 import { CheckIcon, DownloadIcon, FileIcon, TrashIcon } from '../../lib/icons.jsx';
+import { keyframeUrl, keyframesSeeing } from './keyframes.js';
 import { clearanceToWall, nearestEquipment } from './measure.js';
 import {
+  addMirror,
   confirmAllFlags,
   confirmFlag,
   deleteElement,
@@ -24,12 +26,32 @@ import {
   joinWalls,
   nextEquipmentId,
   objectToColumn,
+  removeMirror,
   rotateObject,
+  setColumnShape,
   setEquipment,
+  setFacing,
+  setOpeningKind,
+  setWallCurve,
   setWallLength,
+  setWallMirror,
   splitWall,
+  unplacedEquipment,
   updateElement,
+  updateMirror,
 } from './ops.js';
+import {
+  BEAM_KINDS,
+  COLUMN_SHAPES,
+  FLOOR_FINISHES,
+  HINGE_SIDES,
+  kindLabel,
+  LEVEL_CHANGE_KINDS,
+  OPENING_KINDS,
+  SPACE_KINDS,
+  VOID_KINDS,
+  WALL_KINDS,
+} from './planKinds.js';
 
 /** RoomPlan reports no swing, so these are the reviewer's to choose. */
 const SWINGS = [
@@ -55,13 +77,30 @@ const KIND_NAMES = {
   objects: 'Object',
   zones: 'No-build zone',
   tags: 'Tag',
+  spaces: 'Space',
+  ceilingZones: 'Ceiling zone',
+  beams: 'Beam or bulkhead',
+  levelChanges: 'Level change',
+  voids: 'Stair, lift or void',
 };
 
 /**
  * The right-hand panel: what needs confirming, validation, the selected
  * element, and the capture's photos, history and files.
  */
-export default function Sidebar({ v, plan, issues, readOnly, selection, onSelect, onFocus, history }) {
+export default function Sidebar({
+  v,
+  plan,
+  issues,
+  readOnly,
+  selection,
+  onSelect,
+  onFocus,
+  history,
+  placing = null,
+  onPlace,
+  keyframes = null,
+}) {
   const [tab, setTab] = useState('review');
   const photos = v.files.filter((f) => f.kind === 'photo');
   const tabs = [
@@ -90,7 +129,16 @@ export default function Sidebar({ v, plan, issues, readOnly, selection, onSelect
       <div className="ed-side-body" role="tabpanel">
         {tab === 'review' && (
           <>
-            <Inspector v={v} plan={plan} selection={selection} readOnly={readOnly} onSelect={onSelect} history={history} />
+            <Inspector
+              v={v}
+              plan={plan}
+              selection={selection}
+              readOnly={readOnly}
+              onSelect={onSelect}
+              history={history}
+              keyframes={keyframes}
+            />
+            <Unplaced v={v} plan={plan} readOnly={readOnly} placing={placing} onPlace={onPlace} />
             <Flags plan={plan} readOnly={readOnly} onFocus={onFocus} history={history} />
             <Validation plan={plan} issues={issues} onFocus={onFocus} history={history} readOnly={readOnly} />
           </>
@@ -100,6 +148,121 @@ export default function Sidebar({ v, plan, issues, readOnly, selection, onSelect
         {tab === 'files' && <Files files={v.files} />}
       </div>
     </aside>
+  );
+}
+
+/**
+ * H-02: machines the surveyor recorded on the phone without standing at
+ * them (`placed: false`). They have a name, a type and often a 360 video,
+ * but no position, so the reviewer clicks one and then clicks where it
+ * stands on the plan. Once placed it leaves this list and is an ordinary
+ * machine on the plan, linked to its video by its reference.
+ */
+function Unplaced({ v, plan, readOnly, placing, onPlace }) {
+  const list = unplacedEquipment(plan, v.equipment ?? []);
+  if (!list.length) return null;
+  return (
+    <section className="ed-card" aria-label="Unplaced machines">
+      <div className="ed-card-head">
+        <h2>Unplaced machines</h2>
+        <span className="ed-count fair">{list.length}</span>
+      </div>
+      <p className="muted small">
+        Recorded on the phone without a position. {readOnly ? '' : 'Choose one, then click where it stands on the plan.'}
+      </p>
+      <ul className="ed-unplaced">
+        {list.map((e) => {
+          const active = placing?.equipmentId === e.equipmentId;
+          return (
+            <li key={e.equipmentId} className={active ? 'on' : undefined}>
+              <span className="ed-unplaced-text">
+                <strong>{e.name ?? e.equipmentId}</strong>
+                <span className="muted small">
+                  {equipmentLabel(e.type)} · {e.equipmentId}
+                  {e.video ? ' · 360° video' : ''}
+                </span>
+              </span>
+              {!readOnly && (
+                <button
+                  type="button"
+                  className={`rv-button small ${active ? 'primary' : 'ghost'}`}
+                  aria-pressed={active}
+                  aria-label={`Place ${e.name ?? e.equipmentId} on the plan`}
+                  onClick={() => onPlace?.(e)}
+                >
+                  {active ? 'Click the plan…' : 'Place'}
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** A select over a format 3 vocabulary, with "Not recorded" when the value may be empty. */
+function KindSelect({ label, value, options, onChange, disabled, allowNone = false, noneLabel = 'Not recorded', labelFor = kindLabel }) {
+  return (
+    <label className="rv-field">
+      <span>{label}</span>
+      <select value={value ?? ''} disabled={disabled} onChange={(e) => onChange(e.target.value || null)}>
+        {(allowNone || !value) && <option value="">{noneLabel}</option>}
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {labelFor(o)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** A text input that applies on Enter or blur, so typing a name is one undo step. */
+function TextField({ label, value, onCommit, disabled }) {
+  const [text, setText] = useState(null);
+  const shown = text ?? value ?? '';
+  const commit = () => {
+    if (text !== null && text.trim() !== (value ?? '') && text.trim()) onCommit(text.trim());
+    setText(null);
+  };
+  return (
+    <label className="rv-field">
+      <span>{label}</span>
+      <input
+        value={shown}
+        disabled={disabled}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            commit();
+            e.currentTarget.blur();
+          }
+          if (e.key === 'Escape') setText(null);
+        }}
+      />
+    </label>
+  );
+}
+
+/** One numeric fact in an `ed-facts` list: a field when editable, the reading otherwise. */
+function Fact({ label, value, ro, onCommit, min = 0, max = 100, suffix = 'm', clearable = true, step = 0.01, blank = 'Not measured' }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        {ro ? (
+          value === null || value === undefined ? (
+            <span className="muted">{blank}</span>
+          ) : (
+            `${Number(value).toFixed(2)} ${suffix}`
+          )
+        ) : (
+          <NumberField value={value} min={min} max={max} step={step} suffix={suffix} label={label} clearable={clearable} onCommit={onCommit} />
+        )}
+      </dd>
+    </div>
   );
 }
 
@@ -300,7 +463,7 @@ function NumberField({ id, value, min, max, step = 0.01, suffix, onCommit, label
   );
 }
 
-function Inspector({ v, plan, selection, readOnly, onSelect, history }) {
+function Inspector({ v, plan, selection, readOnly, onSelect, history, keyframes }) {
   const found = selection ? findElement(plan, selection) : null;
   if (!found) {
     return (
@@ -418,10 +581,50 @@ function Inspector({ v, plan, selection, readOnly, onSelect, history }) {
               </div>
             ))}
           </fieldset>
+          {/* Format 3: what the wall is, and whether it bows. */}
+          <KindSelect label="Wall kind" value={el.kind} options={WALL_KINDS} disabled={ro} allowNone onChange={(k) => set({ kind: k })} />
+          <dl className="ed-facts">
+            <div>
+              <dt>Curve</dt>
+              <dd>
+                {ro ? (
+                  el.curveM ? `${el.curveM.toFixed(2)} m` : 'Straight'
+                ) : (
+                  <NumberField
+                    value={el.curveM ?? null}
+                    min={-50}
+                    max={50}
+                    suffix="m"
+                    label="Wall curve"
+                    clearable
+                    onCommit={(n) => history.change(setWallCurve(plan, el.id, n))}
+                  />
+                )}
+              </dd>
+            </div>
+            {el.curveM ? (
+              <div>
+                <dt>Length along the arc</dt>
+                <dd>{wallLength(el).toFixed(2)} m</dd>
+              </div>
+            ) : null}
+          </dl>
+          {!ro && (
+            <p className="muted small">
+              Curve is how far the middle of the wall bows off the straight line between its ends, positive to the left
+              walking from start to end. Leave it blank for a straight wall.
+            </p>
+          )}
           <label className="ed-check">
-            <input type="checkbox" checked={el.mirror} disabled={ro} onChange={(e) => set({ mirror: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={Boolean(el.mirror)}
+              disabled={ro}
+              onChange={(e) => history.change(setWallMirror(plan, el.id, e.target.checked))}
+            />
             Mirror wall (rendered reflective)
           </label>
+          <Mirrors plan={plan} wall={el} readOnly={ro} history={history} />
           {!ro && (
             <div className="ed-actions">
               <button
@@ -454,16 +657,18 @@ function Inspector({ v, plan, selection, readOnly, onSelect, history }) {
 
       {kind === 'openings' && (
         <>
-          <label className="rv-field">
-            <span>Type</span>
-            <select value={el.type} disabled={ro} onChange={(e) => set({ type: e.target.value })}>
-              {OPENING_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t[0].toUpperCase() + t.slice(1)}
-                </option>
-              ))}
-            </select>
-          </label>
+          {/*
+            Format 3: the kind says exactly what it is; the older door /
+            window / opening type follows from it (setOpeningKind).
+          */}
+          <KindSelect
+            label="Opening kind"
+            value={el.kind}
+            options={OPENING_KINDS}
+            disabled={ro}
+            noneLabel={`Not set (${el.type})`}
+            onChange={(k) => k && history.change(setOpeningKind(plan, el.id, k))}
+          />
           <dl className="ed-facts">
             <div>
               <dt>Width</dt>
@@ -511,6 +716,41 @@ function Inspector({ v, plan, selection, readOnly, onSelect, history }) {
               </select>
             </label>
           )}
+          {el.type === 'door' && (
+            <>
+              <KindSelect
+                label="Leaves"
+                value={el.leaves == null ? null : String(el.leaves)}
+                options={['1', '2']}
+                disabled={ro}
+                allowNone
+                labelFor={(n) => (n === '1' ? 'One leaf' : 'Two leaves')}
+                onChange={(n) => set({ leaves: n ? Number(n) : null })}
+              />
+              <KindSelect
+                label="Hinge side"
+                value={el.hinge}
+                options={HINGE_SIDES}
+                disabled={ro}
+                allowNone
+                labelFor={(h) => `Hinged ${h}, seen from the start of the wall`}
+                onChange={(h) => set({ hinge: h })}
+              />
+              <KindSelect
+                label="Swings into"
+                value={el.swingInto}
+                options={(plan.spaces ?? []).map((s) => s.id)}
+                disabled={ro || !(plan.spaces ?? []).length}
+                allowNone
+                noneLabel={(plan.spaces ?? []).length ? 'Not recorded' : 'Draw the spaces first'}
+                labelFor={(id) => {
+                  const s = plan.spaces.find((x) => x.id === id);
+                  return s ? s.name || kindLabel(s.kind) : id;
+                }}
+                onChange={(id) => set({ swingInto: id })}
+              />
+            </>
+          )}
           <p className="muted small">
             On the {el.wallId ? wallName(plan, plan.walls.find((w) => w.id === el.wallId) ?? { a: [0, 0], b: [1, 0] }).toLowerCase() : 'no wall yet'}.
           </p>
@@ -546,6 +786,30 @@ function Inspector({ v, plan, selection, readOnly, onSelect, history }) {
               </div>
             ))}
           </dl>
+          {kind === 'columns' && (
+            <>
+              <KindSelect
+                label="Column shape"
+                value={el.shape ?? 'rect'}
+                options={COLUMN_SHAPES}
+                disabled={ro}
+                labelFor={(s) => (s === 'round' ? 'Round' : 'Rectangular')}
+                onChange={(s) => s && history.change(setColumnShape(plan, el.id, s))}
+              />
+              <dl className="ed-facts">
+                <Fact
+                  label="Column height"
+                  value={el.heightM ?? null}
+                  ro={ro}
+                  min={0.1}
+                  max={20}
+                  blank="Full height"
+                  onCommit={(n) => set({ heightM: n })}
+                />
+              </dl>
+              {!ro && <p className="muted small">Leave the height blank for a column that runs floor to ceiling.</p>}
+            </>
+          )}
           {kind === 'objects' && (
             <>
               {/* CHANGE 1.5: turning a machine to an exact bearing. */}
@@ -568,8 +832,33 @@ function Inspector({ v, plan, selection, readOnly, onSelect, history }) {
                     )}
                   </dd>
                 </div>
+                {/*
+                  Format 3: which way the machine's front faces, separate
+                  from the footprint's rotation (a square rack can face any
+                  of four ways). Also set by dragging the arrow on the plan.
+                */}
+                <div>
+                  <dt>Facing</dt>
+                  <dd>
+                    {ro ? (
+                      el.facingDeg == null ? <span className="muted">Not set</span> : `${el.facingDeg.toFixed(1)}°`
+                    ) : (
+                      <NumberField
+                        value={el.facingDeg ?? null}
+                        min={-360}
+                        max={360}
+                        step={1}
+                        suffix="°"
+                        label="Facing"
+                        clearable
+                        onCommit={(n) => history.change(setFacing(plan, el.id, n))}
+                      />
+                    )}
+                  </dd>
+                </div>
               </dl>
               <Equipment plan={plan} object={el} readOnly={ro} history={history} video={videoFor(v, el)} />
+              <Keyframes object={el} keyframes={keyframes} />
               {!ro && (
                 <button
                   type="button"
@@ -589,6 +878,86 @@ function Inspector({ v, plan, selection, readOnly, onSelect, history }) {
       )}
 
       {kind === 'zones' && <p className="muted small">{el.points.length} corners. Nothing may be placed inside a no-build zone.</p>}
+
+      {kind === 'spaces' && (
+        <>
+          <TextField label="Space name" value={el.name} disabled={ro} onCommit={(name) => set({ name })} />
+          <KindSelect label="Space kind" value={el.kind} options={SPACE_KINDS} disabled={ro} onChange={(k) => k && set({ kind: k })} />
+          <KindSelect
+            label="Floor finish"
+            value={el.floorFinish}
+            options={FLOOR_FINISHES}
+            disabled={ro}
+            allowNone
+            onChange={(f) => set({ floorFinish: f })}
+          />
+          <dl className="ed-facts">
+            <Fact
+              label="Space ceiling height"
+              value={el.ceilingHeightM ?? null}
+              ro={ro}
+              min={1.5}
+              max={30}
+              blank={`Plan default (${Number(plan.ceilingHeightM ?? 3).toFixed(2)} m)`}
+              onCommit={(n) => set({ ceilingHeightM: n })}
+            />
+          </dl>
+          <CeilingZones space={el} readOnly={ro} onSelect={onSelect} history={history} plan={plan} />
+          <p className="muted small">{el.points.length} corners. Drag a corner on the plan to move it.</p>
+        </>
+      )}
+
+      {kind === 'ceilingZones' && (
+        <>
+          <dl className="ed-facts">
+            <Fact label="Zone ceiling height" value={el.heightM ?? null} ro={ro} min={1.5} max={30} onCommit={(n) => set({ heightM: n })} />
+          </dl>
+          <p className="muted small">
+            In {plan.spaces.find((s) => s.id === found.spaceId)?.name ?? 'its space'}. {el.points.length} corners.
+          </p>
+        </>
+      )}
+
+      {kind === 'beams' && (
+        <>
+          <KindSelect label="Beam kind" value={el.kind} options={BEAM_KINDS} disabled={ro} onChange={(k) => k && set({ kind: k })} />
+          <dl className="ed-facts">
+            <Fact label="Underside height" value={el.bottomM ?? null} ro={ro} min={0.5} max={30} onCommit={(n) => set({ bottomM: n })} />
+          </dl>
+          <p className="muted small">The outline is where the beam crosses the floor plan; the height is to its underside.</p>
+        </>
+      )}
+
+      {kind === 'levelChanges' && (
+        <>
+          <KindSelect label="Level change kind" value={el.kind} options={LEVEL_CHANGE_KINDS} disabled={ro} onChange={(k) => k && set({ kind: k })} />
+          <dl className="ed-facts">
+            <Fact label="Rise" value={el.heightM ?? null} ro={ro} min={-5} max={5} clearable={false} onCommit={(n) => set({ heightM: n })} />
+            {el.kind === 'ramp' && (
+              <Fact
+                label="Ramp angle"
+                value={el.rampAngleDeg ?? null}
+                ro={ro}
+                min={0.5}
+                max={45}
+                step={0.5}
+                suffix="°"
+                onCommit={(n) => set({ rampAngleDeg: n })}
+              />
+            )}
+          </dl>
+          <p className="muted small">Rise is the height above the surrounding floor; negative for a sunken area.</p>
+        </>
+      )}
+
+      {kind === 'voids' && (
+        <>
+          <KindSelect label="Void kind" value={el.kind} options={VOID_KINDS} disabled={ro} onChange={(k) => k && set({ kind: k })} />
+          <dl className="ed-facts">
+            <Fact label="Rail height" value={el.railHeightM ?? null} ro={ro} min={0.3} max={3} blank="No rail" onCommit={(n) => set({ railHeightM: n })} />
+          </dl>
+        </>
+      )}
 
       {kind === 'tags' && (
         <>
@@ -624,6 +993,132 @@ function Inspector({ v, plan, selection, readOnly, onSelect, history }) {
             </dl>
           )}
         </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * A wall's mirror spans (format 3): where along the wall the glass starts
+ * and stops, and how high it runs. A gym's mirror rarely covers a wall end
+ * to end, and the walkthrough reflects exactly these stretches.
+ */
+function Mirrors({ plan, wall, readOnly, history }) {
+  const mirrors = wall.mirrors ?? [];
+  if (!mirrors.length && readOnly) return null;
+  const len = wallLength(wall);
+  const edit = (m, field) => (n) => history.change(updateMirror(plan, wall.id, m.id, { [field]: n }));
+  return (
+    <fieldset className="ed-mirrors" disabled={readOnly}>
+      <legend className="small muted">Mirror spans (m along the wall from its start)</legend>
+      {mirrors.length === 0 && <p className="muted small">No mirrors on this wall.</p>}
+      {mirrors.map((m, i) => (
+        <div key={m.id} className="ed-mirror-row">
+          <span className="small muted">#{i + 1}</span>
+          {[
+            ['fromM', 'From', 0, len],
+            ['toM', 'To', 0, len],
+            ['bottomM', 'Bottom', 0, 20],
+            ['topM', 'Top', 0, 20],
+          ].map(([field, label, min, max]) =>
+            readOnly ? (
+              <span key={field} className="small">
+                {label} {Number(m[field]).toFixed(2)}
+              </span>
+            ) : (
+              <NumberField
+                key={field}
+                value={m[field]}
+                min={min}
+                max={max}
+                label={`Mirror ${i + 1} ${label.toLowerCase()}`}
+                onCommit={edit(m, field)}
+              />
+            ),
+          )}
+          {!readOnly && (
+            <button
+              type="button"
+              className="rv-icon-button"
+              title="Remove this mirror span"
+              onClick={() => history.change(removeMirror(plan, wall.id, m.id))}
+            >
+              <TrashIcon size={14} />
+              <span className="sr-only">Remove mirror {i + 1}</span>
+            </button>
+          )}
+        </div>
+      ))}
+      {!readOnly && (
+        <button type="button" className="rv-button ghost small" onClick={() => history.change(addMirror(plan, wall.id).plan)}>
+          Add mirror span
+        </button>
+      )}
+    </fieldset>
+  );
+}
+
+/** The ceiling zones of a space: parts of the room with another ceiling height. */
+function CeilingZones({ plan, space, readOnly, onSelect, history }) {
+  const zones = space.ceilingZones ?? [];
+  return (
+    <section className="ed-subsection" aria-label="Ceiling zones">
+      <h3>Ceiling zones</h3>
+      {zones.length === 0 ? (
+        <p className="muted small">
+          {readOnly ? 'None.' : 'None. Use the ceiling zone tool (U) to draw one inside this space.'}
+        </p>
+      ) : (
+        <ul className="ed-zone-list">
+          {zones.map((z, i) => (
+            <li key={z.id}>
+              <button type="button" className="ed-link" onClick={() => onSelect(z.id)}>
+                Zone {i + 1}
+              </button>
+              <span className="small muted">{z.heightM == null ? 'height not set' : `${Number(z.heightM).toFixed(2)} m`}</span>
+              {!readOnly && (
+                <button
+                  type="button"
+                  className="rv-icon-button"
+                  title="Delete this ceiling zone"
+                  onClick={() => history.change(deleteElement(plan, z.id))}
+                >
+                  <TrashIcon size={14} />
+                  <span className="sr-only">Delete ceiling zone {i + 1}</span>
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * H-03: the scan's still frames that look at the selected machine, nearest
+ * first, so the reviewer can see what it is without leaving the editor.
+ * Nothing shows when the capture kept no keyframes.
+ */
+function Keyframes({ object, keyframes }) {
+  if (!keyframes) return null;
+  const seen = keyframesSeeing(keyframes.frames, object)
+    .map((s) => ({ ...s, url: keyframeUrl(keyframes.files, s.frame) }))
+    .filter((s) => s.url);
+  return (
+    <section className="ed-subsection" aria-label="Scan photos of this machine">
+      <h3>From the scan</h3>
+      {seen.length === 0 ? (
+        <p className="muted small">No scan frame looks at this machine from within 8 m.</p>
+      ) : (
+        <div className="ed-keyframes">
+          {seen.map(({ frame, url, distanceM }) => (
+            <a key={frame.id ?? frame.file} href={url} target="_blank" rel="noopener noreferrer">
+              <img src={url} alt={`Scan frame ${distanceM.toFixed(1)} m from the machine`} loading="lazy" />
+              <span className="small muted">{distanceM.toFixed(1)} m</span>
+            </a>
+          ))}
+        </div>
       )}
     </section>
   );
@@ -849,6 +1344,8 @@ const FILE_KINDS = {
   photo: 'Photo',
   source: 'Uploaded drawing (original)',
   source_image: 'Drawing page, as traced',
+  mesh: 'Scan mesh (OBJ)',
+  keyframes: 'Scan keyframe',
 };
 
 function Files({ files }) {

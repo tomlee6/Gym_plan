@@ -12,6 +12,7 @@
  *   presignDownload(key, ttlSeconds)         -> URL to GET a stored object
  *   read(key)                                -> Buffer of a stored object
  *   delete(key)                              removes a stored object
+ *   archive(key)                             moves it to cold storage (E-05)
  *
  * The app never receives storage credentials, only short-lived part URLs
  * (PRD: uploads via short-lived signed URLs).

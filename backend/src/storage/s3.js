@@ -14,6 +14,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   ListPartsCommand,
+  PutObjectTaggingCommand,
   S3Client,
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
@@ -35,7 +36,7 @@ export class S3Storage {
         Bucket: this.bucket,
         Key: key,
         ContentType: contentType,
-        ServerSideEncryption: 'AES256', // PRD: encrypted at rest.
+        // Encrypted at rest by the bucket's default KMS key (M-03).
       }),
     );
     return out.UploadId;
@@ -134,9 +135,29 @@ export class S3Storage {
     });
   }
 
+  /** Abandons a multipart upload; one already finished or gone is not an error. */
   async abort(key, uploadId) {
+    try {
+      await this.client.send(
+        new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }),
+      );
+    } catch (err) {
+      if (err?.name !== 'NoSuchUpload' && err?.$metadata?.httpStatusCode !== 404) throw err;
+    }
+  }
+
+  /**
+   * Marks an object for cold storage (E-05). The bucket's lifecycle rule
+   * moves objects tagged retention=cold to Glacier Instant Retrieval, so
+   * they stay readable by the same key if a reviewer ever needs them.
+   */
+  async archive(key) {
     await this.client.send(
-      new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }),
+      new PutObjectTaggingCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Tagging: { TagSet: [{ Key: 'retention', Value: 'cold' }] },
+      }),
     );
   }
 }

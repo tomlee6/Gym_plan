@@ -841,3 +841,246 @@
 .ed-video figcaption {
   margin-top: 4px;
 }
+
+/* ------------------------------------------------------------------------
+ * Format 3 (H-01..H-03): spaces, ceiling zones, beams, level changes,
+ * voids, mirror spans, machine facing, unplaced machines, the scan mesh
+ * and keyframes.
+ * --------------------------------------------------------------------- */
+
+.ed-svg ellipse {
+  vector-effect: non-scaling-stroke;
+}
+
+/* The scan mesh: a faint backdrop, never in the way of a click. */
+.ed-mesh {
+  fill: rgba(159, 220, 255, 0.07);
+  stroke: rgba(159, 220, 255, 0.12);
+  stroke-width: 0.5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.ed-space {
+  fill: rgba(0, 202, 178, 0.035);
+  stroke: rgba(0, 202, 178, 0.35);
+  stroke-width: 1;
+  cursor: pointer;
+}
+
+.ed-space.selected {
+  fill: rgba(0, 202, 178, 0.09);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.ed-space.flagged {
+  stroke: var(--rv-poor);
+}
+
+.ed-space.problem {
+  stroke: var(--rv-danger);
+}
+
+.ed-space-label {
+  fill: rgba(0, 202, 178, 0.75);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--bg-viewer);
+  pointer-events: none;
+}
+
+.ed-ceiling-zone {
+  fill: rgba(146, 125, 229, 0.08);
+  stroke: #927de5;
+  stroke-width: 1.25;
+  stroke-dasharray: 2 3;
+  cursor: pointer;
+}
+
+.ed-level {
+  fill: rgba(255, 204, 0, 0.08);
+  stroke: #ffcc00;
+  stroke-width: 1.25;
+  cursor: pointer;
+}
+
+.ed-level.ramp {
+  stroke-dasharray: 8 3;
+}
+
+.ed-void {
+  fill: rgba(0, 170, 226, 0.14);
+  stroke: #00aae2;
+  stroke-width: 1.5;
+  cursor: pointer;
+}
+
+/* A beam is overhead: an outline only, so what is on the floor stays clickable. */
+.ed-beam {
+  fill: none;
+  stroke: #ffffff;
+  stroke-opacity: 0.55;
+  stroke-width: 1.5;
+  stroke-dasharray: 10 4 2 4;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.ed-beam.bulkhead {
+  fill: rgba(255, 255, 255, 0.04);
+}
+
+.ed-ceiling-zone.selected,
+.ed-level.selected,
+.ed-void.selected,
+.ed-beam.selected {
+  stroke: var(--accent);
+  stroke-opacity: 1;
+  stroke-width: 2.5;
+}
+
+.ed-level.problem,
+.ed-void.problem,
+.ed-object.problem {
+  stroke: var(--rv-danger);
+}
+
+.ed-wall-kind.glass .ed-wall {
+  stroke-dasharray: 6 3;
+}
+
+.ed-wall-kind.partition .ed-wall {
+  stroke-width: 2.5;
+}
+
+/* A mirror span: a violet stripe over the stretch of wall that is glass. */
+.ed-mirror-span {
+  stroke: #b9a8f5;
+  stroke-width: 7;
+  stroke-opacity: 0.55;
+  stroke-linecap: butt;
+  pointer-events: none;
+}
+
+.ed-facing line {
+  stroke: #ffcc00;
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
+.ed-facing polygon {
+  fill: #ffcc00;
+  stroke: none;
+  pointer-events: none;
+}
+
+.ed-facing.unset line {
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+}
+
+.ed-facing.unset polygon {
+  opacity: 0.6;
+}
+
+.ed-facing-handle {
+  fill: rgba(255, 204, 0, 0.25);
+  stroke: #ffcc00;
+  stroke-width: 1.5;
+  cursor: grab;
+}
+
+.ed-mirrors {
+  border: 1px solid var(--rv-border);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.ed-mirror-row {
+  display: grid;
+  grid-template-columns: 24px repeat(4, minmax(0, 1fr)) auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.ed-mirror-row .ed-number input {
+  width: 100%;
+  min-width: 0;
+}
+
+.ed-subsection {
+  display: grid;
+  gap: 6px;
+}
+
+.ed-subsection h3 {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.ed-zone-list,
+.ed-unplaced {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.ed-zone-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ed-zone-list li .small {
+  flex: 1;
+}
+
+.ed-unplaced li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--rv-border);
+  border-radius: 8px;
+}
+
+.ed-unplaced li.on {
+  border-color: var(--accent);
+}
+
+.ed-unplaced-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ed-keyframes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.ed-keyframes a {
+  display: grid;
+  gap: 2px;
+  text-decoration: none;
+}
+
+.ed-keyframes img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--rv-field);
+}
+
+.ed-warn {
+  color: var(--rv-poor);
+}

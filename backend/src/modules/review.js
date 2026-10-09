@@ -1,19 +1,26 @@
 /**
  * Review service: the reviewer queue and editor (PRD section 7).
  *
- *   GET  /v1/review/queue                   waiting versions and queue stats   REV-01
- *   GET  /v1/review/versions/:id            one version: plan, files, history
- *   POST /v1/review/versions/:id/start      claim it (opening claims it)       REV-02
- *   POST /v1/review/versions/:id/release    put it back in the queue           REV-02
- *   PUT  /v1/review/versions/:id/plan       save edits, validate               REV-04, REV-06
- *   POST /v1/review/versions/:id/activity   the reviewer is working            REV-10
- *   POST /v1/review/versions/:id/approve    freeze, hash, supersede            REV-05..07
- *   POST /v1/review/versions/:id/reject     {reason, note}                     REV-08
- *   POST /v1/review/versions/:id/revise     new version of an approved plan    REV-09
+ *   GET  /v1/review/queue                    waiting versions and queue stats   REV-01
+ *   GET  /v1/review/versions/:id             one version: plan, files, history
+ *   POST /v1/review/versions/:id/start       claim it (opening claims it)       REV-02
+ *   POST /v1/review/versions/:id/release     put it back in the queue           REV-02
+ *   PUT  /v1/review/versions/:id/plan        save edits, validate               REV-04, REV-06
+ *   POST /v1/review/versions/:id/activity    the reviewer is working            REV-10
+ *   POST /v1/review/versions/:id/approve     freeze, hash, queue the 3D         REV-05..07, D-04
+ *   POST /v1/review/versions/:id/reject      {reason, note}                     REV-08
+ *   POST /v1/review/versions/:id/revise      new version of an approved plan    REV-09
+ *   POST /v1/review/versions/:id/regenerate  try a failed generation again      GEN-05
  *
- * Reviewers and admins are Flex staff and see every organisation's queue. A
+ * Reviewers and admins are Flex staff and see every account's queue. A
  * claimed version belongs to its reviewer until they decide or release it.
  * There is no automatic approval at any confidence.
+ *
+ * Approval freezes the plan and moves the version to `generating`: the
+ * plan.generate job builds the 3D level, and only then does the version
+ * become `ready` and the one before it `superseded`. A generation that
+ * fails past its retries comes back to this queue as `generation_failed`
+ * with the reason (E-02).
  */
 import { createHash } from 'node:crypto';
 
@@ -22,43 +29,51 @@ import { z } from 'zod';
 
 import {
   approvalBlockers,
+  BEAM_KINDS,
   canonicalJson,
+  COLUMN_SHAPES,
+  FLOOR_FINISHES,
+  HINGE_SIDES,
+  LEVEL_CHANGE_KINDS,
+  OPENING_KINDS,
   OPENING_TYPES,
   SOURCES,
+  SPACE_KINDS,
   summary,
   SUPPORTED_FORMATS,
   TAG_TYPES,
   validate,
+  VOID_KINDS,
+  WALL_KINDS,
   withMeasurements,
 } from '../../../shared/plan/index.js';
 import { audit, planLabel } from '../audit.js';
+import { config } from '../config.js';
 import { many, one, pool, transaction } from '../db/pool.js';
 import { conflict, notFound } from '../errors.js';
-import { newId } from '../ids.js';
-import { equipmentForReview } from './equipment.js';
-import { requireAuth, requireRole } from '../middleware/auth.js';
-import { planRejected, walkthroughReady } from '../notify.js';
+import { isId, newId } from '../ids.js';
+import { enqueue, jobsCommitted } from '../jobs/index.js';
+import { requireAuth, requireStaff } from '../middleware/auth.js';
+import { planRejected } from '../notify.js';
 import { storage } from '../storage/index.js';
-import { historyOf, walkthroughUrlFor } from './plans.js';
+import { equipmentForReview } from './equipment.js';
+import { historyOf, REJECT_REASONS, timelineOf, walkthroughUrlFor } from './plans.js';
 
 /** Long enough to pull a large USDZ over a slow link. */
 const DOWNLOAD_TTL_SECONDS = 3600;
 /** REV-10: gaps longer than this are idle and do not count. */
 export const IDLE_SECONDS = 600;
 
-/** REV-08's reason codes. The owner sees the label and the note. */
-export const REJECT_REASONS = [
-  'Incomplete coverage',
-  'Wrong scale',
-  'Unreadable source',
-  'Wrong facility or level',
-  'Other',
-];
+/** The reason labels a reviewer chooses from, and their stored codes. */
+export const REJECT_LABELS = Object.values(REJECT_REASONS);
+const REJECT_CODES = Object.fromEntries(Object.entries(REJECT_REASONS).map(([code, label]) => [label, code]));
 
 export const router = Router();
-router.use(requireAuth, requireRole('reviewer', 'admin'));
+router.use(requireAuth, requireStaff('reviewer', 'admin'));
 
 const WEEK = 'UTC_TIMESTAMP(3) - INTERVAL 7 DAY';
+const DECIDED = `('recapture', 'generating', 'generation_failed', 'ready', 'superseded')`;
+const APPROVED = `('generating', 'generation_failed', 'ready', 'superseded')`;
 
 export function median(values) {
   if (!values.length) return null;
@@ -72,69 +87,84 @@ function reviewerOf(row, me) {
   return { id: row.reviewed_by, name: row.reviewer_name, isMe: row.reviewed_by === me };
 }
 
-const openFlags = (plan) => (plan?.flags ?? []).filter((f) => f.status === 'open').length;
+/**
+ * Why a version is back with a reviewer through no reviewer's doing: the
+ * last error of its dead generation or reading job (E-02).
+ */
+const FAILURE = `(SELECT j.last_error FROM jobs j
+                  WHERE j.subject_id = v.id AND j.status = 'dead'
+                  ORDER BY j.finished_at DESC LIMIT 1)`;
+
+const VERSION_COLUMNS = `
+  v.*, r.name AS reviewer_name, p.level_number AS level, p.facility_id, f.name AS facility,
+  a.name AS organisation, c.source, COALESCE(d.input_type, c.source) AS input_type,
+  c.coverage, c.floor_to_floor_m, c.outline_closed, c.override_reason, c.weak_wall_count, c.photo_count,
+  c.scale_residual_mm, c.received_at, ${FAILURE} AS failure_reason,
+  (SELECT COUNT(*) FROM capture_tags t WHERE t.capture_id = v.capture_id) AS tag_count`;
+
+const VERSION_JOINS = `
+  FROM plan_versions v
+  JOIN plans p ON p.id = v.plan_id
+  JOIN facilities f ON f.id = p.facility_id
+  JOIN accounts a ON a.id = v.account_id
+  LEFT JOIN captures c ON c.id = v.capture_id
+  LEFT JOIN drawing_details d ON d.capture_id = v.capture_id
+  LEFT JOIN users r ON r.id = v.reviewed_by`;
+
+const num = (v) => (v === null || v === undefined ? null : Number(v));
 
 router.get('/queue', async (req, res) => {
+  // A version still being read has no plan yet, and is not ready for anyone.
   const rows = await many(
     pool,
-    `SELECT v.id, v.plan_id, v.version, v.status, v.origin, v.input_type, v.submitted_at,
-            v.coverage, v.override_reason, v.review_started_at, v.reviewed_by, v.plan_json,
-            p.level, f.name AS facility, o.name AS organisation,
-            c.source, c.metadata, r.name AS reviewer_name
-     FROM plan_versions v
-     JOIN plans p ON p.id = v.plan_id
-     JOIN facilities f ON f.id = p.facility_id
-     JOIN organisations o ON o.id = v.org_id
-     LEFT JOIN captures c ON c.id = v.capture_id
-     LEFT JOIN users r ON r.id = v.reviewed_by
-     WHERE v.status IN ('processing', 'in_review')
+    `SELECT ${VERSION_COLUMNS} ${VERSION_JOINS}
+     WHERE (v.status IN ('processing', 'in_review') AND v.plan_json IS NOT NULL)
+        OR v.status = 'generation_failed'
      ORDER BY COALESCE(v.submitted_at, v.created_at)`,
   );
 
   const mine = await many(
     pool,
-    `SELECT review_seconds FROM plan_versions
-     WHERE reviewed_by = ? AND status IN ('ready', 'recapture', 'superseded')
-       AND review_seconds IS NOT NULL AND reviewed_at >= ${WEEK}`,
+    `SELECT review_active_seconds FROM plan_versions
+     WHERE reviewed_by = ? AND status IN ${DECIDED} AND reviewed_at >= ${WEEK}`,
     [req.user.id],
   );
   const decided = await one(
     pool,
-    `SELECT SUM(status IN ('ready', 'superseded')) AS approved, SUM(status = 'recapture') AS rejected
+    `SELECT SUM(status IN ${APPROVED}) AS approved, SUM(status = 'recapture') AS rejected
      FROM plan_versions WHERE reviewed_at >= ${WEEK}`,
   );
 
   res.json({
-    versions: rows.map((r) => {
-      const m = r.metadata ?? {};
-      return {
-        id: r.id,
-        planId: r.plan_id,
-        version: r.version,
-        status: r.status,
-        origin: r.origin,
-        facility: r.facility,
-        organisation: r.organisation,
-        level: r.level,
-        submittedAt: r.submitted_at,
-        source: r.source ?? null,
-        inputType: r.input_type ?? r.source ?? null,
-        coverage: r.coverage === null ? null : Number(r.coverage),
-        closed: m.closed ?? null,
-        overrideReason: r.override_reason,
-        weakWallCount: m.weakWallCount ?? null,
-        tagCount: Array.isArray(m.tags) ? m.tags.length : null,
-        photoCount: m.photoCount ?? null,
-        openFlags: r.plan_json ? openFlags(r.plan_json) : null,
-        reviewStartedAt: r.review_started_at,
-        reviewer: reviewerOf(r, req.user.id),
-      };
-    }),
+    versions: rows.map((r) => ({
+      id: r.id,
+      planId: r.plan_id,
+      version: r.version_no,
+      status: r.status,
+      origin: r.origin,
+      facility: r.facility,
+      organisation: r.organisation,
+      level: r.level,
+      submittedAt: r.submitted_at,
+      source: r.source ?? null,
+      inputType: r.input_type ?? null,
+      coverage: num(r.coverage),
+      closed: r.outline_closed === null ? null : Boolean(r.outline_closed),
+      overrideReason: r.override_reason,
+      weakWallCount: r.weak_wall_count,
+      tagCount: r.capture_id ? Number(r.tag_count) : null,
+      photoCount: r.photo_count,
+      // Generated from plan_json (C-05), so the queue never parses plans.
+      openFlags: r.plan_json ? r.open_flag_count : null,
+      failureReason: r.failure_reason,
+      reviewStartedAt: r.review_started_at,
+      reviewer: reviewerOf(r, req.user.id),
+    })),
     stats: {
       waiting: rows.length,
       unclaimed: rows.filter((r) => !r.reviewed_by).length,
       oldestSubmittedAt: rows[0]?.submitted_at ?? null,
-      myMedianSecondsThisWeek: median(mine.map((m) => m.review_seconds)),
+      myMedianSecondsThisWeek: median(mine.map((m) => m.review_active_seconds)),
       myReviewsThisWeek: mine.length,
       approvedThisWeek: Number(decided.approved ?? 0),
       rejectedThisWeek: Number(decided.rejected ?? 0),
@@ -143,25 +173,22 @@ router.get('/queue', async (req, res) => {
 });
 
 async function versionRow(db, id, { lock = false } = {}) {
-  return one(
-    db,
-    `SELECT v.*, r.name AS reviewer_name, p.level, p.facility_id, f.name AS facility,
-            o.name AS organisation, c.source, c.metadata, c.received_at
-     FROM plan_versions v
-     JOIN plans p ON p.id = v.plan_id
-     JOIN facilities f ON f.id = p.facility_id
-     JOIN organisations o ON o.id = v.org_id
-     LEFT JOIN captures c ON c.id = v.capture_id
-     LEFT JOIN users r ON r.id = v.reviewed_by
-     WHERE v.id = ?${lock ? ' FOR UPDATE' : ''}`,
-    [id],
-  );
+  if (!isId(id)) return null;
+  return one(db, `SELECT ${VERSION_COLUMNS} ${VERSION_JOINS} WHERE v.id = ?${lock ? ' FOR UPDATE' : ''}`, [id]);
+}
+
+/** Which plan object carries each machine reference, if any. */
+function placedRefs(plan) {
+  const refs = new Map();
+  for (const o of plan?.objects ?? []) if (o.equipment?.equipmentId) refs.set(o.equipment.equipmentId, o.id);
+  return refs;
 }
 
 /**
  * One version with what the reviewer works from: the plan, the capture's
- * metadata, a short-lived download URL for each file (model, room data,
- * photos, the uploaded drawing), and the plan's version history.
+ * facts, a short-lived download URL for each file (model, room data,
+ * photos, mesh and keyframes, the uploaded drawing), its machines, and the
+ * plan's version history.
  */
 router.get('/versions/:id', async (req, res) => {
   const v = await versionRow(pool, req.params.id);
@@ -170,30 +197,32 @@ router.get('/versions/:id', async (req, res) => {
   const files = v.capture_id
     ? await many(
         pool,
-        `SELECT id, name, kind, equipment_id, bytes, content_type, storage_key FROM capture_files
+        `SELECT id, name, kind, bytes, content_type, storage_key FROM capture_files
          WHERE capture_id = ? AND status = 'stored' ORDER BY kind, name`,
         [v.capture_id],
       )
     : [];
   const s = storage();
   const plan = v.plan_json;
-
-  /*
-   * The machines on this capture, each with a playable URL for its 360
-   * video and its poster frame (CHANGE 5). The video is a reference asset:
-   * the plan, not the video, says where a machine is.
-   */
   const signed = new Map(
-    await Promise.all(
-      files.map(async (f) => [f.id, await s.presignDownload(f.storage_key, DOWNLOAD_TTL_SECONDS)]),
-    ),
+    await Promise.all(files.map(async (f) => [f.id, await s.presignDownload(f.storage_key, DOWNLOAD_TTL_SECONDS)])),
   );
   const equipment = v.capture_id ? await equipmentForReview(pool, v.capture_id) : [];
+  const placed = placedRefs(plan);
+  const videoFileIds = new Set(equipment.flatMap((e) => [e.video?.fileId, e.video?.thumbnailFileId, e.video?.framesFileId]));
+  const tags = v.capture_id
+    ? await many(pool, 'SELECT type, x, y, height_m FROM capture_tags WHERE capture_id = ? ORDER BY id', [v.capture_id])
+    : [];
+  const controls = v.capture_id
+    ? await many(pool, 'SELECT ax, ay, bx, `by`, measured_m, scanned_m FROM control_distances WHERE capture_id = ? ORDER BY id', [
+        v.capture_id,
+      ])
+    : [];
 
   res.json({
     id: v.id,
     planId: v.plan_id,
-    version: v.version,
+    version: v.version_no,
     status: v.status,
     origin: v.origin,
     basedOnVersionId: v.based_on_version_id,
@@ -202,31 +231,58 @@ router.get('/versions/:id', async (req, res) => {
     level: v.level,
     submittedAt: v.submitted_at,
     receivedAt: v.received_at ?? null,
-    coverage: v.coverage === null ? null : Number(v.coverage),
+    coverage: num(v.coverage),
     overrideReason: v.override_reason,
-    areaM2: v.area_m2 === null ? null : Number(v.area_m2),
+    areaM2: num(v.area_m2),
     reviewer: reviewerOf(v, req.user.id),
     reviewStartedAt: v.review_started_at,
     activeSeconds: v.review_active_seconds,
     reviewedAt: v.reviewed_at,
-    reviewSeconds: v.review_seconds,
-    rejectionReason: v.rejection_reason,
+    reviewSeconds: v.reviewed_at ? v.review_active_seconds : null,
+    rejectionReason: v.rejection_reason ? REJECT_REASONS[v.rejection_reason] : null,
     reviewerNote: v.reviewer_note,
     contentHash: v.content_hash,
+    failureReason: v.failure_reason,
     walkthroughUrl: v.status === 'ready' ? walkthroughUrlFor(v.plan_id) : null,
     source: v.source ?? null,
-    inputType: v.input_type ?? v.source ?? null,
-    capture: v.metadata ?? null,
+    inputType: v.input_type ?? null,
+    // What the app reported, from the typed capture columns (C-06).
+    capture: v.capture_id
+      ? {
+          floorToFloorM: num(v.floor_to_floor_m),
+          coverage: num(v.coverage),
+          closed: v.outline_closed === null ? null : Boolean(v.outline_closed),
+          overrideReason: v.override_reason,
+          weakWallCount: v.weak_wall_count,
+          photoCount: v.photo_count,
+          scaleResidualMm: num(v.scale_residual_mm),
+          tags: tags.map((t) => ({ type: t.type, x: num(t.x), y: num(t.y), heightM: num(t.height_m) })),
+          controlDistances: controls.map((c) => ({
+            a: [num(c.ax), num(c.ay)],
+            b: [num(c.bx), num(c.by)],
+            measuredM: num(c.measured_m),
+            scannedM: num(c.scanned_m),
+          })),
+        }
+      : null,
     plan,
     planRevision: v.plan_revision,
     planSavedAt: v.plan_saved_at,
     issues: plan ? validate(plan) : [],
     blockers: plan ? approvalBlockers(plan) : ['No plan has been produced for this version.'],
-    rejectReasons: REJECT_REASONS,
+    rejectReasons: REJECT_LABELS,
     history: await historyOf(pool, v.plan_id),
+    timeline: await timelineOf(pool, v.plan_id),
     urlsExpireAt: new Date(Date.now() + DOWNLOAD_TTL_SECONDS * 1000),
+    /*
+     * Every machine on the capture, placed or not (D-03): one the surveyor
+     * added without a position is listed for the reviewer to place (H-02),
+     * and its 360 video is here either way.
+     */
     equipment: equipment.map((e) => ({
       ...e,
+      placed: e.position !== null || placed.has(e.equipmentId),
+      planObjectId: placed.get(e.equipmentId) ?? null,
       video: e.video
         ? {
             videoId: e.video.videoId,
@@ -235,19 +291,24 @@ router.get('/versions/:id', async (req, res) => {
             // Null until the upload has landed, so the player knows to wait.
             url: signed.get(e.video.fileId) ?? null,
             thumbnailUrl: signed.get(e.video.thumbnailFileId) ?? null,
-            failureReason: e.video.failureReason,
+            framesUrl: signed.get(e.video.framesFileId) ?? null,
           }
         : null,
     })),
-    files: files.map((f) => ({
-      id: f.id,
-      name: f.name,
-      kind: f.kind,
-      bytes: Number(f.bytes),
-      contentType: f.content_type,
-      equipmentId: f.equipment_id ?? null,
-      url: signed.get(f.id),
-    })),
+    files: files.map((f) => {
+      const machine = videoFileIds.has(f.id)
+        ? equipment.find((e) => [e.video?.fileId, e.video?.thumbnailFileId, e.video?.framesFileId].includes(f.id))
+        : null;
+      return {
+        id: f.id,
+        name: f.name,
+        kind: f.kind,
+        bytes: Number(f.bytes),
+        contentType: f.content_type,
+        equipmentId: machine?.equipmentId ?? null,
+        url: signed.get(f.id),
+      };
+    }),
   });
 });
 
@@ -255,9 +316,7 @@ router.get('/versions/:id', async (req, res) => {
 async function claimable(db, req, allowed) {
   const v = await versionRow(db, req.params.id, { lock: true });
   if (!v) throw notFound();
-  if (!allowed.includes(v.status)) {
-    throw conflict(`This version is ${v.status.replace('_', ' ')}.`);
-  }
+  if (!allowed.includes(v.status)) throw conflict(`This version is ${v.status.replace('_', ' ')}.`);
   if (v.status === 'in_review' && v.reviewed_by && v.reviewed_by !== req.user.id) {
     throw conflict(`${v.reviewer_name ?? 'Another reviewer'} is reviewing this plan.`);
   }
@@ -284,6 +343,7 @@ const target = (v) => ({ type: 'plan', id: v.plan_id, label: planLabel(v.facilit
 router.post('/versions/:id/start', async (req, res) => {
   await transaction(async (db) => {
     const v = await claimable(db, req, ['processing', 'in_review']);
+    if (!v.plan_json) throw conflict('This plan is still being read.');
     if (v.reviewed_by === req.user.id && v.status === 'in_review') {
       await db.query(`UPDATE plan_versions SET ${ACCRUE} WHERE id = ?`, [v.id]);
       return;
@@ -295,7 +355,7 @@ router.post('/versions/:id/start', async (req, res) => {
        WHERE id = ?`,
       [req.user.id, v.id],
     );
-    await audit(db, { orgId: v.org_id, actor: { id: req.user.id }, action: 'CLAIMED', target: target(v), version: v.version });
+    await audit(db, { accountId: v.account_id, actor: { id: req.user.id }, action: 'CLAIMED', target: target(v), version: v.version_no });
   });
   res.status(204).end();
 });
@@ -310,7 +370,7 @@ router.post('/versions/:id/release', async (req, res) => {
        WHERE id = ?`,
       [v.id],
     );
-    await audit(db, { orgId: v.org_id, actor: { id: req.user.id }, action: 'RELEASED', target: target(v), version: v.version });
+    await audit(db, { accountId: v.account_id, actor: { id: req.user.id }, action: 'RELEASED', target: target(v), version: v.version_no });
   });
   res.status(204).end();
 });
@@ -327,8 +387,9 @@ router.post('/versions/:id/activity', async (req, res) => {
 /* Saving the reviewer's edits.                                         */
 
 const id = z.string().min(1).max(64);
-const num = z.number().finite();
-const pt = z.tuple([num, num]);
+const num$ = z.number().finite();
+const pt = z.tuple([num$, num$]);
+const ring = z.array(pt).max(500);
 
 /*
  * A measurement the scan never recorded, which the reviewer may also clear:
@@ -341,16 +402,19 @@ const measure = (schema) => schema.nullish();
 const equipment = z
   .object({
     equipmentId: z.string().min(1).max(64),
-    // Open on purpose: the catalogue is extensible, so a gym may use a type
-    // this server has never heard of (CHANGE 2.1).
+    // Any name: an account may use a type the global list lacks.
     type: z.string().min(1).max(60),
     name: z.string().min(1).max(120),
   })
   .nullish();
 
+/*
+ * Every format is accepted: a version read before format 3 is still edited
+ * and saved as it was, and is not rewritten into the new format. The
+ * format 3 fields (G-02..G-06) are optional, so an older plan saves without
+ * gaining any of them.
+ */
 const planBody = z.object({
-  // Both formats are accepted: a version read before CHANGE 1 is still
-  // edited and saved as it was, and is not rewritten into the new format.
   format: z.enum(SUPPORTED_FORMATS),
   units: z.literal('m').nullish(),
   // Derived on the server from the geometry, so whatever arrives is ignored.
@@ -361,6 +425,8 @@ const planBody = z.object({
     b: pt.nullish(),
     lengthM: z.number().positive().nullish(),
     metresPerPixel: z.number().positive().nullish(),
+    // What the control distances did to a scan (F-05), kept as read.
+    control: z.object({}).passthrough().nullish(),
   }),
   underlay: z
     .object({
@@ -370,7 +436,21 @@ const planBody = z.object({
       metresPerPixel: z.number().positive().nullish(),
     })
     .nullish(),
-  ceilingHeightM: num,
+  ceilingHeightM: num$,
+  spaces: z
+    .array(
+      z.object({
+        id,
+        name: z.string().max(100).nullish(),
+        kind: z.enum(SPACE_KINDS).nullish(),
+        points: ring,
+        floorFinish: z.enum(FLOOR_FINISHES).nullish(),
+        ceilingHeightM: measure(num$),
+        ceilingZones: z.array(z.object({ id, points: ring, heightM: measure(num$) })).max(100).default([]),
+      }),
+    )
+    .max(500)
+    .optional(),
   walls: z
     .array(
       z.object({
@@ -380,11 +460,17 @@ const planBody = z.object({
         confidence: z.number().min(0).max(1),
         mirror: z.boolean(),
         // CHANGE 1.2. `lengthM` and `angleDeg` are derived and recomputed.
-        lengthM: measure(num),
-        angleDeg: measure(num),
+        lengthM: measure(num$),
+        angleDeg: measure(num$),
         heightM: measure(z.number().positive().max(20)),
         thicknessM: measure(z.number().positive().max(2)),
         source: z.enum(SOURCES).nullish(),
+        kind: z.enum(WALL_KINDS).nullish(),
+        curveM: measure(num$),
+        mirrors: z
+          .array(z.object({ id, fromM: num$, toM: num$, bottomM: num$, topM: num$ }))
+          .max(50)
+          .optional(),
       }),
     )
     .max(3000),
@@ -394,44 +480,81 @@ const planBody = z.object({
         id,
         wallId: id.nullable(),
         type: z.enum(OPENING_TYPES),
-        offset: num,
+        offset: num$,
         width: z.number().positive(),
         confidence: z.number().min(0).max(1),
         // CHANGE 1.3, 1.4.
         heightM: measure(z.number().positive().max(10)),
-        sillHeightM: measure(num),
-        angleDeg: measure(num),
+        sillHeightM: measure(num$),
+        angleDeg: measure(num$),
         swing: z.enum(['left', 'right', 'inward', 'outward']).nullish(),
         source: z.enum(SOURCES).nullish(),
+        kind: z.enum(OPENING_KINDS).nullish(),
+        leaves: z.union([z.literal(1), z.literal(2)]).nullish(),
+        hinge: z.enum(HINGE_SIDES).nullish(),
+        swingInto: id.nullish(),
       }),
     )
     .max(3000),
   columns: z
-    .array(z.object({ id, x: num, y: num, w: z.number().positive(), d: z.number().positive(), angle: num }))
+    .array(
+      z.object({
+        id,
+        x: num$,
+        y: num$,
+        w: z.number().positive(),
+        d: z.number().positive(),
+        angle: num$,
+        shape: z.enum(COLUMN_SHAPES).nullish(),
+        heightM: measure(z.number().positive().max(20)),
+      }),
+    )
     .max(3000),
+  beams: z
+    .array(z.object({ id, kind: z.enum(BEAM_KINDS).nullish(), points: ring, bottomM: measure(num$) }))
+    .max(500)
+    .optional(),
+  levelChanges: z
+    .array(
+      z.object({
+        id,
+        kind: z.enum(LEVEL_CHANGE_KINDS).nullish(),
+        points: ring,
+        heightM: measure(num$),
+        rampAngleDeg: measure(num$),
+      }),
+    )
+    .max(500)
+    .optional(),
+  voids: z
+    .array(z.object({ id, kind: z.enum(VOID_KINDS).nullish(), points: ring, railHeightM: measure(num$) }))
+    .max(500)
+    .optional(),
   objects: z
     .array(
       z.object({
         id,
-        x: num,
-        y: num,
+        x: num$,
+        y: num$,
         w: z.number().positive(),
         d: z.number().positive(),
-        angle: num,
+        angle: num$,
         heightM: z.number().positive().max(12),
         category: z.string().max(40).optional(),
         confidence: z.number().min(0).max(1),
         // CHANGE 1.5, 2.4.
-        elevationM: measure(num),
+        elevationM: measure(num$),
         equipment,
         source: z.enum(SOURCES).nullish(),
+        // Format 3 (G-06).
+        facingDeg: measure(num$),
+        modelRef: z.string().max(64).nullish(),
+        sameAs: id.nullish(),
       }),
     )
     .max(3000),
   zones: z.array(z.object({ id, points: z.array(pt).max(200) })).max(500),
-  tags: z
-    .array(z.object({ id, type: z.enum(TAG_TYPES), x: num, y: num, heightM: num.nullish() }))
-    .max(1000),
+  tags: z.array(z.object({ id, type: z.enum(TAG_TYPES), x: num$, y: num$, heightM: num$.nullish() })).max(1000),
   flags: z
     .array(
       z.object({
@@ -452,7 +575,8 @@ router.put('/versions/:id/plan', async (req, res) => {
   /*
    * Derived measurements are recomputed from the geometry the reviewer sent,
    * never trusted from the client: wall lengths and the room box must always
-   * describe the points actually being saved (CHANGE 1.1).
+   * describe the points actually being saved (CHANGE 1.1). The version's
+   * measurement columns follow by themselves (C-05).
    */
   const plan = withMeasurements(body.plan);
 
@@ -461,34 +585,16 @@ router.put('/versions/:id/plan', async (req, res) => {
     if (v.plan_revision !== body.revision) {
       throw conflict('This plan was saved from somewhere else. Reload to see the latest version.');
     }
-    const facts = summary(plan);
     await db.query(
       `UPDATE plan_versions
        SET ${ACCRUE}, plan_json = ?, plan_revision = plan_revision + 1,
-           plan_saved_at = UTC_TIMESTAMP(3), plan_saved_by = ?, area_m2 = COALESCE(?, area_m2),
-           plan_format = ?, width_m = ?, length_m = ?, perimeter_m = ?,
-           elevation_m = ?, wall_count = ?, opening_count = ?, object_count = ?,
-           equipment_count = ?
+           plan_saved_at = UTC_TIMESTAMP(3), plan_saved_by = ?
        WHERE id = ?`,
-      [
-        JSON.stringify(plan),
-        req.user.id,
-        facts.areaM2,
-        plan.format ?? null,
-        facts.widthM,
-        facts.lengthM,
-        facts.perimeterM,
-        plan.room?.elevationM ?? null,
-        facts.walls,
-        facts.openings,
-        facts.objects,
-        facts.equipment,
-        v.id,
-      ],
+      [JSON.stringify(plan), req.user.id, v.id],
     );
     // "Corrected" (PRD section 4): recorded once, on the first save.
     if (!v.plan_saved_at) {
-      await audit(db, { orgId: v.org_id, actor: { id: req.user.id }, action: 'CORRECTED', target: target(v), version: v.version });
+      await audit(db, { accountId: v.account_id, actor: { id: req.user.id }, action: 'CORRECTED', target: target(v), version: v.version_no });
     }
     return { revision: v.plan_revision + 1 };
   });
@@ -505,6 +611,16 @@ router.put('/versions/:id/plan', async (req, res) => {
 /* ------------------------------------------------------------------ */
 /* Decisions.                                                           */
 
+/** Queues the 3D level for a version (D-04). One job per version and generator. */
+function queueGeneration(db, v) {
+  return enqueue(db, {
+    kind: 'plan.generate',
+    subjectId: v.id,
+    accountId: v.account_id,
+    dedupeKey: `${v.id}:${config.generator.version}`,
+  });
+}
+
 router.post('/versions/:id/approve', async (req, res) => {
   z.object({}).passthrough().parse(req.body ?? {});
   const approved = await transaction(async (db) => {
@@ -512,61 +628,52 @@ router.post('/versions/:id/approve', async (req, res) => {
     if (!v.plan_json) throw conflict('There is no plan to approve.', { blockers: ['No plan has been produced.'] });
     const blockers = approvalBlockers(v.plan_json);
     if (blockers.length) throw conflict('This plan cannot be approved yet.', { blockers });
+    const busy = await one(db, 'SELECT version_no FROM plan_versions WHERE generating_plan_id = ? AND id <> ?', [
+      v.plan_id,
+      v.id,
+    ]);
+    if (busy) throw conflict(`Version ${busy.version_no} of this plan is still being generated. Try again shortly.`);
 
     const hash = createHash('sha256').update(canonicalJson(v.plan_json)).digest('hex');
-    const area = summary(v.plan_json).areaM2;
     await db.query(
       `UPDATE plan_versions
-       SET ${ACCRUE}, status = 'ready', reviewed_at = UTC_TIMESTAMP(3), content_hash = ?,
-           walkthrough_url = ?, area_m2 = COALESCE(?, area_m2)
+       SET ${ACCRUE}, status = 'generating', reviewed_at = UTC_TIMESTAMP(3), content_hash = ?
        WHERE id = ?`,
-      [hash, walkthroughUrlFor(v.plan_id), area, v.id],
+      [hash, v.id],
     );
-    await db.query(`UPDATE plan_versions SET review_seconds = review_active_seconds WHERE id = ?`, [v.id]);
     await audit(db, {
-      orgId: v.org_id,
+      accountId: v.account_id,
       actor: { id: req.user.id },
       action: 'APPROVED',
       target: target(v),
-      version: v.version,
+      version: v.version_no,
       detail: { contentHash: hash },
     });
-
-    // Earlier approved versions are superseded, never edited (REV-09).
-    const older = await many(
-      db,
-      `SELECT id, version FROM plan_versions WHERE plan_id = ? AND status = 'ready' AND version < ?`,
-      [v.plan_id, v.version],
-    );
-    for (const o of older) {
-      await db.query(
-        `UPDATE plan_versions SET status = 'superseded', superseded_at = UTC_TIMESTAMP(3) WHERE id = ?`,
-        [o.id],
-      );
-      await audit(db, {
-        orgId: v.org_id,
-        actor: { id: req.user.id },
-        action: 'SUPERSEDED',
-        target: target(v),
-        version: o.version,
-        detail: { by: v.version },
-      });
-    }
+    await queueGeneration(db, v);
     return { ...v, contentHash: hash };
   });
+  await jobsCommitted();
 
-  await walkthroughReady(pool, {
-    orgId: approved.org_id,
-    label: planLabel(approved.facility, approved.level),
-    planId: approved.plan_id,
+  const now = await one(pool, 'SELECT status FROM plan_versions WHERE id = ?', [approved.id]);
+  res.json({ contentHash: approved.contentHash, status: now.status, walkthroughUrl: walkthroughUrlFor(approved.plan_id) });
+});
+
+router.post('/versions/:id/regenerate', async (req, res) => {
+  await transaction(async (db) => {
+    const v = await claimable(db, req, ['generation_failed']);
+    await db.query(`UPDATE plan_versions SET status = 'generating' WHERE id = ?`, [v.id]);
+    await audit(db, { accountId: v.account_id, actor: { id: req.user.id }, action: 'GENERATION_RETRIED', target: target(v), version: v.version_no });
+    await queueGeneration(db, v);
   });
-  res.json({ contentHash: approved.contentHash, walkthroughUrl: walkthroughUrlFor(approved.plan_id) });
+  await jobsCommitted();
+  const now = await one(pool, 'SELECT status FROM plan_versions WHERE id = ?', [req.params.id]);
+  res.json({ status: now.status });
 });
 
 router.post('/versions/:id/reject', async (req, res) => {
   const body = z
     .object({
-      reason: z.enum(REJECT_REASONS, { message: `Choose a reason: ${REJECT_REASONS.join(', ')}.` }),
+      reason: z.enum(REJECT_LABELS, { message: `Choose a reason: ${REJECT_LABELS.join(', ')}.` }),
       note: z.string().trim().min(3).max(4000),
     })
     .parse(req.body);
@@ -577,22 +684,21 @@ router.post('/versions/:id/reject', async (req, res) => {
        SET ${ACCRUE}, status = 'recapture', reviewed_at = UTC_TIMESTAMP(3),
            rejection_reason = ?, reviewer_note = ?
        WHERE id = ?`,
-      [body.reason, body.note, v.id],
+      [REJECT_CODES[body.reason], body.note, v.id],
     );
-    await db.query(`UPDATE plan_versions SET review_seconds = review_active_seconds WHERE id = ?`, [v.id]);
     await audit(db, {
-      orgId: v.org_id,
+      accountId: v.account_id,
       actor: { id: req.user.id },
       action: 'REJECTED',
       target: target(v),
-      version: v.version,
+      version: v.version_no,
       detail: { reason: body.reason },
     });
     return v;
   });
 
   await planRejected(pool, {
-    orgId: rejected.org_id,
+    accountId: rejected.account_id,
     label: planLabel(rejected.facility, rejected.level),
     reason: body.reason,
     note: body.note,
@@ -604,43 +710,41 @@ router.post('/versions/:id/reject', async (req, res) => {
 /**
  * A change to an approved plan (REV-09): a new version, claimed by the
  * reviewer, starting from the approved plan. The approved version stays
- * read-only and is superseded when the new one is approved.
+ * read-only and is superseded when the new one is ready. A version whose
+ * generation failed may be revised too, to fix what the generator choked on.
  */
 router.post('/versions/:id/revise', async (req, res) => {
   const created = await transaction(async (db) => {
     const v = await versionRow(db, req.params.id, { lock: true });
     if (!v) throw notFound();
-    if (v.status !== 'ready') throw conflict('Only an approved version can be revised.');
+    if (!['ready', 'generation_failed'].includes(v.status)) throw conflict('Only an approved version can be revised.');
     const newer = await one(
       db,
-      `SELECT version, status FROM plan_versions WHERE plan_id = ? AND version > ? ORDER BY version DESC LIMIT 1`,
-      [v.plan_id, v.version],
+      `SELECT version_no, status FROM plan_versions WHERE plan_id = ? AND version_no > ? ORDER BY version_no DESC LIMIT 1`,
+      [v.plan_id, v.version_no],
     );
     if (newer) {
-      throw conflict(`Version ${newer.version} of this plan already exists (${newer.status.replace('_', ' ')}).`);
+      throw conflict(`Version ${newer.version_no} of this plan already exists (${newer.status.replace('_', ' ')}).`);
     }
 
     const plan = { ...v.plan_json, flags: [] };
-    const nextId = newId('pv');
+    const nextId = newId();
     await db.query(
       `INSERT INTO plan_versions
-         (id, org_id, plan_id, version, status, capture_id, input_type, origin, based_on_version_id,
-          submitted_at, coverage, override_reason, area_m2, review_started_at, reviewed_by,
-          review_last_activity_at, plan_json, plan_saved_at, plan_saved_by)
-       VALUES (?, ?, ?, ?, 'in_review', ?, ?, 'revision', ?, UTC_TIMESTAMP(3), ?, ?, ?,
-               UTC_TIMESTAMP(3), ?, UTC_TIMESTAMP(3), ?, UTC_TIMESTAMP(3), ?)`,
-      [
-        nextId, v.org_id, v.plan_id, v.version + 1, v.capture_id, v.input_type, v.id,
-        v.coverage, v.override_reason, v.area_m2, req.user.id, JSON.stringify(plan), req.user.id,
-      ],
+         (id, account_id, plan_id, version_no, status, capture_id, origin, based_on_version_id,
+          submitted_at, review_started_at, reviewed_by, review_last_activity_at, plan_json,
+          plan_saved_at, plan_saved_by)
+       VALUES (?, ?, ?, ?, 'in_review', ?, 'revision', ?, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), ?,
+               UTC_TIMESTAMP(3), ?, UTC_TIMESTAMP(3), ?)`,
+      [nextId, v.account_id, v.plan_id, v.version_no + 1, v.capture_id, v.id, req.user.id, JSON.stringify(plan), req.user.id],
     );
     await audit(db, {
-      orgId: v.org_id,
+      accountId: v.account_id,
       actor: { id: req.user.id },
       action: 'REVISED',
       target: target(v),
-      version: v.version + 1,
-      detail: { from: v.version },
+      version: v.version_no + 1,
+      detail: { from: v.version_no },
     });
     return nextId;
   });

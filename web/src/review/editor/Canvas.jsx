@@ -1,22 +1,57 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { bounds, dist, openingSegment, project, rectCorners } from '@shared/plan/index.js';
+import { bounds, centroid, dist, openingSegment, project, rectCorners } from '@shared/plan/index.js';
 
 import { TAG_LABELS } from '../../lib/format.js';
 import { clearanceToWall, nearestEquipment, wallLabels } from './measure.js';
 import {
+  addBeam,
+  addCeilingZone,
   addColumn,
+  addLevelChange,
   addOpening,
+  addSpace,
   addTag,
+  addVoid,
   addWall,
   addZone,
+  findElement,
   moveItem,
+  movePolygon,
+  movePolygonPoint,
   moveWall,
   moveWallEnd,
+  placeEquipment,
+  setFacing,
   slideOpening,
+  spaceAt,
   splitWall,
 } from './ops.js';
+import { kindLabel, withLists } from './planKinds.js';
 import { snapPoint } from './snap.js';
+import { POLYGON_TOOLS } from './Toolbar.jsx';
+import { stretch, wallPoints } from './wallPath.js';
+
+/** What a finished polygon draft becomes, per drawing tool. */
+const POLYGON_ADDERS = {
+  zone: (plan, points) => addZone(plan, points),
+  space: (plan, points) => addSpace(plan, points),
+  beam: (plan, points) => addBeam(plan, points),
+  levelChange: (plan, points) => addLevelChange(plan, points),
+  void: (plan, points) => addVoid(plan, points),
+  // A ceiling zone belongs to the space it is drawn in; the selected space
+  // is the fallback for a zone whose first corner was put on the wall line.
+  ceilingZone: (plan, points, selection) => {
+    const space = spaceAt(plan, centroid(points)) ?? plan.spaces.find((s) => s.id === selection);
+    return space ? addCeilingZone(plan, space.id, points) : { plan, id: null };
+  },
+};
+
+/** data-hit names of the polygon elements, and the list each lives in. */
+const POLYGON_HITS = { zone: 'zones', space: 'spaces', czone: 'ceilingZones', beam: 'beams', level: 'levelChanges', void: 'voids' };
+
+/** Degrees anticlockwise from +x, as format 3 stores a machine's facing, to a unit vector. */
+const facingVector = (deg) => [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)];
 
 export const TAG_COLOURS = {
   fireExit: '#FB485B',
@@ -41,6 +76,7 @@ function planPoints(plan, underlay, source) {
     ...plan.objects.flatMap(rectCorners),
     ...plan.zones.flatMap((z) => z.points),
     ...plan.tags.map((t) => [t.x, t.y]),
+    ...['spaces', 'beams', 'levelChanges', 'voids'].flatMap((k) => (plan[k] ?? []).flatMap((e) => e.points)),
   ];
   if (underlay) pts.push([0, 0], [underlay.widthM, underlay.heightM]);
   if (source) pts.push(...source.walls.flatMap((w) => [w.a, w.b]));
@@ -54,7 +90,7 @@ function planPoints(plan, underlay, source) {
  */
 const Canvas = forwardRef(function Canvas(
   {
-    plan,
+    plan: planProp,
     source,
     underlay,
     showSource,
@@ -69,9 +105,14 @@ const Canvas = forwardRef(function Canvas(
     showMeasurements = true,
     onScaleLine,
     onZoomChange,
+    placing = null,
+    onPlaced,
+    meshPath = '',
   },
   ref,
 ) {
+  // Plans saved before format 3 have no spaces, beams, level changes or voids.
+  const plan = useMemo(() => withLists(planProp), [planProp]);
   const host = useRef(null);
   const svg = useRef(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
@@ -134,13 +175,15 @@ const Canvas = forwardRef(function Canvas(
   const cancelDraft = useCallback(() => setDraft(null), []);
 
   const finishDraft = useCallback(() => {
-    if (draft?.kind === 'zone' && draft.points.length >= 3) {
-      const { plan: next, id } = addZone(plan, draft.points);
-      history.change(next);
-      onSelect(id);
+    if (draft?.kind === 'polygon' && draft.points.length >= 3) {
+      const { plan: next, id } = POLYGON_ADDERS[draft.tool](plan, draft.points, selection);
+      if (id) {
+        history.change(next);
+        onSelect(id);
+      }
     }
     setDraft(null);
-  }, [draft, plan, history, onSelect]);
+  }, [draft, plan, history, onSelect, selection]);
 
   useImperativeHandle(ref, () => ({ fit, zoomBy, cancelDraft, finishDraft, hasDraft: () => draft !== null }), [
     fit,
@@ -241,6 +284,38 @@ const Canvas = forwardRef(function Canvas(
       } else if (['column', 'object', 'tag'].includes(hit.kind)) {
         const item = [...plan.columns, ...plan.objects, ...plan.tags].find((x) => x.id === hit.id);
         begin(e, { type: 'item', id: hit.id, offset: [p[0] - item.x, p[1] - item.y], base: plan });
+      } else if (hit.kind === 'vertex') {
+        begin(e, { type: 'vertex', id: hit.id, index: Number(hit.end), base: plan });
+      } else if (hit.kind === 'facing') {
+        begin(e, { type: 'facing', id: hit.id, base: plan });
+      } else if (hit.kind === 'space') {
+        // A space covers the whole floor under everything else, so dragging
+        // it pans, as dragging empty floor always has; its corners move it.
+        startPan(e);
+      } else if (POLYGON_HITS[hit.kind]) {
+        begin(e, { type: 'polygon', id: hit.id, from: p, base: plan });
+      }
+      return;
+    }
+
+    if (tool === 'place') {
+      if (!placing) return;
+      const { plan: next, id } = placeEquipment(plan, placing, snap(p, { free: true }).point);
+      if (id) {
+        history.change(next);
+        onSelect(id);
+        onPlaced?.(id);
+      }
+      return;
+    }
+
+    if (POLYGON_TOOLS.includes(tool)) {
+      const s = snap(p, { anchor: draft?.points?.at(-1), free: e.shiftKey });
+      const first = draft?.points?.[0];
+      if (first && draft.points.length >= 3 && dist(first, s.point) < px(12)) {
+        finishDraft();
+      } else {
+        setDraft({ kind: 'polygon', tool, points: [...(draft?.points ?? []), s.point] });
       }
       return;
     }
@@ -259,11 +334,9 @@ const Canvas = forwardRef(function Canvas(
         setDraft({ kind: 'wall', anchor: s.point });
       }
     } else if (tool === 'opening') {
-      const { plan: next, id } = addOpening(plan, p, {
-        type: toolOptions.openingType,
-        width: toolOptions.openingType === 'window' ? 1.5 : 0.9,
-        tolerance: px(20),
-      });
+      const kind = toolOptions.openingKind ?? 'single_door';
+      const width = { double_door: 1.8, sliding_door: 1.8, roller_shutter: 3, window: 1.5, fixed_glazing: 2, opening: 1.2 }[kind] ?? 0.9;
+      const { plan: next, id } = addOpening(plan, p, { kind, width, tolerance: px(20) });
       if (id) {
         history.change(next);
         onSelect(id);
@@ -272,14 +345,6 @@ const Canvas = forwardRef(function Canvas(
       const { plan: next, id } = addColumn(plan, snap(p, { free: true }).point);
       history.change(next);
       onSelect(id);
-    } else if (tool === 'zone') {
-      const s = snap(p, { anchor: draft?.points?.at(-1), free: e.shiftKey });
-      const first = draft?.points?.[0];
-      if (first && draft.points.length >= 3 && dist(first, s.point) < px(12)) {
-        finishDraft();
-      } else {
-        setDraft({ kind: 'zone', points: [...(draft?.points ?? []), s.point] });
-      }
     } else if (tool === 'tag') {
       const type = toolOptions.tagType;
       const { plan: next, id } = addTag(plan, snap(p, { free: true }).point, type, type === 'ceiling' ? plan.ceilingHeightM : null);
@@ -335,6 +400,19 @@ const Canvas = forwardRef(function Canvas(
       history.preview(slideOpening(g.base, g.id, p));
     } else if (g.type === 'item') {
       history.preview(moveItem(g.base, g.id, [p[0] - g.offset[0], p[1] - g.offset[1]]));
+    } else if (g.type === 'vertex') {
+      const s = snap(p, { free: e.shiftKey });
+      setHover(s);
+      history.preview(movePolygonPoint(g.base, g.id, g.index, s.point));
+    } else if (g.type === 'polygon') {
+      const d = [Math.round((p[0] - g.from[0]) * 100) / 100, Math.round((p[1] - g.from[1]) * 100) / 100];
+      history.preview(movePolygon(g.base, g.id, d));
+    } else if (g.type === 'facing') {
+      const o = g.base.objects.find((x) => x.id === g.id);
+      if (!o) return;
+      const deg = (Math.atan2(p[1] - o.y, p[0] - o.x) * 180) / Math.PI;
+      // Whole 5° steps unless Shift is held, like walls square up unless freed.
+      history.preview(setFacing(g.base, g.id, e.shiftKey ? deg : Math.round(deg / 5) * 5));
     }
   }
 
@@ -351,7 +429,7 @@ const Canvas = forwardRef(function Canvas(
   }
 
   function onDoubleClick() {
-    if (draft?.kind === 'zone') finishDraft();
+    if (draft?.kind === 'polygon') finishDraft();
     else if (draft?.kind === 'wall') setDraft(null);
   }
 
@@ -372,6 +450,10 @@ const Canvas = forwardRef(function Canvas(
   const selectedWall = plan.walls.find((w) => w.id === selected);
   const selectedObject = plan.objects.find((o) => o.id === selected);
   const anchor = draft?.anchor ?? draft?.a ?? draft?.points?.at(-1);
+  // The selected polygon (space, beam, ceiling zone, …) shows a handle on each corner.
+  const selectedFound = selected ? findElement(plan, selected) : null;
+  const selectedPolygon = selectedFound?.el?.points ? selectedFound.el : null;
+  const ceilingZones = plan.spaces.flatMap((s) => s.ceilingZones ?? []);
 
   return (
     <div className="ed-canvas" ref={host}>
@@ -426,6 +508,46 @@ const Canvas = forwardRef(function Canvas(
           </g>
         )}
 
+        {/* H-03: the LiDAR mesh flattened onto the floor, faint, under everything drawn. */}
+        {meshPath && <path className="ed-mesh" d={meshPath} aria-hidden="true" />}
+
+        {/*
+          Format 3 spaces first: each room's floor, labelled with its name
+          and kind, under everything that stands on it.
+        */}
+        {plan.spaces.map((s) => (
+          <polygon
+            key={s.id}
+            data-hit={`space:${s.id}`}
+            className={`ed-space ${s.kind ?? ''} ${s.id === selected ? 'selected' : ''} ${flagged.has(s.id) ? 'flagged' : ''} ${problems.has(s.id) ? 'problem' : ''}`}
+            points={polygonPoints(s.points)}
+          />
+        ))}
+        {ceilingZones.map((z) => (
+          <polygon
+            key={z.id}
+            data-hit={`czone:${z.id}`}
+            className={`ed-ceiling-zone ${z.id === selected ? 'selected' : ''}`}
+            points={polygonPoints(z.points)}
+          />
+        ))}
+        {plan.levelChanges.map((l) => (
+          <polygon
+            key={l.id}
+            data-hit={`level:${l.id}`}
+            className={`ed-level ${l.kind} ${l.id === selected ? 'selected' : ''} ${problems.has(l.id) ? 'problem' : ''}`}
+            points={polygonPoints(l.points)}
+          />
+        ))}
+        {plan.voids.map((v) => (
+          <polygon
+            key={v.id}
+            data-hit={`void:${v.id}`}
+            className={`ed-void ${v.kind} ${v.id === selected ? 'selected' : ''} ${problems.has(v.id) ? 'problem' : ''}`}
+            points={polygonPoints(v.points)}
+          />
+        ))}
+
         {plan.zones.map((z) => (
           <polygon
             key={z.id}
@@ -439,26 +561,68 @@ const Canvas = forwardRef(function Canvas(
           <polygon
             key={o.id}
             data-hit={`object:${o.id}`}
-            className={`ed-object ${o.id === selected ? 'selected' : ''} ${flagged.has(o.id) ? 'flagged' : ''} ${o.equipment ? 'equipment' : ''}`}
+            className={`ed-object ${o.id === selected ? 'selected' : ''} ${flagged.has(o.id) ? 'flagged' : ''} ${o.equipment ? 'equipment' : ''} ${problems.has(o.id) ? 'problem' : ''}`}
             points={polygonPoints(rectCorners(o))}
           />
         ))}
 
-        {plan.columns.map((c) => (
+        {plan.columns.map((c) =>
+          c.shape === 'round' ? (
+            <ellipse
+              key={c.id}
+              data-hit={`column:${c.id}`}
+              className={`ed-column ${c.id === selected ? 'selected' : ''}`}
+              cx={c.x}
+              cy={c.y}
+              rx={c.w / 2}
+              ry={c.d / 2}
+              transform={c.angle ? `rotate(${(c.angle * 180) / Math.PI} ${c.x} ${c.y})` : undefined}
+            />
+          ) : (
+            <polygon
+              key={c.id}
+              data-hit={`column:${c.id}`}
+              className={`ed-column ${c.id === selected ? 'selected' : ''}`}
+              points={polygonPoints(rectCorners(c))}
+            />
+          ),
+        )}
+
+        {/* Beams hang overhead, so they are an outline over the floor rather than a filled shape. */}
+        {plan.beams.map((b) => (
           <polygon
-            key={c.id}
-            data-hit={`column:${c.id}`}
-            className={`ed-column ${c.id === selected ? 'selected' : ''}`}
-            points={polygonPoints(rectCorners(c))}
+            key={b.id}
+            data-hit={`beam:${b.id}`}
+            className={`ed-beam ${b.kind} ${b.id === selected ? 'selected' : ''}`}
+            points={polygonPoints(b.points)}
           />
         ))}
 
-        {plan.walls.map((w) => (
-          <g key={w.id}>
-            <line className="ed-wall" x1={w.a[0]} y1={w.a[1]} x2={w.b[0]} y2={w.b[1]} stroke={wallColour(w)} />
-            <line className="ed-hit" data-hit={`wall:${w.id}`} x1={w.a[0]} y1={w.a[1]} x2={w.b[0]} y2={w.b[1]} />
-          </g>
-        ))}
+        {plan.walls.map((w) => {
+          const pts = wallPoints(w);
+          const len = pts.reduce((sum, p, i) => (i ? sum + dist(pts[i - 1], p) : 0), 0);
+          return (
+            <g key={w.id} className={w.kind ? `ed-wall-kind ${w.kind}` : undefined}>
+              {pts.length > 2 ? (
+                <polyline className="ed-wall" points={polygonPoints(pts)} stroke={wallColour(w)} fill="none" />
+              ) : (
+                <line className="ed-wall" x1={w.a[0]} y1={w.a[1]} x2={w.b[0]} y2={w.b[1]} stroke={wallColour(w)} />
+              )}
+              {/* Mirror spans: the stretch of wall that is glass, drawn on the wall's room face. */}
+              {(w.mirrors ?? []).map((m) => {
+                const part = stretch(pts, m.fromM, Math.min(m.toM, len));
+                return part.length > 1 ? (
+                  <polyline key={m.id} className="ed-mirror-span" points={polygonPoints(part)} fill="none" aria-hidden="true" />
+                ) : null;
+              })}
+              {pts.length > 2 ? (
+                <polyline className="ed-hit" data-hit={`wall:${w.id}`} points={polygonPoints(pts)} fill="none" />
+              ) : (
+                <line className="ed-hit" data-hit={`wall:${w.id}`} x1={w.a[0]} y1={w.a[1]} x2={w.b[0]} y2={w.b[1]} />
+              )}
+            </g>
+          );
+        })}
 
         {plan.openings.map((o) => {
           const seg = openingSegment(plan, o);
@@ -468,11 +632,53 @@ const Canvas = forwardRef(function Canvas(
             <g key={o.id}>
               <line className="ed-opening-gap" x1={seg.a[0]} y1={seg.a[1]} x2={seg.b[0]} y2={seg.b[1]} />
               <line className={cls} x1={seg.a[0]} y1={seg.a[1]} x2={seg.b[0]} y2={seg.b[1]} />
-              {o.type === 'door' && <DoorSwing seg={seg} />}
+              {o.type === 'door' && o.kind !== 'sliding_door' && o.kind !== 'roller_shutter' && (
+                <DoorSwing seg={seg} leaves={o.leaves ?? 1} hinge={o.hinge} swing={o.swing} />
+              )}
               <line className="ed-hit" data-hit={`opening:${o.id}`} x1={seg.a[0]} y1={seg.a[1]} x2={seg.b[0]} y2={seg.b[1]} />
             </g>
           );
         })}
+
+        {/*
+          Which way each machine faces (format 3): an arrow from its centre
+          to its front. The selected machine's arrow has a handle at the
+          tip that turns it; a machine whose facing is not set yet shows a
+          faint handle along its footprint's angle to start from.
+        */}
+        {plan.objects.map((o) => {
+          const isSelected = o.id === selected;
+          if (o.facingDeg == null && !(isSelected && !readOnly)) return null;
+          const deg = o.facingDeg ?? ((o.angle ?? 0) * 180) / Math.PI;
+          const [fx, fy] = facingVector(deg);
+          const reach = Math.max(o.w, o.d) / 2 + px(16);
+          const tip = [o.x + fx * reach, o.y + fy * reach];
+          const head = px(6);
+          const left = [tip[0] - fx * head - fy * head * 0.7, tip[1] - fy * head + fx * head * 0.7];
+          const right = [tip[0] - fx * head + fy * head * 0.7, tip[1] - fy * head - fx * head * 0.7];
+          return (
+            <g key={`f${o.id}`} className={`ed-facing ${o.facingDeg == null ? 'unset' : ''} ${isSelected ? 'selected' : ''}`}>
+              <line x1={o.x} y1={o.y} x2={tip[0]} y2={tip[1]} aria-hidden="true" />
+              <polygon points={polygonPoints([tip, left, right])} aria-hidden="true" />
+              {isSelected && !readOnly && (
+                <circle className="ed-facing-handle" data-hit={`facing:${o.id}`} cx={tip[0]} cy={tip[1]} r={px(7)}>
+                  <title>Drag to turn the machine’s front</title>
+                </circle>
+              )}
+            </g>
+          );
+        })}
+
+        {/* Space names, centred, so the reviewer can see which room is which. */}
+        {view.s > 8 &&
+          plan.spaces.map((s) => {
+            const c = centroid(s.points);
+            return c ? (
+              <text key={`l${s.id}`} className="ed-space-label" x={c[0]} y={c[1]} fontSize={px(11)} strokeWidth={px(3)} textAnchor="middle" aria-hidden="true">
+                {s.name || kindLabel(s.kind)}
+              </text>
+            ) : null;
+          })}
 
         {plan.tags.map((t) => {
           const colour = TAG_COLOURS[t.type] ?? '#fff';
@@ -586,10 +792,23 @@ const Canvas = forwardRef(function Canvas(
           <line className="ed-scale-line" x1={plan.scale.a[0]} y1={plan.scale.a[1]} x2={plan.scale.b[0]} y2={plan.scale.b[1]} />
         )}
 
-        {draft?.kind === 'zone' && (
+        {!readOnly &&
+          selectedPolygon &&
+          selectedPolygon.points.map((p, i) => (
+            <circle
+              key={`v${i}`}
+              data-hit={`vertex:${selectedPolygon.id}:${i}`}
+              className="ed-handle selected"
+              cx={p[0]}
+              cy={p[1]}
+              r={px(5)}
+            />
+          ))}
+
+        {draft?.kind === 'polygon' && (
           <polyline className="ed-draft" points={polygonPoints([...draft.points, ...(hover ? [hover.point] : [])])} />
         )}
-        {anchor && hover && draft?.kind !== 'zone' && (
+        {anchor && hover && draft?.kind !== 'polygon' && (
           <g>
             <line className="ed-draft" x1={anchor[0]} y1={anchor[1]} x2={hover.point[0]} y2={hover.point[1]} />
             <text
@@ -612,16 +831,37 @@ const Canvas = forwardRef(function Canvas(
   );
 });
 
-function DoorSwing({ seg }) {
+/**
+ * A door's swing: a quarter circle per leaf from its hinge. One leaf hangs
+ * on the hinge side the reviewer chose (the start of the opening unless
+ * `hinge` is 'right'); a double door has a leaf on each side meeting in
+ * the middle. "Outward" swings to the other face of the wall.
+ */
+function DoorSwing({ seg, leaves = 1, hinge = null, swing = null }) {
   const w = dist(seg.a, seg.b);
-  // A quarter circle from the hinge at `a`, swinging to the room side.
-  const dx = (seg.b[0] - seg.a[0]) / w;
-  const dy = (seg.b[1] - seg.a[1]) / w;
-  const open = [seg.a[0] - dy * w, seg.a[1] + dx * w];
+  if (!(w > 0)) return null;
+  const side = swing === 'outward' ? -1 : 1;
+  const leaf = (h, t) => {
+    const r = dist(h, t);
+    const ux = (t[0] - h[0]) / r;
+    const uy = (t[1] - h[1]) / r;
+    // The side normal is fixed by the opening's direction, so both leaves of a double door open the same way.
+    const nx = (-(seg.b[1] - seg.a[1]) / w) * side;
+    const ny = ((seg.b[0] - seg.a[0]) / w) * side;
+    const open = [h[0] + nx * r, h[1] + ny * r];
+    const sweep = (open[0] - h[0]) * uy - (open[1] - h[1]) * ux > 0 ? 1 : 0;
+    return (
+      <g key={`${h[0]},${h[1]}`}>
+        <line x1={h[0]} y1={h[1]} x2={open[0]} y2={open[1]} />
+        <path d={`M ${open[0]} ${open[1]} A ${r} ${r} 0 0 ${sweep} ${t[0]} ${t[1]}`} fill="none" />
+      </g>
+    );
+  };
+  const middle = [(seg.a[0] + seg.b[0]) / 2, (seg.a[1] + seg.b[1]) / 2];
+  const right = hinge === 'right' || (!hinge && swing === 'right');
   return (
     <g className="ed-door-swing" aria-hidden="true">
-      <line x1={seg.a[0]} y1={seg.a[1]} x2={open[0]} y2={open[1]} />
-      <path d={`M ${open[0]} ${open[1]} A ${w} ${w} 0 0 0 ${seg.b[0]} ${seg.b[1]}`} fill="none" />
+      {leaves === 2 ? [leaf(seg.a, middle), leaf(seg.b, middle)] : right ? leaf(seg.b, seg.a) : leaf(seg.a, seg.b)}
     </g>
   );
 }

@@ -21,6 +21,8 @@ const PLANS = [
   { id: 'plan_ng3', facilityId: 'fac_ng', site: 'Northgate Fitness', level: 3, status: 'uploading', version: 1, inputType: 'lidar', walkthroughVersion: null },
   { id: 'plan_rv0', facilityId: 'fac_rv', site: 'Riverside Gym', level: 0, status: 'recapture', version: 1, inputType: 'lidar', reviewedAt: hoursAgo(200), reviewerName: 'Maya Restrepo', rejectionReason: 'Incomplete coverage', walkthroughVersion: null },
   { id: 'plan_rv1', facilityId: 'fac_rv', site: 'Riverside Gym', level: 1, status: 'processing', version: 1, inputType: 'pdf', submittedAt: hoursAgo(0.1), walkthroughVersion: null },
+  { id: 'plan_eb0', facilityId: 'fac_eb', site: 'Eastbrook Athletic Club', level: 0, status: 'generating', version: 1, inputType: 'lidar', reviewedAt: hoursAgo(0.2), reviewerName: 'Maya Restrepo', walkthroughVersion: null, machines: [{ ref: 'EQ-001', name: 'Treadmill 1', type: 'treadmill', modelStatus: 'approved' }, { ref: 'EQ-002', name: 'Rower', type: 'rower', modelStatus: 'building' }] },
+  { id: 'plan_eb1', facilityId: 'fac_eb', site: 'Eastbrook Athletic Club', level: 1, status: 'generation_failed', version: 1, inputType: 'lidar', reviewStartedAt: hoursAgo(0.5), reviewerName: 'Maya Restrepo', walkthroughVersion: null, failureReason: 'mesh too large' },
 ];
 
 /** An in-memory backend for the owner pages. `calls` lists "METHOD path". */
@@ -39,8 +41,14 @@ function fakeBackend() {
     headers[`${method} ${path}`] = init.headers;
 
     if (url.startsWith('https://storage.test/')) return json(200, {});
-    if (path === '/v1/auth/login') return json(200, { accessToken: 'a', refreshToken: 'r', user: { role: 'owner' } });
-    if (path === '/v1/me') return json(200, { name: 'Sam Okafor', role: 'owner', plansUsed: 6, planQuota: 10 });
+    if (path === '/v1/me') {
+      return json(200, {
+        name: 'Sam Okafor',
+        staffRole: null,
+        accounts: [{ id: 'acc_ng', name: 'Northgate Group', role: 'owner' }],
+        account: { id: 'acc_ng', name: 'Northgate Group', role: 'owner', plansUsed: 6, planQuota: 10 },
+      });
+    }
     if (path === '/v1/facilities') {
       return json(200, {
         facilities: [
@@ -55,13 +63,19 @@ function fakeBackend() {
     if (path === '/v1/plans/plan_rv0') {
       return json(200, { ...PLANS[3], review: { reviewer: { name: 'Maya Restrepo' }, note: 'Rewalk the north-east corner.' }, history: [] });
     }
+    if (path === '/v1/plans/plan_eb0') return json(200, { ...PLANS[5], history: [] });
     if (path === '/v1/plans/plan_ng1') {
       return json(200, {
         ...PLANS[0],
         areaM2: 384,
         coverage: 0.97,
         review: { reviewer: { name: 'Maya Restrepo', initials: 'MR' }, seconds: 680, note: null },
-        shareLink: share,
+        // Tokens are stored hashed: a live link's address is never sent again.
+        shareLink: share && { url: null, expiresAt: null, createdAt: share.createdAt },
+        timeline: [
+          { action: 'CAPTURED', at: hoursAgo(72), actorName: 'Sam Okafor', version: 2 },
+          { action: 'APPROVED', at: hoursAgo(48), actorName: 'Maya Restrepo', version: 2 },
+        ],
         history: [
           { id: 'pv2', version: 2, status: 'ready', origin: 'capture', inputType: 'lidar', submittedBy: 'Sam Okafor', submittedAt: hoursAgo(72), reviewerName: 'Maya Restrepo', reviewedAt: hoursAgo(48), contentHash: 'a'.repeat(64) },
           { id: 'pv1', version: 1, status: 'superseded', origin: 'capture', inputType: 'lidar', submittedBy: 'Sam Okafor', submittedAt: hoursAgo(900), reviewerName: 'Maya Restrepo', reviewedAt: hoursAgo(880), contentHash: 'b'.repeat(64) },
@@ -69,7 +83,7 @@ function fakeBackend() {
       });
     }
     if (path === '/v1/plans/plan_ng1/share-links' && method === 'POST') {
-      share = { url: 'http://localhost:3000/s/tok123', expiresAt: null };
+      share = { url: `http://localhost:3000/s/tok${fetch.shares = (fetch.shares ?? 0) + 1}`, expiresAt: null, createdAt: new Date().toISOString() };
       return json(201, share);
     }
     if (path === '/v1/plans/plan_ng1/share-links' && method === 'DELETE') {
@@ -96,7 +110,7 @@ function Where() {
 }
 
 async function renderAt(path) {
-  await client.signIn('sam.okafor@northgatefitness.com', 'flex1234');
+  client.startSession({ accessToken: 'a', refreshToken: 'r', accounts: [{ id: 'acc_ng', name: 'Northgate Group', role: 'owner' }] });
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
@@ -138,12 +152,80 @@ describe('status page', () => {
     expect(riverside).toHaveTextContent('Processing complete, awaiting review');
     expect(riverside).toHaveTextContent('PDF');
 
-    expect(screen.getByRole('region', { name: 'Eastbrook Athletic Club' })).toHaveTextContent('No levels yet');
     expect(screen.getByText('6 of 10 this month')).toBeInTheDocument();
+  });
+
+  it('shows a walkthrough being built, and a failed build as still in review (D-05)', async () => {
+    vi.stubGlobal('fetch', fakeBackend());
+    await renderAt('/plans');
+    const eastbrook = await screen.findByRole('region', { name: 'Eastbrook Athletic Club' });
+    const rows = within(eastbrook).getAllByRole('listitem');
+    expect(rows.map((r) => r.querySelector('.ow-pill').textContent)).toEqual(['Building walkthrough', 'In review']);
+    expect(rows[0]).toHaveTextContent('the 3D walkthrough is being built');
+    expect(rows[0]).toHaveTextContent('2 machines · 1 3D models ready');
+    // The owner is never told about the failure itself.
+    expect(eastbrook).not.toHaveTextContent(/fail|mesh too large/i);
+    expect(rows[1]).toHaveTextContent('With Maya Restrepo since');
+  });
+
+  it('names its account on every customer call (X-Account-Id)', async () => {
+    const fetch = fakeBackend();
+    vi.stubGlobal('fetch', fetch);
+    await renderAt('/plans');
+    await screen.findByRole('region', { name: 'Northgate Fitness' });
+    for (const call of ['GET /v1/me', 'GET /v1/facilities', 'GET /v1/plans']) {
+      expect(fetch.headers[call]['X-Account-Id']).toBe('acc_ng');
+    }
+  });
+
+  it('is navigable by headings and announces loading and failure (H-04)', async () => {
+    const fetch = fakeBackend();
+    let release;
+    const gate = new Promise((r) => {
+      release = r;
+    });
+    const original = fetch.getMockImplementation();
+    fetch.mockImplementation(async (url, init) => {
+      await gate;
+      return original(url, init);
+    });
+    vi.stubGlobal('fetch', fetch);
+    await renderAt('/plans');
+    expect(screen.getByRole('status')).toHaveTextContent('Loading your plans');
+    release();
+    expect(await screen.findByRole('heading', { level: 1, name: 'My plans' })).toBeInTheDocument();
+    await screen.findByRole('region', { name: 'Northgate Fitness' });
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
+      'Eastbrook Athletic Club',
+      'Northgate Fitness',
+      'Riverside Gym',
+    ]);
+    expect(screen.getAllByRole('link', { name: /Open walkthrough, Level 1/ })).toHaveLength(1);
+    cleanup();
+
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ message: 'Down for maintenance.' }) })));
+    await renderAt('/plans');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Your plans could not be loaded');
+    expect(within(alert).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 });
 
 describe('plan page', () => {
+  it('lists the machines with their 3D model status while the walkthrough is built', async () => {
+    vi.stubGlobal('fetch', fakeBackend());
+    await renderAt('/plans/plan_eb0');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Eastbrook Athletic Club · Ground' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/building the 3D walkthrough now/);
+    const table = screen.getByRole('table', { name: /Machines on this plan/ });
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['REFERENCE', 'NAME', 'TYPE', '3D MODEL']);
+    const rows = within(table).getAllByRole('row').slice(1);
+    expect(rows[0]).toHaveTextContent('EQ-001');
+    expect(rows[0]).toHaveTextContent('Treadmill');
+    expect(rows[0]).toHaveTextContent('Ready');
+    expect(rows[1]).toHaveTextContent('Building');
+  });
+
   it('shows history with who and when, and creates, copies and revokes a share link', async () => {
     const fetch = fakeBackend();
     vi.stubGlobal('fetch', fetch);
@@ -151,7 +233,7 @@ describe('plan page', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     await renderAt('/plans/plan_ng1');
 
-    const history = await screen.findByRole('table');
+    const history = await screen.findByRole('table', { name: 'Version history' });
     const rows = within(history).getAllByRole('row').slice(1);
     expect(rows[0]).toHaveTextContent('v2');
     expect(rows[0]).toHaveTextContent('by Maya Restrepo');
@@ -160,15 +242,34 @@ describe('plan page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /create share link/i }));
     const url = await screen.findByLabelText('Share link');
-    expect(url).toHaveValue('http://localhost:3000/s/tok123');
+    expect(url).toHaveValue('http://localhost:3000/s/tok1');
     fireEvent.click(screen.getByRole('button', { name: /copy link/i }));
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith('http://localhost:3000/s/tok123'));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('http://localhost:3000/s/tok1'));
 
     fireEvent.click(screen.getByRole('button', { name: /revoke link/i }));
     const dialog = await screen.findByRole('dialog', { name: 'Revoke the share link?' });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke link' }));
     expect(await screen.findByRole('button', { name: /create share link/i })).toBeInTheDocument();
     expect(fetch.calls).toContain('DELETE /v1/plans/plan_ng1/share-links');
+    // The audit trail of the plan.
+    expect(screen.getByRole('heading', { name: 'Activity' })).toBeInTheDocument();
+    expect(screen.getByText(/Approved · v2/)).toBeInTheDocument();
+  });
+
+  it('cannot show a live link again, so offers to make a new one (D-06)', async () => {
+    const fetch = fakeBackend();
+    vi.stubGlobal('fetch', fetch);
+    await renderAt('/plans/plan_ng1');
+    fireEvent.click(await screen.findByRole('button', { name: /create share link/i }));
+    expect(await screen.findByLabelText('Share link')).toHaveValue('http://localhost:3000/s/tok1');
+    cleanup();
+
+    // A later visit: the link exists but its address is gone.
+    await renderAt('/plans/plan_ng1');
+    expect(await screen.findByText(/A link exists \(created/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Share link')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Make a new link' }));
+    expect(await screen.findByLabelText('Share link')).toHaveValue('http://localhost:3000/s/tok2');
   });
 });
 

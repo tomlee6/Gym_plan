@@ -21,7 +21,36 @@ class FloorPlanView extends StatelessWidget {
     this.walker,
     this.showGrid = false,
     this.semanticLabel,
+    this.measurements = const <(Offset, Offset?)>[],
   });
+
+  /// Control distances drawn over the plan (F-03): each a line from its
+  /// first end to its second, or a lone end while the second is picked.
+  final List<(Offset, Offset?)> measurements;
+
+  /// The plan point under [local], for a widget of [size] drawing
+  /// [geometry]. The inverse of what the painter does, so a tap can mark a
+  /// point on the plan.
+  static Offset planPointAt(Size size, PlanGeometry geometry, Offset local) {
+    final Rect frame = geometry.frame;
+    final double scale = math.min(
+      size.width / frame.width,
+      size.height / frame.height,
+    );
+    final Offset origin = Offset(
+      (size.width - frame.width * scale) / 2,
+      (size.height - frame.height * scale) / 2,
+    );
+    return frame.topLeft + (local - origin) / scale;
+  }
+
+  /// How many plan units one logical pixel covers at [size].
+  static double unitsPerPixel(Size size, PlanGeometry geometry) =>
+      1 /
+      math.min(
+        size.width / geometry.frame.width,
+        size.height / geometry.frame.height,
+      );
 
   final PlanGeometry geometry;
 
@@ -53,6 +82,7 @@ class FloorPlanView extends StatelessWidget {
             tags: tags,
             walker: walker,
             showGrid: showGrid,
+            measurements: measurements,
           ),
         ),
       ),
@@ -68,6 +98,7 @@ class _FloorPlanPainter extends CustomPainter {
     required this.tags,
     required this.walker,
     required this.showGrid,
+    required this.measurements,
   });
 
   /// Grid spacing on the floor.
@@ -79,6 +110,7 @@ class _FloorPlanPainter extends CustomPainter {
   final List<ScanTag> tags;
   final (Offset, double)? walker;
   final bool showGrid;
+  final List<(Offset, Offset?)> measurements;
 
   late double _scale;
   late Offset _origin;
@@ -109,6 +141,9 @@ class _FloorPlanPainter extends CustomPainter {
       _paintMarker(canvas, _map(tag.position), tag.type.color);
     }
     if (walker != null) _paintWalker(canvas, _map(walker!.$1), walker!.$2);
+    for (final (Offset a, Offset? b) in measurements) {
+      _paintMeasurement(canvas, _map(a), b == null ? null : _map(b));
+    }
 
     canvas.restore();
   }
@@ -237,6 +272,19 @@ class _FloorPlanPainter extends CustomPainter {
     );
   }
 
+  /// A control distance: a white line with a dot at each end.
+  void _paintMeasurement(Canvas canvas, Offset a, Offset? b) {
+    final Paint ink = Paint()
+      ..color = AppColors.textPrimary
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = 2 * _px;
+    if (b != null) canvas.drawLine(a, b, ink);
+    for (final Offset p in <Offset>[a, ?b]) {
+      canvas.drawCircle(p, 5 * _px, Paint()..color = AppColors.background);
+      canvas.drawCircle(p, 3.5 * _px, ink);
+    }
+  }
+
   void _paintWalker(Canvas canvas, Offset at, double heading) {
     // Field-of-view wedge ahead of the surveyor.
     final double reach = 30 * _px;
@@ -275,7 +323,8 @@ class _FloorPlanPainter extends CustomPainter {
       old.wallProgress != wallProgress ||
       old.tags != tags ||
       old.walker != walker ||
-      old.showGrid != showGrid;
+      old.showGrid != showGrid ||
+      old.measurements != measurements;
 }
 
 /// "Captured / Weak / Not captured" key under the live plan.

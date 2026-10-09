@@ -1103,3 +1103,84 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/*
+ * Accessibility (H-04, WCAG 2.1 AA) for the status page and the reviewer
+ * queue. Measured against the card background (#050c12):
+ *
+ * - Muted grey on the #0f2027 pill was 4.25:1; #9aa0a6 is 6.3:1.
+ * - A taken queue row was dimmed with opacity 0.6, which took its grey
+ *   text to 2.5:1. The row now keeps full contrast and says "Taken" in
+ *   words; the tint only reinforces it.
+ * - The "Taken" label is information, not a disabled control, so it is not
+ *   faded either.
+ */
+.rv-status,
+.rv-chip {
+  color: #9aa0a6;
+}
+
+.rv-table tr.taken td {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.rv-button.disabled[aria-disabled='true'] {
+  opacity: 1;
+  color: #9aa0a6;
+}
+
+/* Keyboard focus, visible on every surface including the teal buttons. */
+.rv-button:focus-visible,
+.rv-icon-button:focus-visible,
+.rv-nav:focus-visible,
+.rv-table a:focus-visible,
+.rv-account-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--bg);
+}
+
+.rv-flag-failed {
+  display: block;
+  margin-top: 4px;
+  color: var(--rv-danger);
+  font-size: 12px;
+}
+
+/* The account being worked in, under the brand. */
+.rv-account {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 0 18px;
+}
+
+.rv-account .rv-section {
+  padding-bottom: 4px;
+}
+
+.rv-account-name {
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rv-account-select {
+  margin: 0 4px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--rv-border);
+  background: var(--rv-field);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.rv-callback-wait {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 4px;
+}
