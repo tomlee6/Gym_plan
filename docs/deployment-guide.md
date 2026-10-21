@@ -15,7 +15,9 @@ The detailed how-to for single steps lives in the runbooks (`docs/runbooks/`); t
 
 **Placeholders.** Domains and account numbers in `infra/cdk.json` are still placeholders, `goalcert.example` included. The real ones come from GoalCert's team and the product owner (2.1).
 
-**Sign-in is moving to Amazon Cognito.** That is decided, and Thomas is making the change. Until it is made, the merged code still signs in through GoalCert Hub. This guide describes the Cognito design, and Part 1 lists exactly what changes.
+**Sign-in is Amazon Cognito.** Thomas's change is merged and checked (Part 7); three small follow-ups remain (Part 1).
+
+**TRELLIS.2 before deployment.** Licences, access to the weights, the GPU to run on in Sydney, and the costs are in `docs/trellis2-before-deployment.md`.
 
 ---
 
@@ -30,16 +32,16 @@ The diagram shows prod. Dev and staging are the same components, each in its own
 | API (ECS Fargate, x86_64) | 1 task × 0.5 vCPU, 1 GB; up to 2 | 1 task × 0.5 vCPU, 1 GB; up to 3 | 2 tasks × 1 vCPU, 2 GB; up to 6 |
 | Worker (ECS Fargate, x86_64) | 1 task × 0.5 vCPU, 1 GB | 1 task × 0.5 vCPU, 1 GB | 2 tasks × 1 vCPU, 2 GB |
 | Database (RDS MySQL 8.4, gp3) | db.t4g.micro, 20 GB, one zone, 7-day backups | db.t4g.small, 20 GB, one zone, 7-day backups | db.m7g.large, 100 GB, Multi-AZ, 30-day backups |
-| GPU (AWS Batch, g6e.xlarge) | 0 to 1 instance | 0 to 1 instance | 0 to 2 instances |
+| GPU (AWS Batch, `g5.2xlarge`, recommended) | 0 to 1 instance | 0 to 1 instance | 0 to 2 instances |
 | NAT gateways | 1 | 1 | 2 |
 | Logs kept | 30 days | 30 days | 365 days |
 
-A GPU instance is a `g6e.xlarge`: 4 vCPUs, 32 GiB, one NVIDIA L40S (48 GB), and a 250 GB local NVMe disk that holds the weights between jobs. A job gets 1 GPU and 28 GiB, for at most an hour, with 3 attempts.
+**The GPU instance.** The code names `g6e.xlarge` (NVIDIA L40S), but **AWS does not offer G6e in Sydney**, and the work must stay there. The recommendation is a `g5.2xlarge`: 8 vCPUs, 32 GiB, one NVIDIA A10G (24 GB), and a 450 GB local NVMe disk that holds the weights between jobs. The alternatives, prices and the choice are in `docs/trellis2-before-deployment.md` (section 4). A job gets 1 GPU and 28 GiB, for at most an hour, with 3 attempts.
 
 | Piece | Where | Holds customer data? |
 |---|---|---|
 | API and background worker (ECS Fargate), database (RDS MySQL), storage (S3), queues (SQS) | Flex's AWS, one account per environment (dev, staging, prod), Sydney (`ap-southeast-2`) | Yes, in Sydney only (`docs/residency.md`) |
-| GPU jobs for machine models (AWS Batch, `g6e.xlarge`), and the models CDN (CloudFront with signed links) | Flex's AWS, the same environment accounts | Yes (machine videos and models), in Sydney |
+| GPU jobs for machine models (AWS Batch, `g5.2xlarge` recommended), and the models CDN (CloudFront with signed links) | Flex's AWS, the same environment accounts | Yes (machine videos and models), in Sydney |
 | Pipelines (release, TRELLIS.2 image), image repository (ECR), the code (CodeCommit `gym_floor_plan`) | Flex's AWS, the tooling account | No |
 | Sign-in: Amazon Cognito user pool, with every user's account and password | Flex's AWS, each environment account, Sydney | Yes: accounts, in Sydney only |
 | Mail (SES), alarms, dashboards | Flex's AWS, environment accounts | Mail only |
@@ -79,57 +81,36 @@ Everything about the users stays in Flex's AWS. GoalCert holds nothing about the
 - Cognito emails them a temporary password, which they replace at their first sign-in.
 - "Forgot your password?" is on the sign-in page.
 
-### Sign-in with Amazon Cognito: what changes in the code
+### Sign-in with Amazon Cognito: as built, and what is left
 
-**Who.** Thomas (sign-in is his code).
+**Who.** Thomas (sign-in is his code). His change is merged and checked (Part 7).
 
-The merged code signs in through GoalCert Hub. Cognito uses the same standard (OpenID Connect, with PKCE), so most of the code stays as it is. These are the changes:
+**Built:**
+- **Infrastructure:** an `Auth` stack (`infra/lib/auth-stack.ts`) in each environment, in Sydney.
+  - **The user pool:** sign-in with email; no self sign-up (invites only); a password policy of 12 characters or more; optional MFA with an authenticator app; account recovery by email; mail through Flex's own SES identity; deletion protection in prod.
+  - **Cognito's sign-in page**, on the domain prefix `flexgym-<env>`.
+  - **One app client for both apps:** a client secret, kept in Secrets Manager as `flexgym-<env>/COGNITO_CLIENT_SECRET`, and used only by the backend; the authorization code flow; scopes `openid email profile`; the web app's and the iPhone app's callback URLs.
+- **Backend:**
+  - **Settings:** `HUB_DRIVER=cognito`, with the pool's addresses worked out from `COGNITO_USER_POOL_ID` and `COGNITO_DOMAIN`, which the deploy sets.
+  - **Token checks:** the GoalCert-only `org` check is off, and only an ID token is accepted.
+  - **Invites:** an invite creates the person in Cognito, or resends an unfinished invitation, and Cognito emails them a temporary password.
+- **Web app and iPhone app:** "Sign in" wording; the flow is unchanged.
 
-**Infrastructure** (each Flex environment account):
-1. **A Cognito user pool** in `ap-southeast-2`:
-   - sign-in with email;
-   - no self sign-up: accounts are made by invites only;
-   - a password policy, and optional MFA with an authenticator app;
-   - account recovery by email, with mail sent through the environment's SES identity;
-   - deletion protection in prod.
-2. **Cognito's sign-in page**, on a domain prefix (`flexgym-<env>`). A custom domain such as `signin.<domain>` can come later; it needs a certificate in `us-east-1` and a DNS record.
-3. **One app client for both apps:**
-   - a client secret, which only the API holds;
-   - the authorization code flow, with PKCE;
-   - scopes `openid profile email`;
-   - callback URLs: the web app's `https://<web hostname>/auth/callback`, and the iPhone app's redirect URI;
-   - sign-out URLs for both.
-4. **The backend's sign-in settings**, taken from the pool in place of `cdk.json`'s `hub` block:
-   - issuer: `https://cognito-idp.ap-southeast-2.amazonaws.com/<pool id>`;
-   - authorize and token URLs on the sign-in domain (`/oauth2/authorize`, `/oauth2/token`);
-   - JWKS: `<issuer>/.well-known/jwks.json`;
-   - the client id, and the client secret through Secrets Manager.
-5. **The API's permission to manage users in that pool:** `cognito-idp:AdminCreateUser`, `AdminGetUser`, `AdminDisableUser`, `AdminEnableUser` and `AdminUserGlobalSignOut`.
-
-**Backend:**
-1. Drop the GoalCert-only check of an `org` claim: Cognito sends none, and access already depends on Flex memberships, invites and staff roles.
-2. Read Cognito's ID token as it comes: `email_verified`, `name` when set, and no `sid`.
-3. An invite creates the person's Cognito account if there is none (`AdminCreateUser`, which emails a temporary password). As today, the invite is linked at their first sign-in, by verified email.
-4. Removing a user in Flex admin also disables them in Cognito and signs them out everywhere.
-5. Signing out of Flex Gym Scan also ends the Cognito session (its sign-out URL). Otherwise the next sign-in on that browser would skip the password.
-6. Retire the GoalCert account-events endpoint (`/v1/hub/events`) and its secret.
-7. **The first admin.** No screen can make the first one:
-   - create their Cognito account once, in the AWS console or with the CLI;
+**What is left** (found when the change was checked; none of it blocks a first deployment):
+1. **Removing a user does not disable them in Cognito.** They are already refused by Flex Gym Scan, because they have no membership left, but their Cognito account stays usable on the sign-in page. Add `AdminDisableUser` and `AdminUserGlobalSignOut` on removal, and the API's permission for both.
+2. **Signing out does not end the Cognito session.** On the same browser, pressing "Sign in" goes straight back in without a password. That matters on shared computers. Sign-out should also visit Cognito's sign-out URL; the app client already lists one.
+3. **The first admin has no documented step.** No screen can make the first one:
+   - create their Cognito account in the AWS console or with the CLI;
    - let them sign in;
    - give them the admin role with a one-off database update, run like the migrations.
 
-   From then on, admins make other staff in the app.
+   Add this to `docs/runbooks/deploy.md`.
 
-**Web app:** wording only. "Sign in with GoalCert" becomes "Sign in", and the help text and the "no access" message change. The flow reads the sign-in addresses from the API, so it does not change.
+**To know before the first deploy:**
+- **The domain prefix must be unused in the region.** Cognito's sign-in domain prefix (`flexgym-<env>`) must be unique in `ap-southeast-2`. If another AWS customer already uses it, the `Auth` stack fails to deploy; change the prefix.
+- **SES must be out of its sandbox before inviting real people**, because Cognito sends its invitations through it (2.4).
 
-**iPhone app:** wording only, on the sign-in screen and the forgotten-password hint. "Forgot your password?" is on Cognito's page. The flow reads the addresses from the API, and its redirect URI is registered in the app client.
-
-**Tests.** The stand-in sign-in service, used locally and in tests, stays. Add tests that invites make Cognito accounts and removals disable them, against a fake.
-
-**Done when**, on staging:
-- one account signs in to both the web app and the iPhone app;
-- an invite emails the person a temporary password;
-- removing them stops their sign-in.
+**Unused now:** the old GoalCert events endpoint (`/v1/hub/events`). It refuses everything, because no events secret is set any more, and can be removed.
 
 ---
 
@@ -149,7 +130,7 @@ The release machinery is written: CDK in `infra/`, and the pipeline `flexgym-rel
 2. **Domains**, per environment:
    - the web app's hostname, hosted by GoalCert (for example `gym.goalcert.example`);
    - the API's hostname (for example `api.gym.goalcert.example`), whose DNS zone lives in Flex's account, delegated from GoalCert's DNS (2.4).
-3. **Sign-in.** Thomas sets up Cognito in each environment ("Sign-in with Amazon Cognito", Part 1). Its two callback URLs are the web app's `https://<web hostname>/auth/callback` and the iPhone app's redirect URI.
+3. **Sign-in.** The `Auth` stack sets up Cognito in each environment ("Sign-in with Amazon Cognito", Part 1). Its two callback URLs are the web app's `https://<web hostname>/auth/callback` and the iPhone app's redirect URI, from `hub.webRedirectUri` and `hub.iosRedirectUri` in `cdk.json`.
 4. **Fill in `infra/cdk.json`**, per environment:
    - `account`;
    - `hostedZoneName`, `apiDomain`, `mailDomain`, `webDomain`;
@@ -187,7 +168,7 @@ The same stack creates the TRELLIS.2 image pipeline (Part 5).
 2. **Staging and prod** through `flexgym-release`: every push to `main` deploys staging, and prod waits for the approval `PromoteToProd`.
 3. **DNS delegation.** The `Dns` stack outputs `DelegationNameServers`. GoalCert adds an `NS` record for the API zone with those values. The API certificate and the mail records validate only after that.
 4. **Web app stacks.** See 4.1: with the web app hosted by GoalCert, Flex's `Web` stack and its web certificate are not used.
-5. **Sign-in.** The Cognito user pool comes with the deploy. Make the first admin (Part 1, "The first admin").
+5. **Sign-in.** The `Auth` stack makes the user pool and its client secret, so there is nothing to set by hand. Make the first admin (Part 1, "What is left", item 3).
 6. **Database.** Run the migrations as a one-off task with the new image (`deploy.md`, "Database migrations"). The deploy does not run them.
 7. **Mail.** Request SES production access (`docs/runbooks/service-quotas.md`, section 2). Cognito sends its invitations and password emails through it too.
 
@@ -361,11 +342,13 @@ aws cloudfront create-invalidation --distribution-id <id> --paths "/*"
 
 ## Part 5. TRELLIS.2: making the machine models
 
+Before these steps: licences, access to the weights, the GPU to run on in Sydney, and the costs are in `docs/trellis2-before-deployment.md`. Start with its section 1.
+
 ### 5.0 How it works, and what it needs
 
 There is no endpoint and no API key, unlike the Digital Twin's RunPod worker:
 1. A machine's 360 video finishes uploading, or a reviewer presses **Build**. The backend submits a job to AWS Batch (`backend/src/assets/trellis2.js`), naming the video's S3 path, an output folder and the settings.
-2. Batch starts a GPU host in Sydney (`g6e.xlarge`, none while idle) and runs our image. The worker reads the video from S3, picks frames, cuts the machine out, runs TRELLIS.2 and writes `model.glb` back to S3.
+2. Batch starts a GPU host in Sydney (`g5.2xlarge` recommended, none while idle) and runs our image. The worker reads the video from S3, picks frames, cuts the machine out, runs TRELLIS.2 and writes `model.glb` back to S3.
 3. Batch's "job finished" event goes through EventBridge to the `gpu-jobs` queue. The backend worker reads it, prepares the model for the walkthrough (levels of detail, KTX2 textures), and puts it in front of the reviewer.
 
 Permission comes from IAM roles the infrastructure creates.
@@ -438,14 +421,14 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $HF_TOKEN" \
 
 ### 5.3 GPU quota in dev, staging and prod
 
-**Why it matters.** GPU jobs run on `g6e.xlarge` (4 vCPUs, one NVIDIA L40S). New AWS accounts usually allow 0 vCPUs of this family, so no job could start. AWS reviews increases by hand, so ask early.
+**Why it matters.** GPU jobs run on a G-family instance: `g5.2xlarge` is recommended, with 8 vCPUs and one NVIDIA A10G. `g6e` is not offered in Sydney (`docs/trellis2-before-deployment.md`, section 4). New AWS accounts usually allow 0 vCPUs of this family, so no job could start. AWS reviews increases by hand, so ask early.
 
 **Who.** Flex's AWS team, in each environment account. The tooling account needs none: building the image uses no GPU.
 
 **Steps.** `docs/runbooks/service-quotas.md`, section 1, in `ap-southeast-2`:
 1. Check the "Running On-Demand G and VT instances" quota (`L-DB2E81BA`).
-2. Confirm `g6e.xlarge` is offered in the Sydney availability zones.
-3. Request `gpuMaxInstances × 4` vCPUs with room to spare: today at least 8 in dev and staging, and 16 in prod.
+2. Confirm the chosen type (`g5.2xlarge`, or `g6.2xlarge`) is offered in the Sydney availability zones the VPC uses.
+3. Request `gpuMaxInstances × 8` vCPUs with room to spare: today at least 16 in dev and staging, and 32 in prod.
 
 **Done when** all three accounts show the new value.
 
@@ -673,7 +656,7 @@ Each list is in order. A step in brackets is another team's, and has to happen f
 
 1. Create, or confirm, the AWS accounts: tooling, dev, staging, prod. Give the team access. (2.1)
 2. Send the account numbers to Thomas for `cdk.json`. (2.1)
-3. Request the GPU quota ("Running On-Demand G and VT instances", `L-DB2E81BA`), in `ap-southeast-2`: at least 8 vCPUs in dev and staging, and 16 in prod. Confirm `g6e.xlarge` is offered in the Sydney zones. (5.3)
+3. Request the GPU quota ("Running On-Demand G and VT instances", `L-DB2E81BA`), in `ap-southeast-2`: at least 16 vCPUs in dev and staging, and 32 in prod (8-vCPU hosts). Confirm the chosen GPU type is offered in the Sydney zones. (5.3)
 4. In the tooling account, check the CodeBuild quota for concurrent builds on the Linux 2XLARGE environment; ask for at least 1. (5.6)
 5. Request SES production access in staging and prod, once the `Mail` stack is deployed. (2.4)
 6. Bootstrap every account in `ap-southeast-2` and `us-east-1`, staging and prod trusting the tooling account, with Thomas. (2.3)
@@ -719,7 +702,7 @@ GoalCert hosts only the web app's front end. Nothing about users or sign-in is a
 **Thomas (app and infrastructure code):**
 1. Fill in `cdk.json`. (2.1)
 2. Bootstrap the accounts and deploy the pipelines; deploy the environments; run the migrations; make the first admin; set the models signing keys. (2.3 to 2.5)
-3. Move sign-in from GoalCert Hub to Amazon Cognito: the infrastructure, backend, web and iPhone changes in "Sign-in with Amazon Cognito" (Part 1).
+3. Finish the sign-in follow-ups in "Sign-in with Amazon Cognito: as built, and what is left" (Part 1): disabling removed users in Cognito, signing out of Cognito too, and the first-admin step.
 4. Switch off Flex's `Web` stack where GoalCert hosts the web app, and build the web app per environment with `VITE_API_URL`. (4.1, 4.3; see Part 7)
 5. The iPhone app: its bundle id (I-02), signing, TestFlight and App Store builds per environment; ARKit frames (I-05). (Part 3)
 6. The contract's open points for him (`docs/3d-contract.md`, 1 to 12).
@@ -737,16 +720,22 @@ What was run on the merged code:
 
 | Check | Result |
 |---|---|
-| Backend tests (real MySQL) | 294 passed |
+| Backend tests (real MySQL) | 299 passed (with the Cognito change merged) |
 | Web tests | 214 passed |
 | Web production build, with its budget and transcoder checks | Passed |
-| Infrastructure tests, and the TypeScript type-check | 30 passed; type-check clean |
+| Infrastructure tests, and the TypeScript type-check | 30 passed, including data residency with the `Auth` stack; type-check clean |
 | GPU worker tests (with the image's libraries) | 136 passed |
 | iPhone app tests (Flutter 3.41.7, in a Linux container) | 145 passed |
 | iPhone app against the backend | Every API call the app makes (18 paths, from sign-in to video upload) has a matching backend route |
 | Web app against the backend | Covered by the web tests, which use the API's own response shapes |
 
-**Sign-in.** The merged code still signs in through GoalCert Hub. Moving it to Amazon Cognito is decided, and is Thomas's change (Part 1). Until it is made, this guide's sign-in steps describe the target.
+**Sign-in.** Thomas's Cognito change was merged with the 3D work, and the checks above were run on the result. Conflicts in five files were resolved by keeping both sides:
+- the backend's packages;
+- the infra stacks: the `Auth` stack beside the GPU stack, with the GoalCert Hub secrets removed and the models signing key kept.
+
+What is left is listed in Part 1.
+
+**The GPU type.** The code names `g6e.xlarge`, which AWS does not offer in Sydney, so a GPU deployment there would get no instances. The choice and its costs are in `docs/trellis2-before-deployment.md` (section 4). Owner: Tejesh, before the first GPU deployment.
 
 **Gaps the check found.** Both are in how the web app would be deployed (the release pipeline, and Flex's `Web` stack), not in the app itself. The plan in Part 4 closes both:
 
