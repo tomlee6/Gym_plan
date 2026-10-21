@@ -16,6 +16,9 @@ Thumbs.db
 *~
 # Office's lock files while a document is open
 ~$*
+# Python's compiled caches
+__pycache__/
+*.pyc
 
 # --- backend ---
 backend/node_modules/
