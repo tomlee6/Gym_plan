@@ -1,17 +1,18 @@
-# TRELLIS.2: licences, weights, GPU, costs, and everything before deployment
+# TRELLIS.2: licences and their costs, weights, GPU, and everything before deployment
 
-TRELLIS.2 is the Microsoft model that turns a machine's 360 video into its 3D model, run as a GPU job in Flex's AWS. This document gathers everything that has to be settled or done before it can make models in production, and what it will cost:
+TRELLIS.2 is the Microsoft model that turns a machine's 360 video into its 3D model, run as a GPU job in Flex's AWS. This document gathers everything that has to be settled or done before it can make models in production, and what the licences and access to the weights cost:
 1. **Section 1:** where each item stands.
 2. **Section 2:** licences.
 3. **Section 3:** access to the model weights.
 4. **Section 4:** the GPU to run on in Sydney.
 5. **Section 5:** the steps before the first deployment.
-6. **Section 6:** costs.
-7. **Section 7:** how to measure and reduce them.
+6. **Section 6:** licence and access costs.
+
+Running TRELLIS.2 on AWS, and what that costs, is in `docs/deployment-guide.md` (5.13).
 
 The detailed commands for each step are in `docs/deployment-guide.md` (Part 5) and `docs/runbooks/trellis2-worker.md`; this document refers to them rather than repeating them.
 
-**What is built.** The worker and its image (`gpu/trellis2/`), the GPU environment (`infra/lib/gpu-stack.ts`), the backend's side, the reviewer's screens, the alarms and the image pipeline. **What has not happened yet:** none of it has run on a real GPU or in a real AWS account, and the image has never been compiled. Every GPU timing below is therefore an estimate until the first golden test and the first real builds are measured (section 7).
+**What is built.** The worker and its image (`gpu/trellis2/`), the GPU environment (`infra/lib/gpu-stack.ts`), the backend's side, the reviewer's screens, the alarms and the image pipeline. **What has not happened yet:** none of it has run on a real GPU or in a real AWS account, and the image has never been compiled. Every GPU timing is therefore an estimate until the first golden test and the first real builds are measured.
 
 ---
 
@@ -100,7 +101,7 @@ GPU jobs read the weights only from that bucket, with Hugging Face switched off.
    - An EC2 instance in that account in Sydney is quickest.
 5. **Afterwards:** delete the work folder, and stop the instance. The token can be revoked until it is next needed (a new lock, or a new environment).
 
-**Cost:** Hugging Face and DINOv3 are free. The copy machine costs under $1 per environment (section 6).
+**Cost:** Hugging Face and DINOv3 are free (section 6).
 
 ---
 
@@ -162,94 +163,39 @@ Each step names its owner, and where the guide (`docs/deployment-guide.md`) has 
 
 ---
 
-## 6. Costs
+## 6. Licence and access costs
 
-### Prices used
+What the licences and getting the weights cost. Running TRELLIS.2 on AWS is a separate matter, in `docs/deployment-guide.md`, 5.13.
 
-AWS list prices for Sydney (`ap-southeast-2`), on demand, in US dollars, before tax, at the time of writing. Check the AWS Pricing Calculator before budgeting: prices change.
-
-| Item | Price |
-|---|---|
-| `g5.2xlarge` (A10G) | $1.5758 an hour |
-| `g6.2xlarge` (L4) | $1.2711 an hour |
-| `p5.4xlarge` (H100) | $8.944 an hour |
-| CodeBuild `general1.2xlarge` (the image build) | $0.25 a minute |
-| CodeBuild `general1.small` (golden test, adopt and trigger steps) | $0.005 a minute |
-| S3 Standard | $0.025 per GB-month |
-| ECR storage | $0.10 per GB-month |
-| `m6i.large` (the weights copy machine) | $0.12 an hour |
-
-AWS Batch, EventBridge and the queues cost nothing extra at this volume. A GPU host's 100 GB root disk adds about $0.01 an hour while the host runs.
-
-### One-off costs
-
-| Item | When | Cost |
-|---|---|---|
-| Image build: two to four hours on the 2XLARGE build host | Each new image | $30 to $60 |
-| Golden test: one GPU job, including a cold host | Each new image | Under $1 on `g5.2xlarge` or `g6.2xlarge`; about $4 on `p5.4xlarge` |
-| Weights copy: about an hour on an `m6i.large`, with its disk | Once per environment, and per new lock | Under $1 each |
-| Hugging Face account, DINOv3 | Once | Free |
-| nvdiffrast | Once | Depends on the decision (section 2) |
-
-### Monthly fixed costs (with no models being built)
-
-| Item | Cost a month |
-|---|---|
-| GPU hosts | $0: none run while idle |
-| Weights: about 18 GB in each of 3 environments | About $1.35 |
-| Images in ECR: an estimated 10 to 20 GB each; the repository keeps the last 20 | $20 to $40. Keeping 5 instead: $5 to $10 |
-| Logs and alarms for the GPU work | A few dollars |
-| **Total** | **About $25 to $45**, mostly old images |
-
-### Cost per machine model
-
-A GPU host is billed per second while it runs. Two kinds of time make up a build:
-- **Host start (S):** booting, pulling the image, copying the weights to the host's disk, and the idle minutes before Batch stops the host. **Estimate: about 15 minutes**, paid once per host, however many models it then builds.
-- **Per model (W):** loading the model, picking frames, the cut-out, TRELLIS.2 at resolution 1024, and the GLB export. **Estimates:**
-  - about 6 minutes on `g5.2xlarge`;
-  - about 9 minutes on `g6.2xlarge`;
-  - about 3 minutes on `p5.4xlarge`.
-
-**Cost** = hourly price × (S + number of models × W) ÷ 60, for each host that runs.
-
-| | `g5.2xlarge` | `g6.2xlarge` | `p5.4xlarge` |
+| Item | Licence fee | Ongoing (a subscription, or per model) | What it asks of us |
 |---|---|---|---|
-| One machine on its own (host started for it) | about $0.55 | about $0.51 | about $2.68 |
-| A gym's 40 machines on one host | about $6.70 ($0.17 a model) | about $7.94 ($0.20 a model) | about $20.12 ($0.50 a model) |
+| TRELLIS.2 code and TRELLIS.2-4B weights (Microsoft) | None | None | MIT: keep Microsoft's copyright and licence notice with the code. The image does. |
+| TRELLIS-image-large decoder (Microsoft) | None | None | MIT, as above |
+| DINOv3 image encoder (Meta) | None | None | Someone who can bind the company accepts the DINOv3 License. Research publications acknowledge DINOv3. |
+| BiRefNet background removal | None | None | MIT notice |
+| CuMesh, cubvh, FlexGEMM, utils3d | None | None | MIT notices |
+| Eigen (inside o-voxel) | None | None | MPL 2.0; used unmodified, so nothing more |
+| flash-attn, PyTorch | None | None | BSD notices |
+| CUDA runtime, in the base image | None | None | NVIDIA's CUDA licence allows using and shipping the runtime in containers |
+| **nvdiffrast** (NVIDIA): texture baking in the export | **Unknown.** NVIDIA does not publish a price; a commercial licence is quoted on request. | Set by NVIDIA, if licensed | Non-commercial use only as it stands (section 2) |
+| RMBG-2.0 (BRIA): **not used** | None, because it is not used | None | Would need a paid commercial licence from BRIA. BiRefNet replaces it. |
 
-In prod, `gpuMaxInstances` is 2, so a large batch is split over two hosts. That finishes sooner, at the cost of one more host start (about $0.40 on `g5.2xlarge`).
+**Getting the weights:**
 
-A machine rebuilt from the phone's depth (the measured route) runs on the same hosts. It uses no GPU and no weights, and takes a few minutes, so it costs about the same as a TRELLIS.2 model or less.
+| Item | Cost |
+|---|---|
+| A Hugging Face account for the company | Free. No paid plan (Pro, Enterprise) is needed. |
+| Access to the gated DINOv3 repository | Free: Meta approves the request at no charge |
+| Downloading the weights (about 18 GB, once per environment and per new lock) | Free from Hugging Face |
+| The Hugging Face token | Free. It is only needed for the lock and the copies (section 3). |
 
-### A month at different volumes
+**In total:**
+- **Licence fees:** none, except nvdiffrast's, which depends on the decision in section 2:
 
-This assumes models come in batches, a gym at a time (about 40 machines), plus one rebuild for every five models, each rebuild on a host started for it. It includes the fixed costs above (about $35).
+  | nvdiffrast option | Fee |
+  |---|---|
+  | 1. Legal finds our use allowed | None (Legal's time) |
+  | 2. Licence it from NVIDIA | NVIDIA's quote |
+  | 3. Replace it | No fee (engineering time) |
 
-| Models a month | `g5.2xlarge` | `g6.2xlarge` | `p5.4xlarge` |
-|---|---|---|---|
-| 200 | about $80 | about $85 | about $210 |
-| 1,000 | about $265 | about $285 | about $900 |
-| 5,000 | about $1,190 | about $1,290 | about $4,370 |
-
-These cover TRELLIS.2 only. The rest of the platform (API, database, storage, networking, web hosting) is outside this document.
-
----
-
-## 7. Measuring and reducing costs
-
-**Replace the estimates with real figures** as soon as there are some:
-- Every job's `metadata.json` records its own timings (`timings_s`): frames, cut-out, model loading, generation and export.
-- AWS Batch records each job's start and end.
-- The route test (`gpu/trellis2/route_test.py`, L-01) reports the time per machine.
-
-Recompute the per-model cost with the formula above.
-
-**Follow the spend:**
-- Every resource is tagged `project: flex-gym-scan` and `environment: <env>`. Turn these on as cost allocation tags in Billing, then filter Cost Explorer by them.
-- Set an AWS Budget per account, with an alert, at a level agreed with management.
-
-**Reduce it, if needed:**
-- **Spot instances.** AWS Batch can run the GPU jobs on Spot capacity, usually much cheaper than on demand. An interrupted job is retried (each job allows three attempts). This needs the "All G and VT Spot Instance Requests" quota (`L-3819A6DF`), and a change to the GPU stack.
-- **Keep fewer images in ECR**, for example 5 instead of 20.
-- **Build machines in batches.** Builds already start as each video arrives, so a gym recorded in one visit shares one host start.
-- **Keep `gpuMaxInstances` low:** fewer hosts means fewer host starts. Raise it only if waits grow too long.
+- **Ongoing:** no subscription, and no fee per model, for any of the rest.

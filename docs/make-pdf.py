@@ -61,8 +61,8 @@ def for_python_markdown(text: str) -> str:
     """
     What GitHub reads the same way, as Python-Markdown needs it: a blank
     line before a list that follows a paragraph, and nested lists and their
-    paragraphs indented by four spaces, not three. Code blocks are left as
-    they are.
+    paragraphs indented by four spaces, not three (or, for a list nested
+    under a bullet, two). Code blocks are left as they are.
     """
     out, fenced, previous = [], False, ""
     for line in text.splitlines():
@@ -72,6 +72,8 @@ def for_python_markdown(text: str) -> str:
             spaces = len(line) - len(line.lstrip(" "))
             if spaces and spaces % 3 == 0 and spaces % 4:
                 line = " " * (spaces // 3 * 4) + line.lstrip(" ")
+            elif spaces == 2 and LIST_ITEM.match(line):
+                line = "    " + line.lstrip(" ")
             if LIST_ITEM.match(line) and previous.strip() and not LIST_ITEM.match(previous):
                 out.append("")
         out.append(line)
