@@ -1,10 +1,10 @@
 # Deploying Flex Gym Scan
 
-The backend and everything behind the iPhone app run in **Flex's AWS organization**. The web app is hosted on its own in **GoalCert's AWS organization**, separately. TRELLIS.2 makes the machine models, in Flex's AWS. This guide covers all of it, step by step, with a task list for each team at the end.
+The backend and everything behind the iPhone app run in **Flex's AWS organization**, sign-in included: every user's account and password is in Amazon Cognito there. Only the web app's front end is hosted in **GoalCert's AWS organization**, separately. TRELLIS.2 makes the machine models, in Flex's AWS. This guide covers all of it, step by step, with a task list for each team at the end.
 
 **Who it is for:**
 - Flex's AWS team, which owns the Flex accounts;
-- GoalCert's AWS team, which hosts the web app and runs GoalCert's DNS and sign-in;
+- GoalCert's AWS team, which hosts the web app's front end and runs GoalCert's DNS;
 - Thomas, who owns the app and infrastructure code;
 - Tejesh, who owns the 3D work and TRELLIS.2;
 - the company's management and Legal, for two licence questions and the Apple account.
@@ -13,13 +13,15 @@ The backend and everything behind the iPhone app run in **Flex's AWS organizatio
 
 The detailed how-to for single steps lives in the runbooks (`docs/runbooks/`); this guide links to them rather than repeating them.
 
-**Placeholders.** Domains, account numbers and sign-in (Hub) values in `infra/cdk.json` are still placeholders, `goalcert.example` included. The real ones come from GoalCert's team and the product owner (2.1).
+**Placeholders.** Domains and account numbers in `infra/cdk.json` are still placeholders, `goalcert.example` included. The real ones come from GoalCert's team and the product owner (2.1).
+
+**Sign-in is moving to Amazon Cognito.** That is decided, and Thomas is making the change. Until it is made, the merged code still signs in through GoalCert Hub. This guide describes the Cognito design, and Part 1 lists exactly what changes.
 
 ---
 
 ## Part 1. Where everything runs
 
-![Flex Gym Scan on AWS: GoalCert's organization hosts only the web app's files; GoalCert's existing Hub gives one sign-in for both apps; Flex's tooling account builds and releases; each Flex environment account runs the backend and holds every user and their data](architecture.svg)
+![Flex Gym Scan on AWS: GoalCert's organization hosts only the web app's front end; Flex's tooling account builds and releases; each Flex environment account runs the backend, signs every user in with Amazon Cognito, and holds every user and their data](architecture.svg)
 
 The diagram shows prod. Dev and staging are the same components, each in its own account, at these sizes (from `infra/cdk.json`):
 
@@ -39,66 +41,95 @@ A GPU instance is a `g6e.xlarge`: 4 vCPUs, 32 GiB, one NVIDIA L40S (48 GB), and 
 | API and background worker (ECS Fargate), database (RDS MySQL), storage (S3), queues (SQS) | Flex's AWS, one account per environment (dev, staging, prod), Sydney (`ap-southeast-2`) | Yes, in Sydney only (`docs/residency.md`) |
 | GPU jobs for machine models (AWS Batch, `g6e.xlarge`), and the models CDN (CloudFront with signed links) | Flex's AWS, the same environment accounts | Yes (machine videos and models), in Sydney |
 | Pipelines (release, TRELLIS.2 image), image repository (ECR), the code (CodeCommit `gym_floor_plan`) | Flex's AWS, the tooling account | No |
+| Sign-in: Amazon Cognito user pool, with every user's account and password | Flex's AWS, each environment account, Sydney | Yes: accounts, in Sydney only |
 | Mail (SES), alarms, dashboards | Flex's AWS, environment accounts | Mail only |
 | **Web app** (static files: S3 and CloudFront) | **GoalCert's AWS organization**, one site per environment | No: only the app's own code |
-| Sign-in (GoalCert Hub: each person's GoalCert account and password), DNS for the GoalCert domains | GoalCert's existing services; this project deploys nothing for them | Only the GoalCert account itself |
+| DNS for the GoalCert domains | GoalCert, existing: two records for this project | No |
 | iPhone app | Apple: TestFlight, then the App Store. It talks only to the API. | On the phone, until uploaded |
 
 **How the pieces talk:**
 - **The web app**, served from GoalCert's CloudFront, calls the API in Flex's AWS at `https://api.<environment domain>`. The API accepts calls from that one web origin only (`PUBLIC_WEB_URL`).
 - **Browsers fetch files directly from Flex's storage**, through signed links: scans and photos from S3, 3D models from the models CDN. Both allow the same web origin.
 - **The iPhone app** calls the same API, and uploads straight to S3 through signed links.
-- **Sign-in** is GoalCert Hub (OpenID Connect) for both the web app and the iPhone app.
+- **Sign-in** is Amazon Cognito, in Flex's AWS, for both the web app and the iPhone app.
 - **The GPU work** is started by the backend, inside Flex's AWS. It has no endpoint and no key; AWS IAM roles give each part only what it needs.
 
 ### Users, sign-in and passwords
 
+Everything about the users stays in Flex's AWS. GoalCert holds nothing about them.
+
 | What | Where it lives |
 |---|---|
-| A person's sign-in: their GoalCert account and password | GoalCert Hub only. People type their password on GoalCert's own page. Flex Gym Scan never receives it, and nothing copies it to Flex. |
-| The person in Flex Gym Scan: their GoalCert ID, email and name; the gyms they belong to; Flex staff roles (reviewer, admin); their sessions | Flex's database, in Flex's AWS (Sydney). It is made at their first sign-in, and kept current by GoalCert's account events (updated, disabled, deleted, signed out). |
+| A person's account and password | Amazon Cognito, in Flex's AWS (Sydney), and nowhere else. People type their password on Cognito's sign-in page. Flex's own code never sees it. |
+| The person in Flex Gym Scan: their Cognito id, email and name; the gyms they belong to; Flex staff roles (reviewer, admin); their sessions | Flex's database, in Flex's AWS (Sydney). |
 | Everything they make: plans, scans, photos, videos, 3D models, approvals, the audit log | Flex's AWS only (Sydney). |
-| GoalCert's web hosting | No users, no passwords, no customer data: only the app's code. The browser downloads it, then talks to Flex's API directly. |
+| GoalCert's AWS | Nothing about them: only the web app's code. The browser downloads it, then signs in and works only with Flex's AWS. |
+
+**One sign-in for both apps.** The same account signs in to the web app and the iPhone app.
 
 **How signing in works.** It is a redirect:
-1. The app sends the browser, or the iPhone's sign-in sheet, to GoalCert Hub.
-2. The person signs in there with their GoalCert account. Someone already signed in to GoalCert (in the browser, or in Safari on the iPhone) is not asked again.
-3. Hub sends them back to the app with a one-time code.
-4. The app gives the code to Flex's API, which checks it with Hub, finds or makes the person's record in Flex's database, and starts their session.
+1. The app sends the browser, or the iPhone's sign-in sheet, to Cognito's sign-in page, in Flex's AWS.
+2. The person signs in with their email and password, and MFA if they turned it on. Someone already signed in on that browser or phone is not asked again.
+3. Cognito sends them back to the app with a one-time code.
+4. The app gives the code to Flex's API, which checks it with Cognito, finds the person's record, and starts their session.
 5. The app opens the screens for their role: gym owners and their staff see their plans, Flex reviewers the review queue, admins the admin pages.
 
-**If GoalCert must hold nothing about these people,** not even their sign-in, the sign-in itself would have to move to Flex: a user store of its own in Flex's account, such as Amazon Cognito. That is a change to sign-in in the backend, the web app and the iPhone app, not a deployment setting. People would then have a separate password for Flex Gym Scan.
+**How people get an account.** There is no open sign-up:
+- An invite, from a gym's owner or from Flex staff, creates the person's account in Cognito.
+- Cognito emails them a temporary password, which they replace at their first sign-in.
+- "Forgot your password?" is on the sign-in page.
 
-### One sign-in for both apps: what GoalCert Hub must provide
+### Sign-in with Amazon Cognito: what changes in the code
 
-People use their one GoalCert sign-in for GoalCert and for Flex Gym Scan, on the web and on the iPhone. The code is built for this. It has only run against a stand-in Hub so far, so GoalCert's real Hub must provide exactly what the backend checks (`backend/src/hub/`, `backend/docs/api-contract-v2.md`):
+**Who.** Thomas (sign-in is his code).
 
-1. **The sign-in flow:** OpenID Connect authorization code with PKCE (`S256`), scope `openid profile email`.
-2. **The Flex Gym Scan client:** its client id and secret, and exactly two redirect URIs, matching `hub.webRedirectUri` and `hub.iosRedirectUri` in `cdk.json`:
-   - `https://<web hostname>/auth/callback`;
-   - the iPhone app's.
-3. **The ID token**, signed RS256 or ES256, with its keys published at a JWKS URL, carrying:
-   - `iss` (the issuer), `aud` (the client id), `exp`, and the `nonce` the app sent;
-   - `sub` (the person's GoalCert id, at most 64 characters), `email`, `email_verified`, `name`, and optionally `sid` (their GoalCert session);
-   - an `org` claim (a string or a list) containing the Flex Gym organization id. Without it, every person is refused with "not part of Flex Gym".
-4. **Account events**, sent to `https://api.<domain>/v1/hub/events`:
-   - the events: `user.updated`, `user.disabled`, `user.deleted`, `user.enabled` and `session.ended`;
-   - each one signed: `X-Hub-Timestamp`, and `X-Hub-Signature: sha256=<HMAC-SHA256 of "<timestamp>.<body>">`, using a shared events secret.
-5. **The values Flex needs:**
-   - for `cdk.json`: the issuer, the authorize, token and JWKS URLs, the client id and the organization id;
-   - for Secrets Manager: the client secret and the events secret, sent through a password manager.
+The merged code signs in through GoalCert Hub. Cognito uses the same standard (OpenID Connect, with PKCE), so most of the code stays as it is. These are the changes:
 
-**Confirm early with GoalCert:**
-- **That their Hub can put the `org` claim in the ID token.** If not, the backend's check has to change.
-- **That it can send the account events.** If not, someone disabled at GoalCert keeps the iPhone app until its session runs out (up to 60 days unused, 180 days at most). Web sessions end within 12 hours anyway.
+**Infrastructure** (each Flex environment account):
+1. **A Cognito user pool** in `ap-southeast-2`:
+   - sign-in with email;
+   - no self sign-up: accounts are made by invites only;
+   - a password policy, and optional MFA with an authenticator app;
+   - account recovery by email, with mail sent through the environment's SES identity;
+   - deletion protection in prod.
+2. **Cognito's sign-in page**, on a domain prefix (`flexgym-<env>`). A custom domain such as `signin.<domain>` can come later; it needs a certificate in `us-east-1` and a DNS record.
+3. **One app client for both apps:**
+   - a client secret, which only the API holds;
+   - the authorization code flow, with PKCE;
+   - scopes `openid profile email`;
+   - callback URLs: the web app's `https://<web hostname>/auth/callback`, and the iPhone app's redirect URI;
+   - sign-out URLs for both.
+4. **The backend's sign-in settings**, taken from the pool in place of `cdk.json`'s `hub` block:
+   - issuer: `https://cognito-idp.ap-southeast-2.amazonaws.com/<pool id>`;
+   - authorize and token URLs on the sign-in domain (`/oauth2/authorize`, `/oauth2/token`);
+   - JWKS: `<issuer>/.well-known/jwks.json`;
+   - the client id, and the client secret through Secrets Manager.
+5. **The API's permission to manage users in that pool:** `cognito-idp:AdminCreateUser`, `AdminGetUser`, `AdminDisableUser`, `AdminEnableUser` and `AdminUserGlobalSignOut`.
 
-**What people see:**
-- **Already signed in to GoalCert:** they are not asked again, and come straight back signed in.
-- **Signed in at GoalCert, but with no Flex Gym Scan invite, membership or staff role:** "No gym access yet".
-- **Signing out of GoalCert** ends their Flex Gym Scan web sessions. The iPhone stays signed in (open point O-03).
-- **Signing out of Flex Gym Scan** does not sign them out of GoalCert.
+**Backend:**
+1. Drop the GoalCert-only check of an `org` claim: Cognito sends none, and access already depends on Flex memberships, invites and staff roles.
+2. Read Cognito's ID token as it comes: `email_verified`, `name` when set, and no `sid`.
+3. An invite creates the person's Cognito account if there is none (`AdminCreateUser`, which emails a temporary password). As today, the invite is linked at their first sign-in, by verified email.
+4. Removing a user in Flex admin also disables them in Cognito and signs them out everywhere.
+5. Signing out of Flex Gym Scan also ends the Cognito session (its sign-out URL). Otherwise the next sign-in on that browser would skip the password.
+6. Retire the GoalCert account-events endpoint (`/v1/hub/events`) and its secret.
+7. **The first admin.** No screen can make the first one:
+   - create their Cognito account once, in the AWS console or with the CLI;
+   - let them sign in;
+   - give them the admin role with a one-off database update, run like the migrations.
 
-**Done when** one GoalCert account signs in to both the web app and the iPhone app on staging, and disabling it at GoalCert signs it out of Flex Gym Scan.
+   From then on, admins make other staff in the app.
+
+**Web app:** wording only. "Sign in with GoalCert" becomes "Sign in", and the help text and the "no access" message change. The flow reads the sign-in addresses from the API, so it does not change.
+
+**iPhone app:** wording only, on the sign-in screen and the forgotten-password hint. "Forgot your password?" is on Cognito's page. The flow reads the addresses from the API, and its redirect URI is registered in the app client.
+
+**Tests.** The stand-in sign-in service, used locally and in tests, stays. Add tests that invites make Cognito accounts and removals disable them, against a fake.
+
+**Done when**, on staging:
+- one account signs in to both the web app and the iPhone app;
+- an invite emails the person a temporary password;
+- removing them stops their sign-in.
 
 ---
 
@@ -110,7 +141,7 @@ The release machinery is written: CDK in `infra/`, and the pipeline `flexgym-rel
 
 **Who:**
 - Flex's AWS team: the accounts.
-- GoalCert's team: the domains, and the Hub client.
+- GoalCert's team: the domains.
 - Thomas: filling them into `infra/cdk.json`.
 
 **Steps:**
@@ -118,16 +149,12 @@ The release machinery is written: CDK in `infra/`, and the pipeline `flexgym-rel
 2. **Domains**, per environment:
    - the web app's hostname, hosted by GoalCert (for example `gym.goalcert.example`);
    - the API's hostname (for example `api.gym.goalcert.example`), whose DNS zone lives in Flex's account, delegated from GoalCert's DNS (2.4).
-3. **Hub client.** GoalCert registers the Flex Gym Scan client at GoalCert Hub with exactly two redirect URIs, which must match `cdk.json` character for character:
-   - the web app's: `https://<web hostname>/auth/callback`;
-   - the iPhone app's: `iosRedirectUri`. The app takes its callback scheme from what the API sends, so any agreed value works, as long as all three places agree.
-
-   GoalCert supplies the issuer, authorize, token and JWKS URLs, the client id, the organization id, and two secrets: the client secret and the events secret.
+3. **Sign-in.** Thomas sets up Cognito in each environment ("Sign-in with Amazon Cognito", Part 1). Its two callback URLs are the web app's `https://<web hostname>/auth/callback` and the iPhone app's redirect URI.
 4. **Fill in `infra/cdk.json`**, per environment:
    - `account`;
    - `hostedZoneName`, `apiDomain`, `mailDomain`, `webDomain`;
    - `webDnsManagedByGoalCert: true`;
-   - `hub.*`;
+   - the sign-in settings that replace `hub` (Part 1);
    - `alarmEmail`, and Slack if used.
 
    Also `context.pipeline.account` (the tooling account). Leave `trellis2Image` and `modelsSigningPublicKeyPem` empty for now.
@@ -160,11 +187,11 @@ The same stack creates the TRELLIS.2 image pipeline (Part 5).
 2. **Staging and prod** through `flexgym-release`: every push to `main` deploys staging, and prod waits for the approval `PromoteToProd`.
 3. **DNS delegation.** The `Dns` stack outputs `DelegationNameServers`. GoalCert adds an `NS` record for the API zone with those values. The API certificate and the mail records validate only after that.
 4. **Web app stacks.** See 4.1: with the web app hosted by GoalCert, Flex's `Web` stack and its web certificate are not used.
-5. **Hub secrets.** Set `HUB_CLIENT_SECRET` and `HUB_EVENTS_SECRET` in Secrets Manager (`docs/runbooks/secret-rotation.md`), then restart the API and worker.
+5. **Sign-in.** The Cognito user pool comes with the deploy. Make the first admin (Part 1, "The first admin").
 6. **Database.** Run the migrations as a one-off task with the new image (`deploy.md`, "Database migrations"). The deploy does not run them.
-7. **Mail.** Request SES production access (`docs/runbooks/service-quotas.md`, section 2).
+7. **Mail.** Request SES production access (`docs/runbooks/service-quotas.md`, section 2). Cognito sends its invitations and password emails through it too.
 
-**Done when** each environment answers `https://api.<domain>/health`, and signing in with GoalCert works from the web app (Part 4) and the iPhone app (Part 3).
+**Done when** each environment answers `https://api.<domain>/health`, and signing in works from the web app (Part 4) and the iPhone app (Part 3).
 
 ### 2.5 Models signing key
 
@@ -220,7 +247,7 @@ flutter build ipa --dart-define=GYM_PLAN_API=https://api.staging.<domain>   # te
 flutter build ipa --dart-define=GYM_PLAN_API=https://api.<domain>           # the App Store, on prod
 ```
 
-Sign-in needs nothing more in the build: the app asks the API (`GET /v1/auth/hub/config`) for the Hub's address, the client id and its own redirect URI.
+Sign-in needs nothing more in the build: the app asks the API (`GET /v1/auth/hub/config`) for the sign-in page's address, the client id and its own redirect URI.
 
 ### 3.3 Release
 
@@ -319,11 +346,11 @@ aws cloudfront create-invalidation --distribution-id <id> --paths "/*"
 1. **To start: hand over the build.** Flex sends `dist/` (or a zip of it) for each environment, and GoalCert's team runs the commands above.
 2. **Afterwards: a deploy role.** GoalCert creates, in its account, a role that Flex's tooling account may assume, allowed only to write that site's bucket and invalidate that distribution. Flex's release pipeline then builds each environment's web app and publishes it after the backend deploys.
 
-**Done when** the site loads and signs in with GoalCert (4.5).
+**Done when** the site loads and signs in (4.5).
 
 ### 4.5 Check the site
 
-1. Open `https://<web hostname>/`. Sign in with GoalCert: the Hub's page opens, and you come back signed in.
+1. Open `https://<web hostname>/` and sign in. Cognito's sign-in page opens, and you come back signed in.
 2. The browser's developer tools show:
    - API calls going to `https://api.<domain>/v1/...` and answering;
    - no Content-Security-Policy violations in the console.
@@ -659,22 +686,18 @@ Each list is in order. A step in brackets is another team's, and has to happen f
 
 ### GoalCert's AWS team (GoalCert's AWS organization)
 
+GoalCert hosts only the web app's front end. Nothing about users or sign-in is at GoalCert.
+
 1. Confirm the domains for each environment: the web hostname, and the API's hostname. (2.1)
-2. Set up one sign-in for both apps at GoalCert Hub: everything in "One sign-in for both apps" (Part 1).
-   - Register the Flex Gym Scan client, with exactly the two redirect URIs in `cdk.json`.
-   - Put the `org` claim in the ID token.
-   - Send the account events to the API.
-   - Send the issuer and endpoint URLs, the client id and the organization id. Send the client secret and the events secret through a password manager, never by email or chat. (2.1)
-3. Confirm early whether the Hub can add the `org` claim and send the account events, so that any change on Flex's side can be made in time. (Part 1)
-4. Add the `NS` record delegating each API zone to the name servers Flex's `Dns` stack prints. (2.4)
-5. For each environment, set up the web hosting (4.2):
+2. Add the `NS` record delegating each API zone to the name servers Flex's `Dns` stack prints. (2.4)
+3. For each environment, set up the web hosting (4.2):
    - a private S3 bucket;
    - CloudFront with OAC and the SPA error rules;
    - an ACM certificate in `us-east-1`;
    - the response headers policy, with the CSP line Flex sends;
    - the DNS record for the web hostname.
-6. Publish each web build Flex sends (4.4, way 1), or create a deploy role Flex's pipeline can assume, limited to that bucket and distribution (4.4, way 2).
-7. After each publish, check the site loads and signs in (4.5). On staging, check that one GoalCert account signs in to both the web app and the iPhone app.
+4. Publish each web build Flex sends (4.4, way 1), or create a deploy role Flex's pipeline can assume, limited to that bucket and distribution (4.4, way 2).
+5. After each publish, check the site loads and signs in (4.5).
 
 ### Tejesh
 
@@ -695,10 +718,11 @@ Each list is in order. A step in brackets is another team's, and has to happen f
 
 **Thomas (app and infrastructure code):**
 1. Fill in `cdk.json`. (2.1)
-2. Bootstrap the accounts and deploy the pipelines; deploy the environments; run the migrations; set the Hub secrets and the models signing keys. (2.3 to 2.5)
-3. Switch off Flex's `Web` stack where GoalCert hosts the web app, and build the web app per environment with `VITE_API_URL`. (4.1, 4.3; see Part 7)
-4. The iPhone app: its bundle id (I-02), signing, TestFlight and App Store builds per environment; ARKit frames (I-05). (Part 3)
-5. The contract's open points for him (`docs/3d-contract.md`, 1 to 12).
+2. Bootstrap the accounts and deploy the pipelines; deploy the environments; run the migrations; make the first admin; set the models signing keys. (2.3 to 2.5)
+3. Move sign-in from GoalCert Hub to Amazon Cognito: the infrastructure, backend, web and iPhone changes in "Sign-in with Amazon Cognito" (Part 1).
+4. Switch off Flex's `Web` stack where GoalCert hosts the web app, and build the web app per environment with `VITE_API_URL`. (4.1, 4.3; see Part 7)
+5. The iPhone app: its bundle id (I-02), signing, TestFlight and App Store builds per environment; ARKit frames (I-05). (Part 3)
+6. The contract's open points for him (`docs/3d-contract.md`, 1 to 12).
 
 **Company and Legal:**
 1. The DINOv3 licence acceptance and access request. (5.2)
@@ -721,6 +745,8 @@ What was run on the merged code:
 | iPhone app tests (Flutter 3.41.7, in a Linux container) | 145 passed |
 | iPhone app against the backend | Every API call the app makes (18 paths, from sign-in to video upload) has a matching backend route |
 | Web app against the backend | Covered by the web tests, which use the API's own response shapes |
+
+**Sign-in.** The merged code still signs in through GoalCert Hub. Moving it to Amazon Cognito is decided, and is Thomas's change (Part 1). Until it is made, this guide's sign-in steps describe the target.
 
 **Gaps the check found.** Both are in how the web app would be deployed (the release pipeline, and Flex's `Web` stack), not in the app itself. The plan in Part 4 closes both:
 
