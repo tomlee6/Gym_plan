@@ -14,6 +14,10 @@ import { config } from './config.js';
 import { pool } from './db/pool.js';
 import { queueDailyRetention } from './jobs/handlers.js';
 import { dispatch, queue, runDueJobs, runJob } from './jobs/index.js';
+// Installs the 3D generator for plan.generate when GENERATOR_DRIVER=glb.
+import './generator/index.js';
+import './assets/index.js';
+import { gpuJobsQueue, pollGpuOutcomes, publishBuildGauges, sweepStuckBuilds } from './assets/outcomes.js';
 
 let stopping = false;
 let lastLoopAt = Date.now();
@@ -72,6 +76,33 @@ async function sqsLoops() {
   await dispatcher;
 }
 
+/**
+ * Outcomes of machine model jobs on the GPU (L-05); every 5 minutes, how
+ * the builds on it stand (N-03); and every 15, a sweep for any that went
+ * missing.
+ */
+async function gpuLoop() {
+  const q = await gpuJobsQueue();
+  let swept = 0;
+  let measured = 0;
+  while (!stopping) {
+    try {
+      await pollGpuOutcomes(q);
+      if (Date.now() - measured > 5 * 60 * 1000) {
+        measured = Date.now();
+        await publishBuildGauges();
+      }
+      if (Date.now() - swept > 15 * 60 * 1000) {
+        swept = Date.now();
+        await sweepStuckBuilds();
+      }
+    } catch (err) {
+      console.error('GPU outcomes:', err);
+      await sleep(config.jobs.pollMs);
+    }
+  }
+}
+
 const health = http
   .createServer(async (_req, res) => {
     try {
@@ -86,7 +117,11 @@ const health = http
   .listen(config.jobs.workerHealthPort);
 
 console.log(`Gym Plan worker (${config.env}, queue: ${config.jobs.driver})`);
-const main = Promise.all([retentionLoop(), config.jobs.driver === 'sqs' ? sqsLoops() : dbLoop()]);
+const main = Promise.all([
+  retentionLoop(),
+  config.jobs.driver === 'sqs' ? sqsLoops() : dbLoop(),
+  ...(config.assets.builder === 'trellis2' ? [gpuLoop()] : []),
+]);
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {

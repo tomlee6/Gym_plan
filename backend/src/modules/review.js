@@ -47,10 +47,12 @@ import {
   WALL_KINDS,
   withMeasurements,
 } from '../../../shared/plan/index.js';
+import { approvedModelsOn } from '../assets/walkthrough.js';
 import { audit, planLabel } from '../audit.js';
 import { config } from '../config.js';
 import { many, one, pool, transaction } from '../db/pool.js';
 import { conflict, notFound } from '../errors.js';
+import { linkFields } from '../generator/links.js';
 import { isId, newId } from '../ids.js';
 import { enqueue, jobsCommitted } from '../jobs/index.js';
 import { requireAuth, requireStaff } from '../middleware/auth.js';
@@ -194,6 +196,15 @@ router.get('/versions/:id', async (req, res) => {
   const v = await versionRow(pool, req.params.id);
   if (!v) throw notFound();
 
+  // This version's own generated level, whatever came of it, so the reviewer
+  // can open it from the editor (K-06), not only the newest ready one.
+  const model = await one(
+    pool,
+    `SELECT status, generator_version, glb_key, bytes, failure_reason FROM generated_models
+     WHERE plan_version_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [v.id],
+  );
+
   const files = v.capture_id
     ? await many(
         pool,
@@ -244,6 +255,18 @@ router.get('/versions/:id', async (req, res) => {
     contentHash: v.content_hash,
     failureReason: v.failure_reason,
     walkthroughUrl: v.status === 'ready' ? walkthroughUrlFor(v.plan_id) : null,
+    generatedModel: model
+      ? {
+          status: model.status,
+          generatorVersion: model.generator_version,
+          stored: Boolean(model.glb_key),
+          bytes: num(model.bytes),
+          failureReason: model.failure_reason,
+          ...(model.glb_key && model.status === 'ready' ? await linkFields(model.glb_key) : { url: null, urlExpiresAt: null }),
+        }
+      : null,
+    // The approved 3D model of each recorded machine, for the walkthrough to place (J-06).
+    machineModels: await approvedModelsOn(pool, v.capture_id),
     source: v.source ?? null,
     inputType: v.input_type ?? null,
     // What the app reported, from the typed capture columns (C-06).

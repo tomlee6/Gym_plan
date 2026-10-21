@@ -30,6 +30,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 
 import { equipmentLabel } from '../../../shared/plan/index.js';
+import { buildOnArrival } from '../assets/index.js';
 import { config } from '../config.js';
 import { many, one, pool, transaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
@@ -448,6 +449,8 @@ router.post('/:captureId/equipment/:ref/video/complete', async (req, res) => {
   // The thumbnail came from the phone and the video is kept as recorded,
   // so it is ready as soon as it has landed (CHANGE 4.2).
   await pool.query(`UPDATE machine_videos SET status = 'ready' WHERE id = ?`, [video.id]);
+  // The machine's 3D model is built from it, when that is switched on (L-05).
+  await buildOnArrival(video.machine_id);
   res.json({ videoId: video.id, status: 'ready' });
 });
 

@@ -42,6 +42,7 @@ router.get('/:token', async (req, res) => {
     approvedAt: model.approvedAt,
     expiresAt: link.expires_at,
     generatedModel: model.generatedModel,
+    machineModels: model.machineModels,
     plan: model.plan,
   });
 });

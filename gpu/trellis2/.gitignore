@@ -1,0 +1,3 @@
+# Models downloaded by golden.py for a person to look at; reference.json is what is kept.
+golden/*.glb
+__pycache__/

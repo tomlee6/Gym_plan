@@ -14,6 +14,8 @@
 Thumbs.db
 *.swp
 *~
+# Office's lock files while a document is open
+~$*
 
 # --- backend ---
 backend/node_modules/

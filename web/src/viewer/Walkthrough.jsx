@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 
 import { buildModel, EYE_HEIGHT_M } from './buildModel.js';
+import { loadLevel, withWalk } from './level.js';
+import { isShown, loadMachineModels, machinePlacements } from './machines.js';
 import { distance3, move } from './movement.js';
 import { drawMinimap, PlanSvg } from './plan2d.jsx';
 import { createScene } from './scene.js';
@@ -23,18 +25,55 @@ const levelName = (level) => (level === 0 ? 'Ground' : `Level ${level}`);
 /**
  * The browser walkthrough (VIEW-01..08): first-person walk with collision,
  * an overhead view, a two-click measure tool, a minimap, a level selector
- * and the standing disclaimer. Built from an approved plan in the browser,
- * so nothing is installed.
+ * and the standing disclaimer. Nothing is installed.
  *
- * Props: `plan` (approved plan JSON), `site`, `level`, `meta` (bottom-bar
- * text), `levels` + `onLevel(planId)` + `currentPlanId` for the level pills,
+ * The level shown is the generated model when the API links one (`modelUrl`,
+ * K-01), with its own collision and start; while it loads, a spinner; if it
+ * cannot be loaded, the level is drawn in the browser from the approved
+ * plan, as before there were generated models.
+ *
+ * With the generated level come the machines' approved 3D models
+ * (`machineModels`, by reference, J-06), loaded alongside it and placed on
+ * their footprints; a machine without one stays a box.
+ *
+ * Props: `plan` (approved plan JSON), `modelUrl` (signed link to the
+ * generated level, or null), `machineModels`, `site`, `level`, `meta` (bottom-bar text),
+ * `levels` + `onLevel(planId)` + `currentPlanId` for the level pills,
  * `onShare()` resolving to a URL, and `onClose()`.
  */
-export default function Walkthrough({ plan, site, level, meta, levels = [], currentPlanId, onLevel, onShare, onClose }) {
-  const model = useMemo(() => buildModel(plan), [plan]);
+export default function Walkthrough({ plan, modelUrl = null, machineModels = null, site, level, meta, levels = [], currentPlanId, onLevel, onShare, onClose }) {
   const [webgl] = useState(hasWebGL);
+  const drawn = useMemo(() => buildModel(plan), [plan]);
+  // The generated level: null (none linked), loading, ready, or failed (then the plan is drawn).
+  const [generated, setGenerated] = useState(() => (modelUrl && webgl ? { url: modelUrl, status: 'loading' } : null));
+  useEffect(() => {
+    if (!modelUrl || !webgl) {
+      setGenerated(null);
+      return undefined;
+    }
+    let live = true;
+    setGenerated((g) => (g?.url === modelUrl ? g : { url: modelUrl, status: 'loading' }));
+    // The machines' models load alongside the level; one that fails stays a box.
+    const placements = machinePlacements(plan, machineModels);
+    Promise.all([loadLevel(modelUrl), loadMachineModels(placements)]).then(
+      ([loaded, models]) => live && setGenerated({ url: modelUrl, status: 'ready', ...loaded, machines: { placements, loaded: models } }),
+      (err) => {
+        if (!live) return;
+        console.warn('Could not load the generated 3D model; drawing the level from the plan instead.', err);
+        setGenerated({ url: modelUrl, status: 'failed' });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [modelUrl, webgl, plan, machineModels]);
+  const ready = generated?.status === 'ready' ? generated : null;
+  const loadingModel = generated?.status === 'loading';
+  const model = useMemo(() => (ready ? withWalk(drawn, ready.walk) : drawn), [drawn, ready]);
   const [failed, setFailed] = useState(false);
   const [view, setView] = useState('walk');
+  // The outside view's dollhouse: roof, ceilings and beams lifted off.
+  const [roofOff, setRoofOff] = useState(false);
   const [measuring, setMeasuring] = useState(false);
   const [measured, setMeasured] = useState(null);
   const [share, setShare] = useState(null);
@@ -61,11 +100,17 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
       measure: { a: null, b: null },
       zoom: 1,
       pan: [0, 0],
+      // Outside view: round the middle of the building, from the south-east, up a little.
+      orbit: { yaw: -Math.PI / 4, pitch: 0.55, dist: 1.6 * Math.max(model.bounds.maxX - model.bounds.minX, model.bounds.maxY - model.bounds.minY, 8) },
+      roofOff: false,
     };
   }
   useEffect(() => {
     sim.current.view = view;
   }, [view]);
+  useEffect(() => {
+    sim.current.roofOff = roofOff;
+  }, [roofOff]);
   useEffect(() => {
     sim.current.measuring = measuring;
   }, [measuring]);
@@ -75,10 +120,11 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
     setMeasured(null);
     setMeasuring(false);
     setView('walk');
+    setRoofOff(false);
   }, [model]);
 
   useEffect(() => {
-    if (!webgl || !canvas.current) return undefined;
+    if (!webgl || !canvas.current || loadingModel) return undefined;
     let renderer;
     try {
       renderer = new THREE.WebGLRenderer({ canvas: canvas.current, antialias: true, powerPreference: 'high-performance' });
@@ -91,7 +137,7 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const s = sim.current;
-    const built = createScene(model, renderer);
+    const built = createScene(model, renderer, { level: ready?.scene ?? null, machines: ready?.machines ?? null });
     built3d.current = built;
     const persp = new THREE.PerspectiveCamera(70, 1, 0.05, 500);
     const ortho = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 500);
@@ -148,6 +194,9 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
         const perPx = (ortho.right - ortho.left) / ortho.zoom / width;
         s.pan[0] -= dx * perPx;
         s.pan[1] -= dy * perPx;
+      } else if (s.view === 'outside') {
+        s.orbit.yaw += dx * LOOK_SPEED;
+        s.orbit.pitch = Math.max(0.05, Math.min(1.5, s.orbit.pitch + dy * LOOK_SPEED));
       } else {
         s.yaw += dx * LOOK_SPEED;
         s.pitch = Math.max(-1.3, Math.min(1.3, s.pitch - dy * LOOK_SPEED));
@@ -161,7 +210,10 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
       const rect = el.getBoundingClientRect();
       const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(ndc, camera());
-      const hit = raycaster.intersectObjects(built.raycastables, false).find((h) => h.object.visible);
+      const hits = raycaster.intersectObjects(built.raycastables, false);
+      // Machines as a whole: their nearer levels of detail arrive after the scene is built (K-03).
+      if (built.machines) hits.push(...raycaster.intersectObject(built.machines.group, true));
+      const hit = hits.sort((a, b) => a.distance - b.distance).find((h) => isShown(h.object));
       if (!hit) return;
       const p = [hit.point.x, hit.point.y, hit.point.z];
       const m = s.measure;
@@ -175,6 +227,11 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
       built.setMeasure(s.measure.a, s.measure.b);
     }
     function onWheel(e) {
+      if (s.view === 'outside') {
+        e.preventDefault();
+        s.orbit.dist = Math.max(3, Math.min(250, s.orbit.dist * (e.deltaY > 0 ? 1.1 : 0.9)));
+        return;
+      }
       if (s.view !== 'overhead') return;
       e.preventDefault();
       s.zoom = Math.max(0.5, Math.min(8, s.zoom * (e.deltaY > 0 ? 0.9 : 1.1)));
@@ -234,17 +291,29 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
         s.pos[1] + Math.sin(s.yaw) * Math.cos(s.pitch),
       );
       persp.lookAt(look);
+      if (s.view === 'outside') {
+        const { yaw, pitch, dist } = s.orbit;
+        persp.position.set(
+          centre[0] + Math.cos(yaw) * Math.cos(pitch) * dist,
+          Math.sin(pitch) * dist,
+          centre[1] + Math.sin(yaw) * Math.cos(pitch) * dist,
+        );
+        persp.lookAt(centre[0], 1, centre[1]);
+      }
       ortho.position.set(centre[0] + s.pan[0], model.ceiling + 40, centre[1] + s.pan[1]);
       ortho.lookAt(centre[0] + s.pan[0], 0, centre[1] + s.pan[1]);
 
       const overhead = s.view === 'overhead';
-      if (built.ceiling) built.ceiling.visible = !overhead;
+      const lidOff = overhead || (s.view === 'outside' && s.roofOff);
+      if (built.ceiling) built.ceiling.visible = !lidOff;
       if (built.heads) built.heads.visible = !overhead;
-      built.marker.visible = overhead;
+      built.marker.visible = s.view !== 'walk';
       built.marker.position.set(s.pos[0], model.ceiling + 0.05, s.pos[1]);
       built.marker.rotation.y = -s.yaw;
 
       const cam = camera();
+      // Nearer levels of detail for the machines the camera is coming up to (K-03).
+      built.machines?.update(cam.position);
       // Measure ends stay the same size on screen, near or far.
       for (const end of built.ends) {
         if (!end.visible) continue;
@@ -288,7 +357,7 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
       built.dispose();
       renderer.dispose();
     };
-  }, [model, webgl]);
+  }, [model, webgl, loadingModel, ready]);
 
   // Measure mode on and off; turning it on starts a fresh measurement.
   const toggleMeasure = useCallback(() => {
@@ -407,6 +476,12 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
           </div>
         ) : (
           <>
+            {loadingModel && (
+              <div className="wt-loading" role="status">
+                <span className="wt-spinner" aria-hidden="true" />
+                <p>Loading the 3D model…</p>
+              </div>
+            )}
             <canvas
               ref={canvas}
               className="wt-canvas"
@@ -470,6 +545,23 @@ export default function Walkthrough({ plan, site, level, meta, levels = [], curr
                 <OverheadIcon />
                 Overhead
               </button>
+              {ready && (
+                <button
+                  type="button"
+                  className={`wt-tool ${view === 'outside' ? 'on' : ''}`}
+                  aria-pressed={view === 'outside'}
+                  onClick={() => setView('outside')}
+                >
+                  <OutsideIcon />
+                  Outside
+                </button>
+              )}
+              {ready && view === 'outside' && (
+                <button type="button" className={`wt-tool ${roofOff ? 'on' : ''}`} aria-pressed={roofOff} onClick={() => setRoofOff((on) => !on)}>
+                  <RoofIcon />
+                  Roof off
+                </button>
+              )}
               <span className="wt-sep" aria-hidden="true" />
               <button type="button" className={`wt-tool ${measuring ? 'on' : ''}`} aria-pressed={measuring} onClick={toggleMeasure}>
                 <RulerIcon />
@@ -524,6 +616,26 @@ function OverheadIcon() {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <path d="M3 12h18" />
       <path d="M12 3v18" />
+    </svg>
+  );
+}
+
+function OutsideIcon() {
+  return (
+    <svg {...icon}>
+      <path d="M3 11 12 4l9 7" />
+      <path d="M5 10v10h14V10" />
+      <path d="M10 20v-5h4v5" />
+    </svg>
+  );
+}
+
+function RoofIcon() {
+  return (
+    <svg {...icon}>
+      <path d="M3 9 12 3l9 6" />
+      <path d="M5 13v8h14v-8" />
+      <path d="M12 6v4" />
     </svg>
   );
 }

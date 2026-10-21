@@ -72,7 +72,14 @@ function SharePage({ token }) {
         </Shell>
       }
     >
-      <Walkthrough plan={share.plan} site={share.site} level={share.level} meta={meta} />
+      <Walkthrough
+        plan={share.plan}
+        modelUrl={share.generatedModel?.url ?? null}
+        machineModels={share.machineModels ?? null}
+        site={share.site}
+        level={share.level}
+        meta={meta}
+      />
     </Suspense>
   );
 }

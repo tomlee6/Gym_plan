@@ -135,7 +135,7 @@ describe('plans', () => {
     assert.match(body.contentHash, /^[0-9a-f]{64}$/);
     assert.ok(body.plan.walls.length >= 4);
     assert.equal(body.plan.ceilingHeightM, 3.18);
-    assert.deepEqual(body.generatedModel, { generatorVersion: 'browser-0', stored: false, bytes: null });
+    assert.deepEqual(body.generatedModel, { generatorVersion: 'browser-0', stored: false, bytes: null, url: null, urlExpiresAt: null });
     // Level 1 is Northgate's only ready level; Level 2 is in review.
     assert.deepEqual(body.levels, [{ planId: P.ng1, level: 1 }]);
     await get(`/v1/plans/${P.ng2}/model`).expect(404);

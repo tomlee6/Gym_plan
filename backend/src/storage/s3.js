@@ -11,9 +11,12 @@ import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   ListPartsCommand,
+  PutObjectCommand,
   PutObjectTaggingCommand,
   S3Client,
   UploadPartCommand,
@@ -117,6 +120,14 @@ export class S3Storage {
     );
   }
 
+  /**
+   * Stores a whole object the server produced itself (a generated model).
+   * Encrypted at rest by the bucket's default KMS key, like uploads.
+   */
+  async write(key, body, { contentType = 'application/octet-stream' } = {}) {
+    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: contentType }));
+  }
+
   /** A stored object's bytes. */
   async read(key) {
     const out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
@@ -126,6 +137,28 @@ export class S3Storage {
   /** Removes a stored object; a missing one is not an error. */
   async delete(key) {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+  }
+
+  /**
+   * Removes every object under a folder (`prefix` ends in `/`), a thousand
+   * at a time: a model's files from each try, or all of an account's models.
+   */
+  async deleteFolder(prefix) {
+    if (!prefix.endsWith('/')) throw new Error('A folder to delete must end in /');
+    let token;
+    do {
+      const page = await this.client.send(
+        new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: token }),
+      );
+      const keys = (page.Contents ?? []).map((o) => ({ Key: o.Key }));
+      if (keys.length) {
+        const out = await this.client.send(
+          new DeleteObjectsCommand({ Bucket: this.bucket, Delete: { Objects: keys, Quiet: true } }),
+        );
+        if (out.Errors?.length) throw new Error(`Could not delete ${out.Errors[0].Key}: ${out.Errors[0].Message}`);
+      }
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
   }
 
   /** A short-lived presigned GetObject URL for a stored object. */

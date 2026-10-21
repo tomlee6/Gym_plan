@@ -1084,3 +1084,168 @@
 .ed-warn {
   color: var(--rv-poor);
 }
+
+/* ------------------------------------------------------------------------
+ * L-08: machine models, reviewed beside the 360 video, and "same as".
+ * --------------------------------------------------------------------- */
+
+.mm-panel {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+}
+
+.mm-same-as select {
+  width: 100%;
+}
+
+.mm-status {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 11px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: #0f2027;
+  color: var(--muted);
+}
+
+.mm-status.queued,
+.mm-status.building {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.mm-status.awaiting_review {
+  background: rgba(255, 204, 0, 0.12);
+  color: var(--warn);
+}
+
+.mm-status.approved {
+  background: rgba(0, 194, 96, 0.12);
+  color: var(--rv-good);
+}
+
+.mm-status.rejected,
+.mm-status.failed {
+  background: rgba(251, 72, 91, 0.12);
+  color: var(--rv-danger);
+}
+
+/* The review needs room for the video and the model side by side. */
+.rv-modal:has(.mm-review) {
+  width: min(980px, 100%);
+}
+
+.mm-review {
+  display: grid;
+  gap: 14px;
+}
+
+.mm-sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.mm-side {
+  margin: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.mm-side video,
+.mm-preview {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  background: #000;
+}
+
+.mm-preview {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-viewer);
+  border: 1px solid var(--line);
+}
+
+.mm-preview canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  cursor: grab;
+}
+
+.mm-preview-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+}
+
+.mm-details {
+  display: grid;
+  gap: 8px;
+}
+
+.mm-details-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.mm-flags {
+  margin: 0;
+  padding: 8px 12px 8px 26px;
+  border-radius: 8px;
+  background: rgba(255, 204, 0, 0.08);
+  color: var(--warn);
+  font-size: 13px;
+}
+
+.mm-actions {
+  flex-wrap: wrap;
+}
+
+.mm-turns {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.mm-reject {
+  display: grid;
+  gap: 8px;
+}
+
+.mm-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.mm-list-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mm-list-item.selected {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}

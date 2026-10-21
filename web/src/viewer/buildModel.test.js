@@ -163,3 +163,39 @@ describe('movement', () => {
     expect(p[1]).toBeCloseTo(5 + 1.6);
   });
 });
+
+describe('a curved wall (K-04)', () => {
+  // The room's east wall bowed 1.5 m out, as the reference gym's is.
+  const curved = () => {
+    const p = room();
+    p.walls[1] = wall('e', [10, 0], [10, 6], { curveM: -1.5 });
+    p.openings.push({ id: 'd2', wallId: 'e', type: 'door', offset: 2.5, width: 1, confidence: 1 });
+    return p;
+  };
+  // The arc through (10, 0), (11.5, 3) and (10, 6).
+  const centre = [10 - (9 - 2.25) / 3, 3];
+  const radius = Math.hypot(10 - centre[0], 0 - centre[1]);
+  const onArc = ([x, y]) => Math.abs(Math.hypot(x - centre[0], y - centre[1]) - radius) < 0.011;
+
+  it('draws it along its arc, in short pieces, not its chord', () => {
+    const pieces = buildModel(curved()).walls.filter((p) => p.wallId === 'e');
+    expect(pieces.length).toBeGreaterThan(8);
+    expect(pieces.every((p) => onArc(p.a) && onArc(p.b))).toBe(true);
+    expect(Math.max(...pieces.flatMap((p) => [p.a[0], p.b[0]]))).toBeCloseTo(11.5, 2);
+    // The door is still a gap with a head over it, on the arc.
+    const heads = pieces.filter((p) => p.kind === 'head');
+    expect(heads.length).toBeGreaterThan(0);
+    expect(heads.every((p) => onArc(p.a) && onArc(p.b))).toBe(true);
+  });
+
+  it('takes the floor out to the arc, and the walk is stopped by it there', () => {
+    const model = buildModel(curved());
+    expect(Math.max(...model.floor.map(([x]) => x))).toBeCloseTo(11.5, 2);
+    expect(model.bounds.maxX).toBeCloseTo(11.5, 2);
+    expect(model.collision.some((s) => onArc(s.a) && onArc(s.b) && s.a[0] > 11)).toBe(true);
+  });
+
+  it('leaves a straight wall as one piece', () => {
+    expect(buildModel(room()).walls.filter((p) => p.wallId === 'e')).toHaveLength(1);
+  });
+});

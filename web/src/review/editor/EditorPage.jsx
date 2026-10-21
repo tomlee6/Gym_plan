@@ -341,12 +341,28 @@ function Editor({ v, reload }) {
         <span className="spacer" />
         {mine && <SaveState save={save} />}
         {mine && <ReviewTimer base={v.activeSeconds ?? 0} />}
+        {v.plan && (
+          <Link
+            className="rv-button ghost"
+            to={`/review/versions/${v.id}/walkthrough`}
+            title="Walk through this version in 3D: the generated model once it is built, else drawn from the plan"
+            onClick={async (e) => {
+              // Unsaved edits first, so the 3D shows the plan as it stands.
+              e.preventDefault();
+              await save.flush();
+              navigate(`/review/versions/${v.id}/walkthrough`);
+            }}
+          >
+            Open in 3D
+          </Link>
+        )}
         <Decisions
           v={v}
           mine={mine}
           acting={acting}
           blockers={blockers}
           onClaim={() => act(() => reviewApi.start(v.id))}
+          onRegenerate={() => act(() => reviewApi.regenerate(v.id), `${title}: building the 3D walkthrough again.`)}
           onRelease={async () => {
             await save.flush();
             act(() => reviewApi.release(v.id), `${title} is back in the queue.`);
@@ -463,7 +479,7 @@ function Editor({ v, reload }) {
   );
 }
 
-function Decisions({ v, mine, acting, blockers, onClaim, onRelease, onReject, onApprove, onRevise }) {
+function Decisions({ v, mine, acting, blockers, onClaim, onRelease, onReject, onApprove, onRevise, onRegenerate }) {
   if (mine) {
     return (
       <>
@@ -502,6 +518,20 @@ function Decisions({ v, mine, acting, blockers, onClaim, onRelease, onReject, on
     );
   }
   const newest = v.history[0]?.id === v.id;
+  // A failed 3D build (J-09): fix the plan in a new version, or build again
+  // once the cause is gone (a storage outage, a generator fix).
+  if (v.status === 'generation_failed' && newest) {
+    return (
+      <>
+        <button type="button" className="rv-button ghost" disabled={acting} onClick={onRevise} title="Make a new version from this one, to fix the plan">
+          Revise
+        </button>
+        <button type="button" className="rv-button primary" disabled={acting} onClick={onRegenerate}>
+          Build 3D again
+        </button>
+      </>
+    );
+  }
   if (v.status === 'ready' && newest) {
     return (
       <button type="button" className="rv-button ghost" disabled={acting} onClick={onRevise} title="Make a new version from this one">
@@ -527,6 +557,11 @@ function Notices({ v, actionError, saveError, onReload }) {
           <CheckIcon size={15} /> {v.status === 'superseded' ? 'Superseded. ' : ''}Approved by {v.reviewer?.name ?? 'a reviewer'} ·{' '}
           {stamp(v.reviewedAt)} · {duration(v.reviewSeconds)}
           {v.contentHash && <code className="small"> · {v.contentHash.slice(0, 16)}…</code>}. Read-only.
+        </p>
+      )}
+      {v.status === 'generation_failed' && (
+        <p className="rv-error" role="status">
+          The 3D build failed: {v.generatedModel?.failureReason ?? v.failureReason ?? 'no reason was recorded'}
         </p>
       )}
       {v.status === 'recapture' && (

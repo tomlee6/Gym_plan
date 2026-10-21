@@ -1,8 +1,8 @@
 {
-  "$comment": "Production Content-Security-Policy for the GoalCert subdomain (H-05). vite.config.js writes it into dist/index.html as a <meta> tag at build time, replacing %API_ORIGIN% with the origin of VITE_API_URL (or dropping it when the API is on the same origin) and %EXTRA_CONNECT% with VITE_CSP_CONNECT_SRC. CloudFront must also send it as a response header (README: Deploying), because frame-ancestors only works as a header.",
+  "$comment": "Production Content-Security-Policy for the GoalCert subdomain (H-05). script-src allows 'wasm-unsafe-eval' (WebAssembly only, not eval) for the 3D viewer's meshopt decoder (K-01) and the KTX2 transcoder (N-01), which is built without eval (web/vendor/basis), so 'unsafe-eval' stays out. vite.config.js writes it into dist/index.html as a <meta> tag at build time, replacing %API_ORIGIN% with the origin of VITE_API_URL (or dropping it when the API is on the same origin) and %EXTRA_CONNECT% with VITE_CSP_CONNECT_SRC. CloudFront must also send it as a response header (README: Deploying), because frame-ancestors only works as a header.",
   "directives": {
     "default-src": ["'self'"],
-    "script-src": ["'self'"],
+    "script-src": ["'self'", "'wasm-unsafe-eval'"],
     "connect-src": ["'self'", "blob:", "data:", "%API_ORIGIN%", "https://*.amazonaws.com", "https://*.cloudfront.net", "%EXTRA_CONNECT%"],
     "img-src": ["'self'", "data:", "blob:", "https:"],
     "media-src": ["https:", "blob:"],

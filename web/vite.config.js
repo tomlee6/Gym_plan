@@ -52,10 +52,41 @@ function contentSecurityPolicy(env) {
   };
 }
 
+/**
+ * Machine models' KTX2 textures (N-01) are read by three's KTX2Loader with
+ * the Basis Universal transcoder, in a worker that inherits this page's
+ * policy. three.js ships one whose glue builds functions from strings, which
+ * the policy refuses (no 'unsafe-eval'); vendor/basis holds the same
+ * transcoder built without that. This points KTX2Loader at it, so the build
+ * emits it (hashed, like any asset) and never three's. If a three.js upgrade
+ * moves the reference, the build stops: rebuild vendor/basis to match.
+ */
+export const TRANSCODER_FILES = ['basis_transcoder.js', 'basis_transcoder.wasm'];
+
+export function basisTranscoder(vendored = path.resolve(here, 'vendor', 'basis')) {
+  return {
+    name: 'gymplan-basis-transcoder',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.split('?')[0].replace(/\\/g, '/').endsWith('/three/examples/jsm/loaders/KTX2Loader.js')) return null;
+      let out = code;
+      for (const file of TRANSCODER_FILES) {
+        const original = `'../libs/basis/${file}'`;
+        if (!out.includes(original)) {
+          throw new Error(`KTX2Loader no longer loads ${original}; check web/vendor/basis against this three.js (N-01).`);
+        }
+        const relative = path.relative(path.dirname(id.split('?')[0]), path.join(vendored, file)).split(path.sep).join('/');
+        out = out.replace(original, JSON.stringify(relative));
+      }
+      return { code: out, map: null };
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
-    plugins: [react(), contentSecurityPolicy(env)],
+    plugins: [react(), contentSecurityPolicy(env), basisTranscoder()],
     resolve: {
       // The plan format, reading and validation, shared with the backend.
       alias: { '@shared': path.resolve(here, '../shared') },

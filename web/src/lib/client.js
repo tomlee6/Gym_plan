@@ -369,6 +369,13 @@ export const reviewApi = {
   approve: (id) => request('POST', `/v1/review/versions/${enc(id)}/approve`, {}),
   reject: (id, reason, note) => request('POST', `/v1/review/versions/${enc(id)}/reject`, { reason, note }),
   revise: (id) => request('POST', `/v1/review/versions/${enc(id)}/revise`, {}),
+  regenerate: (id) => request('POST', `/v1/review/versions/${enc(id)}/regenerate`, {}),
+  // Machine models (L-07, L-08).
+  machineModels: (machineId) => request('GET', `/v1/review/machines/${enc(machineId)}/models`),
+  buildModel: (machineId, route) => request('POST', `/v1/review/machines/${enc(machineId)}/models`, route ? { route } : {}),
+  approveModel: (modelId, note) => request('POST', `/v1/review/models/${enc(modelId)}/approve`, note ? { note } : {}),
+  rejectModel: (modelId, note) => request('POST', `/v1/review/models/${enc(modelId)}/reject`, { note }),
+  turnModel: (modelId, turnDeg) => request('POST', `/v1/review/models/${enc(modelId)}/turn`, { turnDeg }),
 };
 
 /** Platform admin (B-09). People are invited by email, never given a password. */

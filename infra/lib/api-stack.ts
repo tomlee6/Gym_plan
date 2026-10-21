@@ -26,6 +26,7 @@ import * as route53 from 'aws-cdk-lib/aws-route53';
 import { Construct } from 'constructs';
 import { EnvConfig, HOME_REGION, resourcePrefix } from './config';
 import { DataStack, DB_NAME } from './data-stack';
+import { GpuStack } from './gpu-stack';
 import { MailStack } from './mail-stack';
 import { ApiWaf } from './waf';
 
@@ -41,6 +42,8 @@ export interface ApiStackProps extends StackProps {
   zone: route53.IHostedZone;
   data: DataStack;
   mail: MailStack;
+  /** The GPU environment, when there is one (L-10). */
+  gpu?: GpuStack;
 }
 
 export class ApiStack extends Stack {
@@ -115,9 +118,22 @@ export class ApiStack extends Stack {
       HUB_IOS_REDIRECT_URI: config.hub.iosRedirectUri,
       ALLOW_SIMULATED_SCANS: 'false',
     };
+    // The GPU jobs that make machine models (L-10, L-05): where the backend
+    // submits them. Each machine's model is built as soon as its 360 video is
+    // in, and its outcome comes back on the gpu-jobs queue.
+    if (props.gpu) {
+      environment.TRELLIS2_JOB_QUEUE = props.gpu.jobQueue.jobQueueName;
+      environment.TRELLIS2_JOB_DEFINITION = props.gpu.jobDefinition.jobDefinitionName;
+      environment.ASSET_BUILDER = 'trellis2';
+      environment.ASSET_AUTO_BUILD = 'true';
+    }
+    // With the models distribution in place, the worker builds and stores each
+    // approved level (J-01) and the API hands out signed links to it (M-07).
+    // The backend refuses to start with the generator on and no way to sign.
     if (data.modelsDistribution) {
       environment.MODELS_CDN_DOMAIN = data.modelsDistribution.distribution.distributionDomainName;
       environment.MODELS_SIGNING_KEY_ID = data.modelsDistribution.publicKey.publicKeyId;
+      environment.GENERATOR_DRIVER = 'glb';
     }
 
     const secrets: Record<string, ecs.Secret> = {
@@ -128,6 +144,9 @@ export class ApiStack extends Stack {
       HUB_CLIENT_SECRET: ecs.Secret.fromSecretsManager(data.secrets.hubClientSecret),
       HUB_EVENTS_SECRET: ecs.Secret.fromSecretsManager(data.secrets.hubEventsSecret),
     };
+    if (data.secrets.modelsSigningKey) {
+      secrets.MODELS_SIGNING_PRIVATE_KEY = ecs.Secret.fromSecretsManager(data.secrets.modelsSigningKey);
+    }
 
     // ---- Task role: what the backend code may do in AWS ----------------------
     // Shared by API and worker; both run the same code base and the API also
@@ -142,6 +161,21 @@ export class ApiStack extends Stack {
     data.jobsQueue.grantSendMessages(taskRole);
     data.jobsQueue.grantConsumeMessages(taskRole);
     data.gpuJobsQueue.grantSendMessages(taskRole);
+    if (props.gpu) {
+      // Submit TRELLIS.2 jobs, look them up, and read their outcomes from the gpu-jobs queue.
+      taskRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['batch:SubmitJob'],
+          resources: [
+            props.gpu.jobQueue.jobQueueArn,
+            Stack.of(this).formatArn({ service: 'batch', resource: 'job-definition', resourceName: `${props.gpu.jobDefinition.jobDefinitionName}:*` }),
+          ],
+        }),
+      );
+      // Neither takes a resource: look jobs up, and find a try's job by name before sending it again.
+      taskRole.addToPolicy(new iam.PolicyStatement({ actions: ['batch:DescribeJobs', 'batch:ListJobs'], resources: ['*'] }));
+      data.gpuJobsQueue.grantConsumeMessages(taskRole);
+    }
     data.key.grantEncryptDecrypt(taskRole);
     taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({

@@ -41,12 +41,15 @@ export interface WebStackProps extends StackProps {
 /**
  * Default CSP: the app's own files, the API, presigned S3 URLs for drawings
  * and scans, and CloudFront for 3D models. blob: is for pdf.js and three.js
- * workers and object URLs. Replace via webCsp once the app's needs settle.
+ * workers and object URLs; 'wasm-unsafe-eval' lets the viewer compile the
+ * meshopt decoder for compressed models. Replace via webCsp once the app's
+ * needs settle.
  */
 function defaultCsp(config: EnvConfig): string {
   return [
     "default-src 'self'",
-    "script-src 'self'",
+    // WebAssembly only (not eval): three.js's meshopt decoder for the 3D models (K-01).
+    "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://*.amazonaws.com https://*.cloudfront.net",
     `connect-src 'self' https://${config.apiDomain} https://*.amazonaws.com https://*.cloudfront.net`,

@@ -14,6 +14,7 @@ import {
 import { bytes, inputLabel, stamp, STATUS_LABELS, TAG_LABELS } from '../../lib/format.js';
 import { CheckIcon, DownloadIcon, FileIcon, TrashIcon } from '../../lib/icons.jsx';
 import { keyframeUrl, keyframesSeeing } from './keyframes.js';
+import { MachineModelPanel } from './MachineModel.jsx';
 import { clearanceToWall, nearestEquipment } from './measure.js';
 import {
   addMirror,
@@ -857,7 +858,7 @@ function Inspector({ v, plan, selection, readOnly, onSelect, history, keyframes 
                   </dd>
                 </div>
               </dl>
-              <Equipment plan={plan} object={el} readOnly={ro} history={history} video={videoFor(v, el)} />
+              <Equipment plan={plan} object={el} readOnly={ro} history={history} video={videoFor(v, el)} v={v} />
               <Keyframes object={el} keyframes={keyframes} />
               {!ro && (
                 <button
@@ -1132,7 +1133,7 @@ function Keyframes({ object, keyframes }) {
  * every machine is named here or on the phone. The catalogue is a list of
  * suggestions, not a closed set: any name may be typed in.
  */
-function Equipment({ plan, object, readOnly, history, video }) {
+function Equipment({ plan, object, readOnly, history, video, v }) {
   const current = object.equipment;
   const [draft, setDraft] = useState(null);
   const open = draft !== null;
@@ -1272,6 +1273,8 @@ function Equipment({ plan, object, readOnly, history, video }) {
       )}
 
       {current && <EquipmentVideo video={video} />}
+      {/* L-08: its 3D model, reviewed beside the video, or another machine's reused. */}
+      {current && v && <MachineModelPanel plan={plan} object={object} v={v} readOnly={readOnly} history={history} />}
     </section>
   );
 }

@@ -145,9 +145,23 @@ export class LocalStorage {
     return readFile(this.#object(key));
   }
 
+  /** Stores a whole object the server produced itself (a generated model). */
+  async write(key, body) {
+    const target = this.#object(key);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(`${target}.writing`, body);
+    await rename(`${target}.writing`, target);
+  }
+
   /** Removes a stored object; a missing one is not an error. */
   async delete(key) {
     await rm(this.#object(key), { force: true });
+  }
+
+  /** Removes every object under a folder (`prefix` ends in `/`). */
+  async deleteFolder(prefix) {
+    if (!prefix.endsWith('/')) throw new Error('A folder to delete must end in /');
+    await rm(this.#object(prefix), { recursive: true, force: true });
   }
 
   /** A short-lived URL to GET a stored object, like an S3 presigned GetObject. */

@@ -22,10 +22,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
 
+import { approvedModelsOn } from '../assets/walkthrough.js';
 import { audit, planEventsSql, planLabel } from '../audit.js';
 import { config } from '../config.js';
 import { many, one, pool, transaction } from '../db/pool.js';
 import { conflict, notFound } from '../errors.js';
+import { linkFields } from '../generator/links.js';
 import { isId, newId, newToken, sha256 } from '../ids.js';
 import { requireAccount, requireAuth } from '../middleware/auth.js';
 import { initialsOf } from './auth.js';
@@ -190,7 +192,7 @@ export async function modelFor(db, accountId, planId, { withLevels = true } = {}
   const row = await one(
     db,
     `SELECT p.id AS plan_id, p.level_number AS level, p.facility_id, f.name AS facility,
-            a.name AS organisation, v.id AS version_id, v.version_no AS version, v.reviewed_at,
+            a.name AS organisation, v.id AS version_id, v.version_no AS version, v.reviewed_at, v.capture_id,
             v.content_hash, v.plan_json, v.area_m2, r.name AS reviewer_name,
             g.status AS model_status, g.generator_version, g.glb_key, g.bytes AS model_bytes
      FROM plans p
@@ -227,10 +229,19 @@ export async function modelFor(db, accountId, planId, { withLevels = true } = {}
     areaM2: row.area_m2 === null ? null : Number(row.area_m2),
     plan: row.plan_json,
     // The generated level (J-01, K-01). Until the generator stores a file,
-    // `stored` is false and the viewer builds the 3D from `plan`.
+    // `stored` is false and the viewer builds the 3D from `plan`. Once it
+    // does, `url` is a signed link to the GLB, good until `urlExpiresAt` (M-07).
     generatedModel: row.model_status
-      ? { generatorVersion: row.generator_version, stored: Boolean(row.glb_key), bytes: row.model_bytes === null ? null : Number(row.model_bytes) }
+      ? {
+          generatorVersion: row.generator_version,
+          stored: Boolean(row.glb_key),
+          bytes: row.model_bytes === null ? null : Number(row.model_bytes),
+          ...(row.glb_key ? await linkFields(row.glb_key) : { url: null, urlExpiresAt: null }),
+        }
       : null,
+    // The approved 3D model of each recorded machine, by its reference, for
+    // the viewer to place on the plan's footprints (J-06).
+    machineModels: await approvedModelsOn(db, row.capture_id),
     levels: levels.map((l) => ({ planId: l.id, level: l.level })),
   };
 }

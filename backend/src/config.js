@@ -2,6 +2,7 @@
  * Configuration from environment variables, validated once at start-up so a
  * missing secret fails loudly instead of at the first request.
  */
+import { GENERATOR_VERSION } from '../../shared/build3d/version.js';
 
 function required(name) {
   const value = process.env[name];
@@ -102,6 +103,9 @@ export const config = Object.freeze({
     uploadUrlTtlSeconds: int('UPLOAD_URL_TTL_SECONDS', 6 * 60 * 60),
     s3Bucket: optional('S3_BUCKET', ''),
     s3Region: optional('S3_REGION', HOME_REGION),
+    // Generated 3D levels and machine models (M-03, M-07). Local storage
+    // keeps them in the same folder, under models/.
+    modelsBucket: optional('MODELS_BUCKET', ''),
   },
 
   /*
@@ -122,11 +126,50 @@ export const config = Object.freeze({
   /*
    * Which 3D generator handles plan.generate. `placeholder` marks the plan
    * ready with no stored level file, so the viewer keeps building the 3D in
-   * the browser until the generator worker (task J-01) replaces it.
+   * the browser; `glb` builds and stores the level (J-01, src/generator/).
+   * The version defaults to the generator's own, so a generator change
+   * rebuilds stored levels instead of reusing them.
    */
   generator: {
     driver: optional('GENERATOR_DRIVER', 'placeholder'),
-    version: optional('GENERATOR_VERSION', 'browser-0'),
+    version: optional(
+      'GENERATOR_VERSION',
+      optional('GENERATOR_DRIVER', 'placeholder') === 'glb' ? GENERATOR_VERSION : 'browser-0',
+    ),
+    // The most a level's model may weigh, machines included (J-08: 25 MB).
+    maxBytes: int('GENERATOR_MAX_BYTES', 25 * 1024 * 1024),
+  },
+
+  /*
+   * Machine models (L-07): what asset.build runs. `none` installs no
+   * builder, so a build fails with a reason saying so; `trellis2` sends it to
+   * the GPU worker as an AWS Batch job (L-05), whose outcome comes back on
+   * the gpu-jobs queue. The generator version is part of a model's identity,
+   * so a new generator builds again rather than reusing an older model.
+   */
+  assets: {
+    builder: optional('ASSET_BUILDER', 'none'),
+    generatorVersion: optional('ASSET_GENERATOR_VERSION', 'trellis2-1'),
+    // Build a machine's model as soon as its 360 video is in.
+    autoBuild: bool('ASSET_AUTO_BUILD', false),
+    // Machine model textures (N-01): ktx2 (compressed on the graphics card; the web app's transcoder is
+    // built without eval, web/vendor/basis), or webp.
+    textures: optional('MODEL_TEXTURES', 'ktx2'),
+    jobQueue: optional('TRELLIS2_JOB_QUEUE', ''),
+    jobDefinition: optional('TRELLIS2_JOB_DEFINITION', ''),
+    outcomesQueueUrl: optional('GPU_JOBS_QUEUE_URL', ''),
+  },
+
+  /**
+   * Links to stored 3D models (M-07). On AWS: the models CloudFront
+   * distribution and the key pair its signed URLs use (the private key is a
+   * secret, PEM). Without a CDN domain the models store signs its own links.
+   */
+  models: {
+    cdnDomain: optional('MODELS_CDN_DOMAIN', ''),
+    signingKeyId: optional('MODELS_SIGNING_KEY_ID', ''),
+    signingPrivateKey: optional('MODELS_SIGNING_PRIVATE_KEY', ''),
+    urlTtlSeconds: int('MODELS_URL_TTL_SECONDS', 3600),
   },
 
   mail: {
@@ -169,6 +212,25 @@ export function productionProblems(c = config) {
   if (c.uploads.allowSimulatedScans) problems.push('ALLOW_SIMULATED_SCANS must be false in production');
   if (c.storage.driver !== 's3') problems.push('STORAGE_DRIVER must be s3 in production');
   if (c.storage.s3Region !== HOME_REGION) problems.push(`S3_REGION must be ${HOME_REGION} in production`);
+  if (c.generator.driver === 'glb' && !c.storage.modelsBucket) {
+    problems.push('MODELS_BUCKET must be set when GENERATOR_DRIVER is glb');
+  }
+  // Models are only ever served through the signed CloudFront distribution (M-07).
+  if (c.generator.driver === 'glb' && !(c.models.cdnDomain && c.models.signingKeyId && c.models.signingPrivateKey)) {
+    problems.push('MODELS_CDN_DOMAIN, MODELS_SIGNING_KEY_ID and MODELS_SIGNING_PRIVATE_KEY must be set when GENERATOR_DRIVER is glb');
+  }
+  if (!['none', 'trellis2'].includes(c.assets.builder)) problems.push('ASSET_BUILDER must be none or trellis2');
+  if (!['webp', 'ktx2'].includes(c.assets.textures)) problems.push('MODEL_TEXTURES must be webp or ktx2');
+  if (c.assets.builder === 'trellis2') {
+    for (const [name, value] of [
+      ['TRELLIS2_JOB_QUEUE', c.assets.jobQueue],
+      ['TRELLIS2_JOB_DEFINITION', c.assets.jobDefinition],
+      ['GPU_JOBS_QUEUE_URL', c.assets.outcomesQueueUrl],
+      ['MODELS_BUCKET', c.storage.modelsBucket],
+    ]) {
+      if (!value) problems.push(`${name} must be set when ASSET_BUILDER is trellis2`);
+    }
+  }
   if (c.awsRegion !== HOME_REGION) problems.push(`AWS_REGION must be ${HOME_REGION} in production`);
   if (c.hub.driver !== 'oidc') problems.push('HUB_DRIVER must be oidc in production');
   for (const [name, value] of [

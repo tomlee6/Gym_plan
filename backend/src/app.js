@@ -6,6 +6,8 @@ import { errorHandler, notFound } from './errors.js';
 import { hub } from './hub/index.js';
 import { devHubRouter } from './hub/dev.js';
 import './jobs/handlers.js';
+import './generator/index.js';
+import './assets/index.js';
 import { cors } from './middleware/cors.js';
 import { router as admin } from './modules/admin.js';
 import { router as auth } from './modules/auth.js';
@@ -14,6 +16,7 @@ import { router as equipment } from './modules/equipment.js';
 import { router as facilities } from './modules/facilities.js';
 import { router as hubEvents } from './modules/hub-events.js';
 import { router as localStorage } from './modules/local-storage.js';
+import { router as machineModels } from './modules/machine-models.js';
 import { router as plans } from './modules/plans.js';
 import { router as profile } from './modules/profile.js';
 import { router as review } from './modules/review.js';
@@ -58,6 +61,8 @@ export function createApp() {
   // Equipment and its 360 video hang off a capture, so they share its path.
   app.use('/v1/captures', equipment);
   app.use('/v1/review', review);
+  // Machine models (L-07) share the reviewer's path and its staff-only rule.
+  app.use('/v1/review', machineModels);
   app.use('/v1/share', share);
   app.use('/v1/admin', admin);
 

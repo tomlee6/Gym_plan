@@ -20,6 +20,7 @@ import * as pipelines from 'aws-cdk-lib/pipelines';
 import { Construct } from 'constructs';
 import { EnvConfig, PipelineConfig } from './config';
 import { FlexGymStage } from './stage';
+import { Trellis2Image } from './trellis2-image';
 
 export interface PipelineStackProps extends StackProps {
   pipeline: PipelineConfig;
@@ -120,9 +121,17 @@ export class PipelineStack extends Stack {
       commands: BACKEND_TEST_COMMANDS,
     });
 
-    // TODO(3D team): build and publish the GPU worker image here (its own
-    // Dockerfile and ECR repository, CUDA base image) as a pre step of the
-    // staging stage, so it ships with the same release.
+    // The GPU worker image (L-09) is built by its own pipeline, not as a step
+    // of the release: it takes hours to compile and must pass the golden test
+    // on staging's GPUs before use. Once approved, its digest is committed to
+    // cdk.json, which this release then deploys (infra/lib/trellis2-image.ts,
+    // docs/runbooks/trellis2-worker.md).
+    new Trellis2Image(this, 'Trellis2Image', {
+      repository,
+      branch: props.pipeline.branch,
+      pullAccounts: [props.staging.account, props.prod.account],
+      goldenAccount: props.staging.account,
+    });
 
     const { deployWebAssets } = props;
     // Stack names: FlexGym-Staging-Api, FlexGym-Prod-Data, ...

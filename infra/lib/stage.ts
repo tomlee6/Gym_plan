@@ -20,6 +20,7 @@ import { EDGE_CERT_REGION, EnvConfig } from './config';
 import { DataStack } from './data-stack';
 import { DnsStack } from './dns-stack';
 import { EdgeCertStack } from './edge-cert-stack';
+import { GpuStack } from './gpu-stack';
 import { MailStack } from './mail-stack';
 import { MonitoringStack } from './monitoring-stack';
 import { NetworkStack } from './network-stack';
@@ -36,6 +37,8 @@ export class FlexGymStage extends Stage {
   readonly dns: DnsStack;
   readonly edgeCerts: EdgeCertStack;
   readonly data: DataStack;
+  /** Only when the environment names an approved TRELLIS.2 image (L-10). */
+  readonly gpu?: GpuStack;
   readonly mail: MailStack;
   readonly api: ApiStack;
   readonly web: WebStack;
@@ -67,6 +70,15 @@ export class FlexGymStage extends Stage {
       vpc: this.network.vpc,
       description: description('database, buckets, queues, secrets'),
     });
+    if (config.trellis2Image) {
+      this.gpu = new GpuStack(this, 'Gpu', {
+        env,
+        config,
+        vpc: this.network.vpc,
+        data: this.data,
+        description: description('GPU jobs for machine models (AWS Batch)'),
+      });
+    }
     this.mail = new MailStack(this, 'Mail', { env, config, zone: this.dns.zone, description: description('SES') });
     this.api = new ApiStack(this, 'Api', {
       env,
@@ -75,6 +87,7 @@ export class FlexGymStage extends Stage {
       zone: this.dns.zone,
       data: this.data,
       mail: this.mail,
+      gpu: this.gpu,
       description: description('API and worker on ECS Fargate'),
     });
     this.web = new WebStack(this, 'Web', {

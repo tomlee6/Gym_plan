@@ -49,6 +49,8 @@
         "slackWorkspaceId": "",
         "slackChannelId": "",
         "modelsSigningPublicKeyPem": "",
+        "trellis2Image": "",
+        "gpuMaxInstances": 1,
         "hub": {
           "issuer": "https://hub.goalcert.example",
           "authorizeUrl": "https://hub.goalcert.example/oauth2/authorize",
@@ -88,6 +90,8 @@
         "slackWorkspaceId": "",
         "slackChannelId": "",
         "modelsSigningPublicKeyPem": "",
+        "trellis2Image": "",
+        "gpuMaxInstances": 1,
         "hub": {
           "issuer": "https://hub.goalcert.example",
           "authorizeUrl": "https://hub.goalcert.example/oauth2/authorize",
@@ -127,6 +131,8 @@
         "slackWorkspaceId": "",
         "slackChannelId": "",
         "modelsSigningPublicKeyPem": "",
+        "trellis2Image": "",
+        "gpuMaxInstances": 2,
         "hub": {
           "issuer": "https://hub.goalcert.example",
           "authorizeUrl": "https://hub.goalcert.example/oauth2/authorize",

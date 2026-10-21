@@ -20,6 +20,7 @@ import './lib/app.css';
 // The editor and the 3D viewer are the heavy pages: load them on demand.
 const EditorPage = lazy(() => import('./review/editor/EditorPage.jsx'));
 const WalkthroughPage = lazy(() => import('./viewer/WalkthroughPage.jsx'));
+const ReviewWalkthroughPage = lazy(() => import('./review/ReviewWalkthroughPage.jsx'));
 
 function Loading() {
   return (
@@ -69,6 +70,14 @@ export default function Root() {
           element={
             <RequireRole roles={ROLES.customer}>
               <WalkthroughPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/review/versions/:id/walkthrough"
+          element={
+            <RequireRole roles={ROLES.review}>
+              <ReviewWalkthroughPage />
             </RequireRole>
           }
         />

@@ -24,6 +24,7 @@ import { Construct } from 'constructs';
 import { ApiStack } from './api-stack';
 import { EnvConfig, resourcePrefix } from './config';
 import { DataStack } from './data-stack';
+import { ModelsMonitoring } from './models-monitoring';
 
 export interface MonitoringStackProps extends StackProps {
   config: EnvConfig;
@@ -262,5 +263,8 @@ export class MonitoringStack extends Stack {
       graph('Dead-letter queues', [dlqDepth(data.jobsDeadLetterQueue), dlqDepth(data.gpuJobsDeadLetterQueue)]),
       graph('Jobs (all kinds)', JOB_METRICS.map(jobMetric)),
     );
+
+    // The 3D team's alarms and dashboard row (N-03): levels and machine models.
+    new ModelsMonitoring(this, 'Models3d', { config, data, topic: this.alarmTopic, dashboard: this.dashboard });
   }
 }

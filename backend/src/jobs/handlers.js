@@ -21,7 +21,8 @@ import { many, one, pool, transaction } from '../db/pool.js';
 import { newId } from '../ids.js';
 import { planReadyForReview, walkthroughReady } from '../notify.js';
 import { readCapturePlan, unreadableFlag } from '../reading.js';
-import { storage } from '../storage/index.js';
+import { levelFailed, metric3d } from '../metrics3d.js';
+import { modelStorage, storage } from '../storage/index.js';
 import { enqueue, PermanentJobError, registerHandler } from './index.js';
 
 async function versionFor(db, id, { lock = false } = {}) {
@@ -171,6 +172,7 @@ registerHandler('plan.generate', {
     });
 
     if (done) {
+      metric3d('LevelsBuilt');
       await walkthroughReady(pool, { accountId: v.account_id, label: planLabel(v.facility, v.level), planId: v.plan_id });
     }
   },
@@ -178,9 +180,9 @@ registerHandler('plan.generate', {
   /** GEN-05: a generation that keeps failing goes back to the reviewer queue. */
   async onDead(job, err) {
     const reason = String(err?.message ?? err).slice(0, 500);
-    await transaction(async (db) => {
+    const failed = await transaction(async (db) => {
       const v = await versionFor(db, job.subject_id, { lock: true });
-      if (!v || v.status !== 'generating') return;
+      if (!v || v.status !== 'generating') return false;
       await db.query(
         `UPDATE generated_models SET status = 'failed', failure_reason = ?, finished_at = UTC_TIMESTAMP(3)
          WHERE plan_version_id = ? AND generator_version = ?`,
@@ -195,7 +197,10 @@ registerHandler('plan.generate', {
         version: v.version_no,
         detail: { reason },
       });
+      return true;
     });
+    // N-03: by its J-09 code; a code that is not the plan's is a fault, and raises the alarm.
+    if (failed) levelFailed(err);
   },
 });
 
@@ -223,13 +228,21 @@ async function removeAccount(job) {
        JOIN captures c ON c.id = cf.capture_id WHERE c.account_id = ?`,
       [accountId],
     )),
-    ...(await many(pool, `SELECT glb_key AS k FROM generated_models WHERE account_id = ? AND glb_key IS NOT NULL`, [accountId])),
-    ...(await many(pool, `SELECT glb_key AS k FROM machine_models WHERE account_id = ? AND glb_key IS NOT NULL`, [accountId])),
   ];
   for (const f of keys) {
     if (f.status === 'uploading') await storage().abort(f.k, f.upload_id);
     else await storage().delete(f.k);
   }
+  // Generated levels and machine models, with every file each machine
+  // model's GPU tries left, live under the account's folder in the models
+  // store (M-07), which on AWS is its own bucket.
+  const { n: modelFiles } = await one(
+    pool,
+    `SELECT (SELECT COUNT(*) FROM generated_models WHERE account_id = ? AND glb_key IS NOT NULL)
+          + (SELECT COUNT(*) FROM machine_models WHERE account_id = ? AND glb_key IS NOT NULL) AS n`,
+    [accountId, accountId],
+  );
+  await modelStorage().deleteFolder(`models/accounts/${accountId}/`);
 
   const tally = await transaction(async (db) => {
     const count = async (sql) => Number((await one(db, sql, [accountId])).n);
@@ -238,7 +251,7 @@ async function removeAccount(job) {
       versions: await count('SELECT COUNT(*) AS n FROM plan_versions WHERE account_id = ?'),
       captures: await count('SELECT COUNT(*) AS n FROM captures WHERE account_id = ?'),
       machines: await count('SELECT COUNT(*) AS n FROM machines WHERE account_id = ?'),
-      files: keys.length,
+      files: keys.length + Number(modelFiles),
       members: await count('SELECT COUNT(*) AS n FROM memberships WHERE account_id = ?'),
     };
     // People whose only access was this account go with it.

@@ -72,6 +72,14 @@ export interface EnvConfig {
   slackChannelId: string;
   /** Public key (PEM) for signed model URLs. Empty = no models distribution. */
   modelsSigningPublicKeyPem: string;
+  /**
+   * The approved TRELLIS.2 worker image, by digest (L-10):
+   * <tooling account>.dkr.ecr.ap-southeast-2.amazonaws.com/flexgym/trellis2@sha256:...
+   * Empty = no GPU environment. See docs/runbooks/trellis2-worker.md.
+   */
+  trellis2Image: string;
+  /** Most g6e.xlarge GPU hosts running at once; idle, there are none. */
+  gpuMaxInstances: number;
   hub: HubConfig;
 }
 
@@ -142,6 +150,8 @@ export function loadEnvConfig(node: Node, name: EnvName): EnvConfig {
     slackWorkspaceId: str(raw, 'slackWorkspaceId', where, true),
     slackChannelId: str(raw, 'slackChannelId', where, true),
     modelsSigningPublicKeyPem: str(raw, 'modelsSigningPublicKeyPem', where, true),
+    trellis2Image: str(raw, 'trellis2Image', where, true),
+    gpuMaxInstances: num(raw, 'gpuMaxInstances', where),
     hub: {
       issuer: str(hubRaw, 'issuer', hubWhere),
       authorizeUrl: str(hubRaw, 'authorizeUrl', hubWhere),
@@ -157,6 +167,13 @@ export function loadEnvConfig(node: Node, name: EnvName): EnvConfig {
   // Data residency (M-16): refuse to build an environment outside Sydney.
   if (config.region !== HOME_REGION) {
     fail(`${where}.region must be ${HOME_REGION} (data residency), got ${config.region}`);
+  }
+  // The GPU worker runs only an image that passed its golden test, named by digest (L-10).
+  if (config.trellis2Image && !/^\d{12}\.dkr\.ecr\.ap-southeast-2\.amazonaws\.com\/flexgym\/trellis2@sha256:[0-9a-f]{64}$/.test(config.trellis2Image)) {
+    fail(`${where}.trellis2Image must be flexgym/trellis2 in ECR in ${HOME_REGION}, by digest (@sha256:...), or empty`);
+  }
+  if (!(config.gpuMaxInstances >= 1)) {
+    fail(`${where}.gpuMaxInstances must be at least 1`);
   }
   if (!isInZone(config.apiDomain, config.hostedZoneName)) {
     fail(`${where}.apiDomain must be inside hostedZoneName`);

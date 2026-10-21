@@ -1,0 +1,224 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1215" viewBox="0 0 1600 1215" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <title>Flex Gym Scan on AWS: Flex's AWS organization and GoalCert's</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3c3c3c"/>
+    </marker>
+    <style>
+      .title { font-size: 13px; font-weight: 600; fill: #1f1f1f; }
+      .text { font-size: 11px; fill: #4d4d4d; }
+      .org { font-size: 13.5px; font-weight: 700; }
+      .box { fill: #ffffff; stroke: #8a8a8a; stroke-width: 1; }
+      .flow { fill: none; stroke: #3c3c3c; stroke-width: 1.4; marker-end: url(#arrow); }
+      .flow.dashed { stroke-dasharray: 6 4; }
+      .badge { fill: #1f1f1f; }
+      .badge-text { font-size: 11px; font-weight: 700; fill: #ffffff; text-anchor: middle; }
+      .legend { font-size: 11.5px; fill: #2b2b2b; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="1215" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="20" y="34" font-size="20" font-weight="700" fill="#1f1f1f">Flex Gym Scan on AWS</text>
+  <text x="20" y="57" class="text" font-size="12">Prod shown, with its sizes. Dev and staging have the same components in their own accounts, smaller (table in the guide). Everything is in ap-southeast-2 (Sydney) unless marked.</text>
+
+  <!-- Users -->
+  <rect x="20" y="80" width="200" height="345" rx="8" fill="#f5f5f5" stroke="#b5b5b5"/>
+  <text x="32" y="101" class="org" fill="#333333">Users</text>
+  <rect x="35" y="115" width="170" height="70" rx="6" class="box"/>
+  <text x="47" y="138" class="title">Web browser</text>
+  <text x="47" y="156" class="text">staff, reviewers,</text>
+  <text x="47" y="172" class="text">gym owners</text>
+  <rect x="35" y="245" width="170" height="70" rx="6" class="box"/>
+  <text x="47" y="268" class="title">iPhone app</text>
+  <text x="47" y="286" class="text">LiDAR iPhone, iOS 17+</text>
+  <text x="47" y="302" class="text">scans and machine videos</text>
+  <rect x="35" y="345" width="170" height="62" rx="6" class="box" stroke-dasharray="4 3"/>
+  <text x="47" y="368" class="title">App Store / TestFlight</text>
+  <text x="47" y="386" class="text">installs the app (Apple)</text>
+
+  <!-- GoalCert's AWS organization -->
+  <rect x="250" y="80" width="570" height="270" rx="10" fill="#f6f1fb" stroke="#7b4bb7" stroke-width="1.5" stroke-dasharray="8 5"/>
+  <text x="264" y="101" class="org" fill="#5e2f9c">GoalCert AWS organization · separate · hosts the web app only</text>
+  <rect x="265" y="125" width="255" height="85" rx="6" class="box"/>
+  <text x="277" y="147" class="title">CloudFront: web app</text>
+  <text x="277" y="165" class="text">HTTPS · CSP and security headers</text>
+  <text x="277" y="182" class="text">unknown paths → index.html</text>
+  <text x="277" y="199" class="text">ACM certificate in us-east-1</text>
+  <rect x="550" y="125" width="255" height="85" rx="6" class="box"/>
+  <text x="562" y="147" class="title">S3: site files</text>
+  <text x="562" y="165" class="text">private · CloudFront access only (OAC)</text>
+  <text x="562" y="182" class="text">the web build only; no customer data</text>
+  <rect x="265" y="245" width="255" height="85" rx="6" class="box"/>
+  <text x="277" y="267" class="title">GoalCert Hub: sign-in</text>
+  <text x="277" y="285" class="text">OpenID Connect, for both apps</text>
+  <text x="277" y="302" class="text">no passwords in Flex Gym Scan</text>
+  <rect x="550" y="245" width="255" height="85" rx="6" class="box"/>
+  <text x="562" y="267" class="title">GoalCert DNS</text>
+  <text x="562" y="285" class="text">web hostname → CloudFront above</text>
+  <text x="562" y="302" class="text">api.&lt;domain&gt; delegated (NS) to</text>
+  <text x="562" y="319" class="text">Route 53 in Flex's account</text>
+  <path class="flow" d="M520,167 L550,167"/>
+
+  <!-- Flex's AWS organization: tooling account -->
+  <rect x="840" y="80" width="740" height="270" rx="10" fill="#fff6eb" stroke="#e07b00" stroke-width="1.5" stroke-dasharray="8 5"/>
+  <text x="854" y="101" class="org" fill="#b35f00">Flex AWS organization · tooling account</text>
+  <rect x="855" y="125" width="200" height="70" rx="6" class="box"/>
+  <text x="867" y="147" class="title">CodeCommit</text>
+  <text x="867" y="165" class="text">repository gym_floor_plan</text>
+  <rect x="1085" y="125" width="290" height="105" rx="6" class="box"/>
+  <text x="1097" y="147" class="title">CodePipeline</text>
+  <text x="1097" y="165" class="text">flexgym-release:</text>
+  <text x="1097" y="181" class="text">tests → staging → approval → prod</text>
+  <text x="1097" y="199" class="text">flexgym-trellis2-image:</text>
+  <text x="1097" y="215" class="text">build → golden test → approval → adopt</text>
+  <rect x="1085" y="250" width="290" height="85" rx="6" class="box"/>
+  <text x="1097" y="272" class="title">CodeBuild</text>
+  <text x="1097" y="290" class="text">tests, builds and CDK deploys</text>
+  <text x="1097" y="307" class="text">GPU image on a 2XLARGE build host</text>
+  <text x="1097" y="323" class="text">(72 vCPU, 145 GB)</text>
+  <rect x="1405" y="125" width="160" height="105" rx="6" class="box"/>
+  <text x="1417" y="147" class="title">ECR</text>
+  <text x="1417" y="165" class="text">flexgym/trellis2</text>
+  <text x="1417" y="181" class="text">tags never move</text>
+  <text x="1417" y="197" class="text">scanned on push</text>
+  <path class="flow" d="M1055,160 L1085,160"/>
+  <path class="flow" d="M1230,230 L1230,250"/>
+  <path class="flow" d="M1375,292 L1470,292 L1470,230"/>
+
+  <!-- Flex's AWS organization: an environment account -->
+  <rect x="250" y="380" width="1330" height="680" rx="10" fill="#fffaf3" stroke="#e07b00" stroke-width="1.5" stroke-dasharray="8 5"/>
+  <text x="264" y="401" class="org" fill="#b35f00">Flex AWS organization · prod account (dev and staging: one account each, same components) · ap-southeast-2</text>
+
+  <rect x="265" y="415" width="205" height="62" rx="6" class="box"/>
+  <text x="277" y="437" class="title">Route 53</text>
+  <text x="277" y="455" class="text">zone api.&lt;domain&gt;</text>
+
+  <!-- VPC -->
+  <rect x="265" y="495" width="835" height="460" rx="8" fill="#ffffff" stroke="#5b8fc7" stroke-width="1.2"/>
+  <text x="640" y="514" font-size="12" font-weight="700" fill="#2f5f93">VPC · 3 Availability Zones · 2 NAT gateways</text>
+  <rect x="275" y="525" width="200" height="370" rx="4" fill="#eef6ee"/>
+  <text x="285" y="543" class="text" fill="#4f7a4f">public subnets</text>
+  <rect x="490" y="525" width="340" height="370" rx="4" fill="#eef3fb"/>
+  <text x="500" y="543" class="text" fill="#47689a">private subnets</text>
+  <rect x="845" y="525" width="245" height="370" rx="4" fill="#f4f4f4"/>
+  <text x="855" y="543" class="text" fill="#666666">isolated subnets</text>
+
+  <rect x="290" y="560" width="170" height="55" rx="6" class="box"/>
+  <text x="302" y="582" class="title">AWS WAF</text>
+  <text x="302" y="600" class="text">rate limits</text>
+  <rect x="290" y="640" width="170" height="70" rx="6" class="box"/>
+  <text x="302" y="662" class="title">Load balancer (ALB)</text>
+  <text x="302" y="680" class="text">internet-facing</text>
+  <text x="302" y="696" class="text">HTTPS 443 (ACM certificate)</text>
+
+  <rect x="505" y="560" width="310" height="75" rx="6" class="box"/>
+  <text x="517" y="582" class="title">ECS Fargate: API</text>
+  <text x="517" y="600" class="text">2 tasks × 1 vCPU, 2 GB (x86_64)</text>
+  <text x="517" y="617" class="text">auto-scales to 6</text>
+  <rect x="505" y="665" width="310" height="75" rx="6" class="box"/>
+  <text x="517" y="687" class="title">ECS Fargate: worker</text>
+  <text x="517" y="705" class="text">2 tasks × 1 vCPU, 2 GB (x86_64)</text>
+  <text x="517" y="722" class="text">background jobs, GPU outcomes, e-mail</text>
+  <rect x="505" y="770" width="310" height="110" rx="6" class="box"/>
+  <text x="517" y="792" class="title">AWS Batch: GPU jobs (TRELLIS.2)</text>
+  <text x="517" y="810" class="text">g6e.xlarge: 4 vCPU, 32 GiB,</text>
+  <text x="517" y="827" class="text">1 × NVIDIA L40S (48 GB), 250 GB local NVMe</text>
+  <text x="517" y="844" class="text">0 to 2 instances, none while idle</text>
+  <text x="517" y="861" class="text">job: 1 GPU, 28 GiB, 1 hour, 3 attempts</text>
+
+  <rect x="860" y="560" width="215" height="110" rx="6" class="box"/>
+  <text x="872" y="582" class="title">RDS MySQL 8.4</text>
+  <text x="872" y="600" class="text">db.m7g.large</text>
+  <text x="872" y="617" class="text">Multi-AZ</text>
+  <text x="872" y="634" class="text">100 GB gp3</text>
+  <text x="872" y="651" class="text">30-day backups</text>
+
+  <text x="279" y="937" class="text">VPC endpoints: S3 · SQS · Secrets Manager · ECR · CloudWatch · KMS</text>
+
+  <!-- Regional services, outside the VPC -->
+  <rect x="1125" y="495" width="210" height="60" rx="6" class="box"/>
+  <text x="1137" y="517" class="title">SQS: jobs</text>
+  <text x="1137" y="535" class="text">with dead-letter queue</text>
+  <rect x="1355" y="495" width="210" height="60" rx="6" class="box"/>
+  <text x="1367" y="517" class="title">SQS: gpu-jobs</text>
+  <text x="1367" y="535" class="text">with dead-letter queue</text>
+  <rect x="1125" y="575" width="210" height="60" rx="6" class="box"/>
+  <text x="1137" y="597" class="title">SES</text>
+  <text x="1137" y="615" class="text">e-mail</text>
+  <rect x="1355" y="575" width="210" height="60" rx="6" class="box"/>
+  <text x="1367" y="597" class="title">EventBridge</text>
+  <text x="1367" y="615" class="text">Batch job finished → gpu-jobs</text>
+  <rect x="1125" y="655" width="210" height="75" rx="6" class="box"/>
+  <text x="1137" y="677" class="title">S3: models</text>
+  <text x="1137" y="695" class="text">levels, machine models,</text>
+  <text x="1137" y="712" class="text">GPU weights · KMS-encrypted</text>
+  <rect x="1355" y="655" width="210" height="75" rx="6" class="box"/>
+  <text x="1367" y="677" class="title">Secrets Manager · KMS</text>
+  <text x="1367" y="695" class="text">app secrets · the data key</text>
+  <rect x="1125" y="750" width="210" height="75" rx="6" class="box"/>
+  <text x="1137" y="772" class="title">S3: captures</text>
+  <text x="1137" y="790" class="text">scans, photos, 360 videos</text>
+  <text x="1137" y="807" class="text">KMS-encrypted</text>
+  <rect x="1355" y="750" width="210" height="75" rx="6" class="box"/>
+  <text x="1367" y="772" class="title">CloudFront: models</text>
+  <text x="1367" y="790" class="text">signed links only</text>
+  <text x="1367" y="807" class="text">(origin: S3 models)</text>
+
+  <rect x="265" y="975" width="460" height="65" rx="6" class="box"/>
+  <text x="277" y="997" class="title">CloudWatch: logs, dashboard, alarms → SNS → e-mail / Slack</text>
+  <text x="277" y="1015" class="text">3D row and 3D alarms included · access logs kept in an S3 log bucket</text>
+
+  <!-- Flows inside the account -->
+  <path class="flow" d="M367,477 L367,560"/>
+  <path class="flow" d="M375,615 L375,640"/>
+  <path class="flow" d="M460,672 L483,672 L483,598 L505,598"/>
+  <path class="flow" d="M815,597 L860,597"/>
+  <path class="flow" d="M815,700 L838,700 L838,650 L860,650"/>
+  <path class="flow" d="M660,740 L660,770"/>
+  <path class="flow" d="M815,690 L1112,690 L1112,525 L1125,525"/>
+  <path class="flow" d="M815,790 L1125,790"/>
+  <path class="flow" d="M1105,790 L1105,705 L1125,705"/>
+  <path class="flow" d="M1460,575 L1460,555"/>
+  <path class="flow" d="M1360,752 L1333,728"/>
+
+  <!-- Flows between users, organizations and accounts -->
+  <path class="flow" d="M205,150 L265,150"/>
+  <path class="flow" d="M220,288 L265,288"/>
+  <path class="flow" d="M140,425 L140,446 L265,446"/>
+  <path class="flow dashed" d="M70,425 L70,1082 L1460,1082 L1460,825"/>
+  <path class="flow dashed" d="M1230,1082 L1230,825"/>
+  <path class="flow dashed" d="M600,560 L600,364 L392,364 L392,330"/>
+  <path class="flow" d="M1180,335 L1180,380"/>
+  <path class="flow" d="M1540,230 L1540,380"/>
+  <path class="flow dashed" d="M1085,315 L828,315 L828,180 L805,180"/>
+
+  <!-- Numbers -->
+  <g>
+    <circle cx="235" cy="139" r="9" class="badge"/><text x="235" y="143" class="badge-text">1</text>
+    <circle cx="243" cy="276" r="9" class="badge"/><text x="243" y="280" class="badge-text">2</text>
+    <circle cx="200" cy="446" r="9" class="badge"/><text x="200" y="450" class="badge-text">3</text>
+    <circle cx="990" cy="690" r="9" class="badge"/><text x="990" y="694" class="badge-text">4</text>
+    <circle cx="990" cy="790" r="9" class="badge"/><text x="990" y="794" class="badge-text">5</text>
+    <circle cx="700" cy="1082" r="9" class="badge"/><text x="700" y="1086" class="badge-text">6</text>
+    <circle cx="500" cy="364" r="9" class="badge"/><text x="500" y="368" class="badge-text">7</text>
+    <circle cx="1440" cy="565" r="9" class="badge"/><text x="1440" y="569" class="badge-text">8</text>
+    <circle cx="1180" cy="357" r="9" class="badge"/><text x="1180" y="361" class="badge-text">9</text>
+    <circle cx="1540" cy="357" r="9" class="badge"/><text x="1540" y="361" class="badge-text">10</text>
+    <circle cx="960" cy="315" r="9" class="badge"/><text x="960" y="319" class="badge-text">11</text>
+  </g>
+
+  <!-- Legend -->
+  <rect x="20" y="1100" width="1560" height="105" rx="8" fill="#f7f7f7" stroke="#cccccc"/>
+  <text x="36" y="1122" class="legend"><tspan font-weight="700">1</tspan>  The browser loads the web app from GoalCert's CloudFront (files from its private S3 bucket).</text>
+  <text x="36" y="1140" class="legend"><tspan font-weight="700">2</tspan>  Both apps sign in with GoalCert Hub.</text>
+  <text x="36" y="1158" class="legend"><tspan font-weight="700">3</tspan>  Both apps call the API at api.&lt;domain&gt;: Route 53 → WAF → load balancer → API tasks.</text>
+  <text x="36" y="1176" class="legend"><tspan font-weight="700">4</tspan>  The API and worker queue work on SQS; the worker runs it, and submits GPU jobs to AWS Batch.</text>
+  <text x="36" y="1194" class="legend"><tspan font-weight="700">5</tspan>  A GPU job reads the 360 video and the model weights from S3, and writes the machine model back.</text>
+  <text x="820" y="1122" class="legend"><tspan font-weight="700">6</tspan>  Both apps download and upload files directly, with signed links: S3 captures, and 3D models through CloudFront.</text>
+  <text x="820" y="1140" class="legend"><tspan font-weight="700">7</tspan>  The API checks each sign-in with GoalCert Hub (code exchange, signing keys).</text>
+  <text x="820" y="1158" class="legend"><tspan font-weight="700">8</tspan>  Batch reports each finished job to EventBridge, which queues it on gpu-jobs for the worker.</text>
+  <text x="820" y="1176" class="legend"><tspan font-weight="700">9</tspan>  The release pipeline deploys each environment. <tspan font-weight="700">10</tspan>  GPU jobs pull the TRELLIS.2 image from ECR.</text>
+  <text x="820" y="1194" class="legend"><tspan font-weight="700">11</tspan>  Each environment's web build goes to GoalCert's S3 bucket (handed over, or through a deploy role).</text>
+</svg>

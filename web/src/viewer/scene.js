@@ -1,7 +1,10 @@
 /**
- * The three.js scene for a model from buildModel (GEN-02..04): walls raised
- * to the ceiling with openings cut, floor and ceiling planes, objects and
- * columns as plain blocks, one default finish set, mirror walls reflective.
+ * The three.js scene for the walkthrough. The level is the generated model
+ * (the GLB the 3D generator built, K-01) when there is one; otherwise it is
+ * drawn here from buildModel (GEN-02..04): walls raised to the ceiling with
+ * openings cut, floor and ceiling planes, objects and columns as plain
+ * blocks, one default finish set, mirror walls reflective. Either way the
+ * lights and environment (which mirrors reflect) are the same.
  *
  * Plan (x, y) maps to three.js (x, height, y). Geometry that shares a
  * material is merged into one mesh to keep draw calls low (VIEW-09).
@@ -11,9 +14,12 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 import { WALL_THICKNESS_M } from './buildModel.js';
+import { hideLevelMachines, placeMachines } from './machines.js';
 
 export const COLOURS = {
   background: 0x0a1114,
+  // Behind a generated level, which has its ground and roof: daylight through the windows.
+  sky: 0xcfdde6,
   floor: 0x3a4146,
   floorLine: 0x4b5358,
   wall: 0xd8dbd9,
@@ -95,36 +101,11 @@ function merged(geometries) {
 }
 
 /**
- * Builds the scene. Returns what the viewer needs: the scene, the meshes the
- * measure tool can hit, the ceiling (hidden from overhead), the player
- * marker, measure markers, and `dispose` for every GPU resource.
+ * The level drawn in the browser from the plan, as before there were
+ * generated models (and still when a model cannot be loaded). Returns the
+ * parts the overhead view hides.
  */
-export function createScene(model, renderer) {
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(COLOURS.background);
-
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const envScene = new RoomEnvironment();
-  const env = pmrem.fromScene(envScene, 0.04).texture;
-  envScene.dispose?.();
-  scene.environment = env;
-  scene.environmentIntensity = 0.45;
-
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4146, 1.1));
-  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
-  sun.position.set(0.4, 1, 0.25);
-  scene.add(sun);
-
-  const raycastables = [];
-  const add = (geometry, material, { hit = true, name } = {}) => {
-    if (!geometry) return null;
-    const mesh = new THREE.Mesh(geometry, material);
-    if (name) mesh.name = name;
-    scene.add(mesh);
-    if (hit) raycastables.push(mesh);
-    return mesh;
-  };
-
+function drawPlan(model, add) {
   // Floor and ceiling.
   let ceiling = null;
   if (model.floor?.length >= 3) {
@@ -208,6 +189,88 @@ export function createScene(model, renderer) {
     );
   }
 
+  return { ceiling, heads };
+}
+
+/** Parts of a generated level the overhead view hides, so you can look down into the rooms. */
+export const ABOVE = ['ceilings', 'roof', 'beams'];
+/** Parts of a generated level the measure tool passes through. */
+const NOT_MEASURED = ['zones', 'signs'];
+
+/**
+ * A generated level (the GLB's scene, K-01) placed in the scene, its parts
+ * made measurable. Returns as `ceiling` a handle whose `visible` shows or
+ * hides every part above head height at once, for the overhead view. The
+ * parts stay where they are, so the level can be placed again after a
+ * remount.
+ */
+function addLevel(scene, level, raycastables) {
+  scene.add(level);
+  for (const part of level.children) {
+    if (NOT_MEASURED.includes(part.name)) continue;
+    part.traverse((o) => {
+      if (o.isMesh) raycastables.push(o);
+    });
+  }
+  const above = ABOVE.map((name) => level.getObjectByName(name)).filter(Boolean);
+  const ceiling = {
+    set visible(on) {
+      for (const part of above) part.visible = on;
+    },
+  };
+  return { ceiling, heads: null };
+}
+
+/**
+ * Builds the scene. Returns what the viewer needs: the scene, the meshes the
+ * measure tool can hit, the ceiling (hidden from overhead), the player
+ * marker, measure markers, and `dispose` for every GPU resource. `level` is
+ * the generated level's scene when it was loaded (loadLevel in level.js);
+ * without it the level is drawn from `model`. `machines` (machines.js:
+ * placements and the models loaded for them) puts each machine's approved
+ * model in place of the level's block for it (J-06); the returned
+ * `machines` layer then wants the camera's position each frame (K-03).
+ */
+export function createScene(model, renderer, { level = null, machines = null } = {}) {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(level ? COLOURS.sky : COLOURS.background);
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envScene = new RoomEnvironment();
+  const env = pmrem.fromScene(envScene, 0.04).texture;
+  envScene.dispose?.();
+  scene.environment = env;
+  scene.environmentIntensity = 0.45;
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4146, 1.1));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(0.4, 1, 0.25);
+  scene.add(sun);
+
+  const raycastables = [];
+  const add = (geometry, material, { hit = true, name } = {}) => {
+    if (!geometry) return null;
+    const mesh = new THREE.Mesh(geometry, material);
+    if (name) mesh.name = name;
+    scene.add(mesh);
+    if (hit) raycastables.push(mesh);
+    return mesh;
+  };
+
+  // The level: the generated model when there is one (K-01), else drawn from the plan.
+  const { ceiling, heads } = level ? addLevel(scene, level, raycastables) : drawPlan(model, add);
+
+  // Machines with an approved model (J-06): the models in place of the level's blocks, boxes for the
+  // rest. Measured against as a group (machineLayer.group), since nearer levels of detail arrive later.
+  let machineLayer = null;
+  if (level && machines?.loaded?.size) {
+    const material = hideLevelMachines(level);
+    const hidden = new Set();
+    level.getObjectByName('machines')?.traverse((o) => hidden.add(o));
+    for (let i = raycastables.length - 1; i >= 0; i--) if (hidden.has(raycastables[i])) raycastables.splice(i, 1);
+    machineLayer = placeMachines(scene, machines.placements, machines.loaded, { material, ceiling: model.ceiling });
+  }
+
   // Where you are, seen from overhead.
   const marker = new THREE.Group();
   const disc = new THREE.Mesh(
@@ -267,5 +330,5 @@ export function createScene(model, renderer) {
     pmrem.dispose();
   }
 
-  return { scene, raycastables, ceiling, heads, marker, ends, setMeasure, dispose };
+  return { scene, raycastables, machines: machineLayer, ceiling, heads, marker, ends, setMeasure, dispose };
 }

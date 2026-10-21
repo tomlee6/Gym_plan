@@ -31,6 +31,8 @@ export interface AppSecrets {
   storageSigningSecret: secretsmanager.ISecret;
   hubClientSecret: secretsmanager.ISecret;
   hubEventsSecret: secretsmanager.ISecret;
+  /** The private key that signs model URLs (M-07); only with a models distribution. */
+  modelsSigningKey?: secretsmanager.ISecret;
 }
 
 /** MySQL database name the backend uses (DB_NAME). */
@@ -214,9 +216,10 @@ export class DataStack extends Stack {
       deadLetterQueue: { queue: this.jobsDeadLetterQueue, maxReceiveCount: 5 },
     });
 
-    // gpu-jobs: the 3D reconstruction worker (owned by the 3D team). Its
-    // visibility timeout is a starting point; the 3D team sets the real value
-    // once job durations on g6e.xlarge are known.
+    // gpu-jobs (owned by the 3D team): the outcomes of the GPU jobs that make
+    // machine models. The jobs themselves run on AWS Batch, which scales the
+    // GPU hosts to zero when idle; Batch's job state changes arrive here
+    // through EventBridge for the backend's worker (gpu-stack.ts, L-10).
     this.gpuJobsDeadLetterQueue = new sqs.Queue(this, 'GpuJobsDlq', {
       queueName: `${prefix}-gpu-jobs-dlq`,
       encryption: sqs.QueueEncryption.KMS,
@@ -272,9 +275,17 @@ export class DataStack extends Stack {
         publicKeyPem: config.modelsSigningPublicKeyPem,
         allowedOrigin: `https://${config.webDomain}`,
       });
+      // The private half, which the backend signs model URLs with
+      // (backend/src/generator/links.js). Like the Hub secrets it starts as a
+      // random placeholder and is set by hand: docs/runbooks/models-signing-key.md.
+      this.secrets.modelsSigningKey = generated(
+        'MODELS_SIGNING_PRIVATE_KEY',
+        'Private key (PEM) that signs model URLs for the models CloudFront distribution. Placeholder: set it by hand to the private half of the key pair whose public half is modelsSigningPublicKeyPem.',
+      );
     }
-    // TODO(3D team, M-07): custom domain (needs a us-east-1 cert in
-    // EdgeCertStack) and the backend side that signs model URLs.
+    // Optional (3D team): a custom domain for the models distribution, which
+    // needs a us-east-1 certificate in EdgeCertStack. Signed URLs work on the
+    // distribution's own cloudfront.net name without one.
 
     new CfnOutput(this, 'DatabaseEndpoint', { value: this.database.dbInstanceEndpointAddress });
     new CfnOutput(this, 'CapturesBucketName', { value: this.capturesBucket.bucketName });
