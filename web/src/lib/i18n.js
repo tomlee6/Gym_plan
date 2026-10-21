@@ -26,20 +26,20 @@ const en = {
   },
   auth: {
     title: 'Sign in',
-    lead: 'Gym owners, surveyors, reviewers and Flex staff all sign in with their GoalCert account.',
-    button: 'Sign in with GoalCert',
-    redirecting: 'Taking you to GoalCert…',
+    lead: 'Gym owners, surveyors, reviewers and Flex staff all sign in with their Flex Gym Scan email and password.',
+    button: 'Sign in',
+    redirecting: 'Taking you to sign-in…',
     finishing: 'Finishing signing in…',
     retry: 'Sign in again',
     failedTitle: 'You are not signed in',
     errors: {
-      hub_rejected: 'GoalCert could not confirm this sign-in. It may have taken too long. Please sign in again.',
+      hub_rejected: 'We could not confirm this sign-in. It may have taken too long. Please sign in again.',
       no_access:
-        'You signed in to GoalCert, but your account has no access to Flex Gym Scan yet. Ask your gym’s owner or Flex to invite the email address you used.',
+        'You signed in, but your account has no access to Flex Gym Scan yet. Ask your gym’s owner or Flex to invite the email address you used.',
       state_mismatch:
         'This sign-in was started in a different tab or has expired. Start again from this tab.',
       cancelled: 'Sign-in was cancelled.',
-      hub_error: 'GoalCert could not sign you in: {detail}',
+      hub_error: 'We could not sign you in: {detail}',
       config: 'Sign-in is not available right now: {detail}',
       unknown: 'Something went wrong while signing in: {detail}',
     },

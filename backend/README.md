@@ -23,7 +23,10 @@ npm run dev          # the API, http://localhost:8080
 npm run dev:worker   # background jobs: plan reading, 3D generation, removal, retention
 ```
 
-Sign-in goes through the GoalCert Hub; there are no passwords here. Locally
+Sign-in goes through Amazon Cognito in Sydney (`HUB_DRIVER=cognito`): its
+managed sign-in page holds passwords, "forgot password" and MFA, and an
+admin's invite creates the person there. Everything else about a person
+(name, accounts, roles, invites, sessions) stays in this database. Locally
 `HUB_DRIVER=dev` serves a stand-in Hub at `/dev-hub`, so the web app and the
 phone run the real flow, and its page lists the seeded people:
 
@@ -226,9 +229,6 @@ credentials.
 
 ## Not built yet
 
-- **GoalCert sign-in.** Sign-in uses this service's own accounts. Swap the
-  password check in `modules/auth.js` for the GoalCert exchange; tokens and
-  everything after stay the same.
 - **Automatic reading of uploaded drawings (RDR-05) and DWG layers
   (RDR-04).** Drawings are traced by the reviewer over the uploaded image. A
   DWG cannot be previewed in the browser, so it is drawn in metres from the

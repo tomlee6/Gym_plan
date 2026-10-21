@@ -94,8 +94,9 @@ npx cdk deploy "FlexGym-Dev/*" -c deployWebAssets=true --profile flexgym-dev
    times out after about 72 hours if nobody adds it.
 5. **Web DNS**: the `Web` stack's `GoalCertDnsRecord` output is the CNAME
    GoalCert adds for the web app (`gym.goalcert.example CNAME dxxxx.cloudfront.net`).
-6. **Hub secrets**: set `HUB_CLIENT_SECRET` and `HUB_EVENTS_SECRET` (see
-   `secret-rotation.md`), then force a new deployment of both services.
+6. **Sign-in**: nothing to set by hand; the `Auth` stack creates the Cognito
+   user pool and its client secret. Cognito sends invitations through SES, so
+   SES must be out of the sandbox (step 7) before inviting real people.
 7. **SES**: request production access (`service-quotas.md`).
 8. **Alerts**: confirm the SNS email subscription if `alarmEmail` is set;
    authorise the Slack workspace in the AWS Chatbot console before setting

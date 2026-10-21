@@ -120,13 +120,13 @@ afterEach(() => {
 
 /** Clicks the sign-in button and returns the Hub URL the page went to. */
 async function startSignIn() {
-  fireEvent.click(await screen.findByRole('button', { name: 'Sign in with GoalCert' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }));
   await waitFor(() => expect(assign).toHaveBeenCalled());
   return new URL(assign.mock.calls.at(-1)[0]);
 }
 
 describe('signing in through the Hub', () => {
-  it('has no password field: only a GoalCert button', async () => {
+  it('has no password field: only a sign-in button', async () => {
     vi.stubGlobal('fetch', fakeBackend());
     renderAt('/login');
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
@@ -233,7 +233,7 @@ describe('signing in through the Hub', () => {
     const url = await startSignIn();
     cleanup();
     renderAt(`/auth/callback?code=c&state=${url.searchParams.get('state')}`);
-    expect(await screen.findByRole('alert')).toHaveTextContent(/GoalCert could not confirm this sign-in/);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/We could not confirm this sign-in/);
   });
 
   it('says so when the person cancels at the Hub', async () => {

@@ -59,7 +59,6 @@ Decision owner: product owner with the 3D team (open item 3).
 
 | Service | Where | Customer data? | Owner |
 |---------|-------|----------------|-------|
-| GoalCert Hub (OIDC sign-in, events) | GoalCert's hosting | User identity | GoalCert team |
 | GoalCert DNS (web subdomain, NS delegation) | GoalCert's DNS provider | No | GoalCert team |
 | Apple TestFlight / App Store | Apple | App binary only | Mobile team |
 | fastlane match signing repo | Private git host | No (signing material) | Mobile team |
@@ -78,8 +77,8 @@ Decision owner: product owner with the 3D team (open item 3).
    Owner: 3D team.
 3. **Models distribution caching** (see above). Owner: product owner and 3D
    team.
-4. **GoalCert Hub location.** Confirm with GoalCert where Hub stores the user
-   identities it shares with us. Owner: GoalCert team.
+4. **Sign-in.** Done: Amazon Cognito in ap-southeast-2 (`Auth` stack) holds
+   only email, password and MFA; every other user record is in RDS.
 5. **Backups.** No cross-region backup copy is configured, on purpose. If a
    disaster-recovery copy is wanted later, it must go to another Australian
    region (ap-southeast-4, Melbourne), and this page and the test must be

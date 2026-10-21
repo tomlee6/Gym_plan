@@ -247,7 +247,7 @@ class _NoAccessScreenState extends State<NoAccessScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                '${user == null ? 'Your GoalCert account' : user.email} is '
+                '${user == null ? 'Your account' : user.email} is '
                 'not a member of any gym account, so there is nothing to scan '
                 'for. Ask your gym\'s account owner to invite you, then check '
                 'again.',

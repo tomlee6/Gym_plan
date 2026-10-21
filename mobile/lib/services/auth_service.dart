@@ -60,15 +60,15 @@ class AuthService {
       if (query['error'] != null) {
         return AuthResult.failure(
           query['error'] == 'access_denied'
-              ? 'Sign-in was cancelled at GoalCert.'
+              ? 'Sign-in was cancelled.'
               : query['error_description'] ??
-                    'GoalCert could not sign you in. Try again.',
+                    'We could not sign you in. Try again.',
         );
       }
       final String? code = query['code'];
       if (code == null || code.isEmpty) {
         return const AuthResult.failure(
-          'GoalCert did not return a sign-in code. Try again.',
+          'The sign-in page did not return a sign-in code. Try again.',
         );
       }
 
@@ -88,14 +88,14 @@ class AuthService {
     } on ApiException catch (e) {
       return AuthResult.failure(switch (e.code) {
         'no_access' =>
-          'You are signed in to GoalCert, but your account has no access to '
+          'You are signed in, but your account has no access to '
               'Flex Gym Scan. Ask your gym\'s account owner to invite you.',
-        'hub_rejected' => 'GoalCert did not accept the sign-in. Try again.',
+        'hub_rejected' => 'The sign-in was not accepted. Try again.',
         _ => e.message,
       }, noAccess: e.code == 'no_access');
     } on PlatformException catch (e) {
       return AuthResult.failure(
-        e.message ?? 'The GoalCert sign-in could not be opened.',
+        e.message ?? 'The sign-in page could not be opened.',
       );
     } on FormatException {
       return const AuthResult.failure(

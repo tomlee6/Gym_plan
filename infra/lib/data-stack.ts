@@ -29,8 +29,6 @@ export interface DataStackProps extends StackProps {
 export interface AppSecrets {
   jwtSecret: secretsmanager.ISecret;
   storageSigningSecret: secretsmanager.ISecret;
-  hubClientSecret: secretsmanager.ISecret;
-  hubEventsSecret: secretsmanager.ISecret;
 }
 
 /** MySQL database name the backend uses (DB_NAME). */
@@ -240,8 +238,7 @@ export class DataStack extends Stack {
     // data key, ECS's grant to read them would put the API stack's execution
     // role into this stack's key policy, a circular cross-stack reference.
     // Generated secrets get a random value on first deploy and keep it on later
-    // deploys. The Hub secrets are issued by GoalCert: they start as a random
-    // placeholder and are set by hand (docs/runbooks/secret-rotation.md).
+    // deploys. The sign-in client secret is Cognito's, kept in the Auth stack.
     const generated = (name: string, description: string) =>
       new secretsmanager.Secret(this, name, {
         secretName: `${prefix}/${name}`,
@@ -252,14 +249,6 @@ export class DataStack extends Stack {
     this.secrets = {
       jwtSecret: generated('JWT_SECRET', 'Signs API access tokens. Rotating it signs everyone out of access tokens.'),
       storageSigningSecret: generated('STORAGE_SIGNING_SECRET', 'Signs storage URLs issued by the API.'),
-      hubClientSecret: generated(
-        'HUB_CLIENT_SECRET',
-        'GoalCert Hub OIDC client secret. Placeholder: set it by hand to the value GoalCert issues.',
-      ),
-      hubEventsSecret: generated(
-        'HUB_EVENTS_SECRET',
-        'Verifies GoalCert Hub event webhooks. Placeholder: set it by hand to the value GoalCert issues.',
-      ),
     };
 
     // ---- Models distribution (M-07, owned by the 3D team) -------------------

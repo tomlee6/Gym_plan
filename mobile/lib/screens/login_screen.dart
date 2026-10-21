@@ -95,8 +95,8 @@ class _LoginScreenState extends State<LoginScreen> {
         const Text('Sign in', style: AppTheme.title),
         const SizedBox(height: 10),
         const Text(
-          'Use your GoalCert account, the same one you use for Flex on the '
-          'web. You will only see the gyms your account belongs to.',
+          'Use the email and password you use for Flex Gym Scan on the web. '
+          'You will only see the gyms your account belongs to.',
           style: AppTheme.body,
         ),
 
@@ -126,7 +126,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
         const SizedBox(height: 30),
         PrimaryButton(
-          label: 'Sign in with GoalCert',
+          label: 'Sign in',
           icon: Icons.verified_user_outlined,
           busy: _busy,
           onPressed: _signIn,
@@ -136,7 +136,7 @@ class _LoginScreenState extends State<LoginScreen> {
         const InfoCard(
           icon: Icons.info_outline,
           message:
-              'Forgotten your password? Reset it on the GoalCert sign-in page. '
+              'Forgotten your password? Choose "Forgot your password?" on the sign-in page. '
               'Scanning needs an iPhone with a LiDAR sensor (12 Pro or later '
               'Pro models) on iOS 17.',
         ),

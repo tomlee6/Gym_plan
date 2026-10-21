@@ -18,6 +18,7 @@
     "dev:worker": "node --watch --env-file-if-exists=.env src/worker.js"
   },
   "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.1154.0",
     "@aws-sdk/client-s3": "^3.1139.0",
     "@aws-sdk/client-sesv2": "^3.1148.0",
     "@aws-sdk/client-sqs": "^3.1148.0",
