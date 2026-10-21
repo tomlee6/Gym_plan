@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1215" viewBox="0 0 1600 1215" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1235" viewBox="0 0 1600 1235" font-family="Segoe UI, Helvetica, Arial, sans-serif">
   <title>Flex Gym Scan on AWS: Flex's AWS organization and GoalCert's</title>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -17,7 +17,7 @@
     </style>
   </defs>
 
-  <rect x="0" y="0" width="1600" height="1215" fill="#ffffff"/>
+  <rect x="0" y="0" width="1600" height="1235" fill="#ffffff"/>
 
   <!-- Title -->
   <text x="20" y="34" font-size="20" font-weight="700" fill="#1f1f1f">Flex Gym Scan on AWS</text>
@@ -39,7 +39,7 @@
   <text x="47" y="386" class="text">installs the app (Apple)</text>
 
   <!-- GoalCert's AWS organization -->
-  <rect x="250" y="80" width="570" height="270" rx="10" fill="#f6f1fb" stroke="#7b4bb7" stroke-width="1.5" stroke-dasharray="8 5"/>
+  <rect x="250" y="80" width="570" height="145" rx="10" fill="#f6f1fb" stroke="#7b4bb7" stroke-width="1.5" stroke-dasharray="8 5"/>
   <text x="264" y="101" class="org" fill="#5e2f9c">GoalCert AWS organization · separate · hosts the web app only</text>
   <rect x="265" y="125" width="255" height="85" rx="6" class="box"/>
   <text x="277" y="147" class="title">CloudFront: web app</text>
@@ -50,15 +50,18 @@
   <text x="562" y="147" class="title">S3: site files</text>
   <text x="562" y="165" class="text">private · CloudFront access only (OAC)</text>
   <text x="562" y="182" class="text">the web build only; no customer data</text>
-  <rect x="265" y="245" width="255" height="85" rx="6" class="box"/>
-  <text x="277" y="267" class="title">GoalCert Hub: sign-in</text>
-  <text x="277" y="285" class="text">OpenID Connect, for both apps</text>
-  <text x="277" y="302" class="text">no passwords in Flex Gym Scan</text>
-  <rect x="550" y="245" width="255" height="85" rx="6" class="box"/>
-  <text x="562" y="267" class="title">GoalCert DNS</text>
-  <text x="562" y="285" class="text">web hostname → CloudFront above</text>
-  <text x="562" y="302" class="text">api.&lt;domain&gt; delegated (NS) to</text>
-  <text x="562" y="319" class="text">Route 53 in Flex's account</text>
+  <rect x="250" y="237" width="570" height="113" rx="10" fill="#f3f3f3" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="4 4"/>
+  <text x="264" y="255" font-size="12" font-weight="700" fill="#555555">GoalCert's existing services · not deployed by this project</text>
+  <rect x="265" y="263" width="255" height="80" rx="6" class="box"/>
+  <text x="277" y="284" class="title">GoalCert Hub: one sign-in for both</text>
+  <text x="277" y="302" class="text">same GoalCert account and password</text>
+  <text x="277" y="319" class="text">OIDC + PKCE · org claim: Flex Gym</text>
+  <text x="277" y="336" class="text">passwords stay here, nowhere else</text>
+  <rect x="550" y="263" width="255" height="80" rx="6" class="box"/>
+  <text x="562" y="284" class="title">GoalCert DNS</text>
+  <text x="562" y="302" class="text">web hostname → CloudFront above</text>
+  <text x="562" y="319" class="text">api.&lt;domain&gt; delegated (NS) to</text>
+  <text x="562" y="336" class="text">Route 53 in Flex's account</text>
   <path class="flow" d="M520,167 L550,167"/>
 
   <!-- Flex's AWS organization: tooling account -->
@@ -89,7 +92,7 @@
 
   <!-- Flex's AWS organization: an environment account -->
   <rect x="250" y="380" width="1330" height="680" rx="10" fill="#fffaf3" stroke="#e07b00" stroke-width="1.5" stroke-dasharray="8 5"/>
-  <text x="264" y="401" class="org" fill="#b35f00">Flex AWS organization · prod account (dev and staging: one account each, same components) · ap-southeast-2</text>
+  <text x="625" y="401" class="org" fill="#b35f00">Flex AWS organization · prod account · ap-southeast-2 (dev and staging: the same, one account each)</text>
 
   <rect x="265" y="415" width="205" height="62" rx="6" class="box"/>
   <text x="277" y="437" class="title">Route 53</text>
@@ -130,10 +133,10 @@
 
   <rect x="860" y="560" width="215" height="110" rx="6" class="box"/>
   <text x="872" y="582" class="title">RDS MySQL 8.4</text>
-  <text x="872" y="600" class="text">db.m7g.large</text>
-  <text x="872" y="617" class="text">Multi-AZ</text>
-  <text x="872" y="634" class="text">100 GB gp3</text>
-  <text x="872" y="651" class="text">30-day backups</text>
+  <text x="872" y="600" class="text">db.m7g.large · Multi-AZ</text>
+  <text x="872" y="617" class="text">100 GB gp3 · 30-day backups</text>
+  <text x="872" y="634" class="text" font-weight="700">users (no passwords), roles,</text>
+  <text x="872" y="651" class="text" font-weight="700">gyms, plans, captures, models</text>
 
   <text x="279" y="937" class="text">VPC endpoints: S3 · SQS · Secrets Manager · ECR · CloudWatch · KMS</text>
 
@@ -189,7 +192,8 @@
   <path class="flow" d="M140,425 L140,446 L265,446"/>
   <path class="flow dashed" d="M70,425 L70,1082 L1460,1082 L1460,825"/>
   <path class="flow dashed" d="M1230,1082 L1230,825"/>
-  <path class="flow dashed" d="M600,560 L600,364 L392,364 L392,330"/>
+  <path class="flow dashed" d="M600,560 L600,365 L392,365 L392,343"/>
+  <path class="flow dashed" d="M330,343 L330,415"/>
   <path class="flow" d="M1180,335 L1180,380"/>
   <path class="flow" d="M1540,230 L1540,380"/>
   <path class="flow dashed" d="M1085,315 L828,315 L828,180 L805,180"/>
@@ -202,23 +206,25 @@
     <circle cx="990" cy="690" r="9" class="badge"/><text x="990" y="694" class="badge-text">4</text>
     <circle cx="990" cy="790" r="9" class="badge"/><text x="990" y="794" class="badge-text">5</text>
     <circle cx="700" cy="1082" r="9" class="badge"/><text x="700" y="1086" class="badge-text">6</text>
-    <circle cx="500" cy="364" r="9" class="badge"/><text x="500" y="368" class="badge-text">7</text>
+    <circle cx="500" cy="365" r="9" class="badge"/><text x="500" y="369" class="badge-text">7</text>
     <circle cx="1440" cy="565" r="9" class="badge"/><text x="1440" y="569" class="badge-text">8</text>
     <circle cx="1180" cy="357" r="9" class="badge"/><text x="1180" y="361" class="badge-text">9</text>
     <circle cx="1540" cy="357" r="9" class="badge"/><text x="1540" y="361" class="badge-text">10</text>
     <circle cx="960" cy="315" r="9" class="badge"/><text x="960" y="319" class="badge-text">11</text>
+    <circle cx="348" cy="362" r="9" class="badge"/><text x="348" y="366" class="badge-text">12</text>
   </g>
 
   <!-- Legend -->
-  <rect x="20" y="1100" width="1560" height="105" rx="8" fill="#f7f7f7" stroke="#cccccc"/>
+  <rect x="20" y="1100" width="1560" height="123" rx="8" fill="#f7f7f7" stroke="#cccccc"/>
   <text x="36" y="1122" class="legend"><tspan font-weight="700">1</tspan>  The browser loads the web app from GoalCert's CloudFront (files from its private S3 bucket).</text>
-  <text x="36" y="1140" class="legend"><tspan font-weight="700">2</tspan>  Both apps sign in with GoalCert Hub.</text>
+  <text x="36" y="1140" class="legend"><tspan font-weight="700">2</tspan>  Sign-in redirects to GoalCert Hub: one GoalCert sign-in for both apps; someone already signed in is not asked again.</text>
   <text x="36" y="1158" class="legend"><tspan font-weight="700">3</tspan>  Both apps call the API at api.&lt;domain&gt;: Route 53 → WAF → load balancer → API tasks.</text>
   <text x="36" y="1176" class="legend"><tspan font-weight="700">4</tspan>  The API and worker queue work on SQS; the worker runs it, and submits GPU jobs to AWS Batch.</text>
   <text x="36" y="1194" class="legend"><tspan font-weight="700">5</tspan>  A GPU job reads the 360 video and the model weights from S3, and writes the machine model back.</text>
   <text x="820" y="1122" class="legend"><tspan font-weight="700">6</tspan>  Both apps download and upload files directly, with signed links: S3 captures, and 3D models through CloudFront.</text>
-  <text x="820" y="1140" class="legend"><tspan font-weight="700">7</tspan>  The API checks each sign-in with GoalCert Hub (code exchange, signing keys).</text>
+  <text x="820" y="1140" class="legend"><tspan font-weight="700">7</tspan>  The API checks the sign-in with Hub (org: Flex Gym), finds or makes the user in RDS; the app opens their role's screens.</text>
   <text x="820" y="1158" class="legend"><tspan font-weight="700">8</tspan>  Batch reports each finished job to EventBridge, which queues it on gpu-jobs for the worker.</text>
   <text x="820" y="1176" class="legend"><tspan font-weight="700">9</tspan>  The release pipeline deploys each environment. <tspan font-weight="700">10</tspan>  GPU jobs pull the TRELLIS.2 image from ECR.</text>
   <text x="820" y="1194" class="legend"><tspan font-weight="700">11</tspan>  Each environment's web build goes to GoalCert's S3 bucket (handed over, or through a deploy role).</text>
+  <text x="36" y="1212" class="legend"><tspan font-weight="700">12</tspan>  GoalCert Hub sends account events to the API (/v1/hub/events, signed): a person updated, disabled, deleted or signed out at GoalCert is the same in Flex Gym Scan.</text>
 </svg>

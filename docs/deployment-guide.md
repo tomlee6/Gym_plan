@@ -19,7 +19,7 @@ The detailed how-to for single steps lives in the runbooks (`docs/runbooks/`); t
 
 ## Part 1. Where everything runs
 
-![Flex Gym Scan on AWS: GoalCert's organization hosts the web app; Flex's tooling account builds and releases; each Flex environment account runs the backend, data and GPU jobs](architecture.svg)
+![Flex Gym Scan on AWS: GoalCert's organization hosts only the web app's files; GoalCert's existing Hub gives one sign-in for both apps; Flex's tooling account builds and releases; each Flex environment account runs the backend and holds every user and their data](architecture.svg)
 
 The diagram shows prod. Dev and staging are the same components, each in its own account, at these sizes (from `infra/cdk.json`):
 
@@ -41,7 +41,7 @@ A GPU instance is a `g6e.xlarge`: 4 vCPUs, 32 GiB, one NVIDIA L40S (48 GB), and 
 | Pipelines (release, TRELLIS.2 image), image repository (ECR), the code (CodeCommit `gym_floor_plan`) | Flex's AWS, the tooling account | No |
 | Mail (SES), alarms, dashboards | Flex's AWS, environment accounts | Mail only |
 | **Web app** (static files: S3 and CloudFront) | **GoalCert's AWS organization**, one site per environment | No: only the app's own code |
-| Sign-in (GoalCert Hub), DNS for the GoalCert domains | GoalCert | GoalCert's own |
+| Sign-in (GoalCert Hub: each person's GoalCert account and password), DNS for the GoalCert domains | GoalCert's existing services; this project deploys nothing for them | Only the GoalCert account itself |
 | iPhone app | Apple: TestFlight, then the App Store. It talks only to the API. | On the phone, until uploaded |
 
 **How the pieces talk:**
@@ -50,6 +50,55 @@ A GPU instance is a `g6e.xlarge`: 4 vCPUs, 32 GiB, one NVIDIA L40S (48 GB), and 
 - **The iPhone app** calls the same API, and uploads straight to S3 through signed links.
 - **Sign-in** is GoalCert Hub (OpenID Connect) for both the web app and the iPhone app.
 - **The GPU work** is started by the backend, inside Flex's AWS. It has no endpoint and no key; AWS IAM roles give each part only what it needs.
+
+### Users, sign-in and passwords
+
+| What | Where it lives |
+|---|---|
+| A person's sign-in: their GoalCert account and password | GoalCert Hub only. People type their password on GoalCert's own page. Flex Gym Scan never receives it, and nothing copies it to Flex. |
+| The person in Flex Gym Scan: their GoalCert ID, email and name; the gyms they belong to; Flex staff roles (reviewer, admin); their sessions | Flex's database, in Flex's AWS (Sydney). It is made at their first sign-in, and kept current by GoalCert's account events (updated, disabled, deleted, signed out). |
+| Everything they make: plans, scans, photos, videos, 3D models, approvals, the audit log | Flex's AWS only (Sydney). |
+| GoalCert's web hosting | No users, no passwords, no customer data: only the app's code. The browser downloads it, then talks to Flex's API directly. |
+
+**How signing in works.** It is a redirect:
+1. The app sends the browser, or the iPhone's sign-in sheet, to GoalCert Hub.
+2. The person signs in there with their GoalCert account. Someone already signed in to GoalCert (in the browser, or in Safari on the iPhone) is not asked again.
+3. Hub sends them back to the app with a one-time code.
+4. The app gives the code to Flex's API, which checks it with Hub, finds or makes the person's record in Flex's database, and starts their session.
+5. The app opens the screens for their role: gym owners and their staff see their plans, Flex reviewers the review queue, admins the admin pages.
+
+**If GoalCert must hold nothing about these people,** not even their sign-in, the sign-in itself would have to move to Flex: a user store of its own in Flex's account, such as Amazon Cognito. That is a change to sign-in in the backend, the web app and the iPhone app, not a deployment setting. People would then have a separate password for Flex Gym Scan.
+
+### One sign-in for both apps: what GoalCert Hub must provide
+
+People use their one GoalCert sign-in for GoalCert and for Flex Gym Scan, on the web and on the iPhone. The code is built for this. It has only run against a stand-in Hub so far, so GoalCert's real Hub must provide exactly what the backend checks (`backend/src/hub/`, `backend/docs/api-contract-v2.md`):
+
+1. **The sign-in flow:** OpenID Connect authorization code with PKCE (`S256`), scope `openid profile email`.
+2. **The Flex Gym Scan client:** its client id and secret, and exactly two redirect URIs, matching `hub.webRedirectUri` and `hub.iosRedirectUri` in `cdk.json`:
+   - `https://<web hostname>/auth/callback`;
+   - the iPhone app's.
+3. **The ID token**, signed RS256 or ES256, with its keys published at a JWKS URL, carrying:
+   - `iss` (the issuer), `aud` (the client id), `exp`, and the `nonce` the app sent;
+   - `sub` (the person's GoalCert id, at most 64 characters), `email`, `email_verified`, `name`, and optionally `sid` (their GoalCert session);
+   - an `org` claim (a string or a list) containing the Flex Gym organization id. Without it, every person is refused with "not part of Flex Gym".
+4. **Account events**, sent to `https://api.<domain>/v1/hub/events`:
+   - the events: `user.updated`, `user.disabled`, `user.deleted`, `user.enabled` and `session.ended`;
+   - each one signed: `X-Hub-Timestamp`, and `X-Hub-Signature: sha256=<HMAC-SHA256 of "<timestamp>.<body>">`, using a shared events secret.
+5. **The values Flex needs:**
+   - for `cdk.json`: the issuer, the authorize, token and JWKS URLs, the client id and the organization id;
+   - for Secrets Manager: the client secret and the events secret, sent through a password manager.
+
+**Confirm early with GoalCert:**
+- **That their Hub can put the `org` claim in the ID token.** If not, the backend's check has to change.
+- **That it can send the account events.** If not, someone disabled at GoalCert keeps the iPhone app until its session runs out (up to 60 days unused, 180 days at most). Web sessions end within 12 hours anyway.
+
+**What people see:**
+- **Already signed in to GoalCert:** they are not asked again, and come straight back signed in.
+- **Signed in at GoalCert, but with no Flex Gym Scan invite, membership or staff role:** "No gym access yet".
+- **Signing out of GoalCert** ends their Flex Gym Scan web sessions. The iPhone stays signed in (open point O-03).
+- **Signing out of Flex Gym Scan** does not sign them out of GoalCert.
+
+**Done when** one GoalCert account signs in to both the web app and the iPhone app on staging, and disabling it at GoalCert signs it out of Flex Gym Scan.
 
 ---
 
@@ -611,16 +660,21 @@ Each list is in order. A step in brackets is another team's, and has to happen f
 ### GoalCert's AWS team (GoalCert's AWS organization)
 
 1. Confirm the domains for each environment: the web hostname, and the API's hostname. (2.1)
-2. Register the Flex Gym Scan client at GoalCert Hub with exactly the two redirect URIs in `cdk.json`: the web app's `https://<web hostname>/auth/callback`, and the iPhone app's. Send the issuer and endpoint URLs, the client id, the organization id, the client secret and the events secret. Send the secrets through a password manager, never by email or chat. (2.1)
-3. Add the `NS` record delegating each API zone to the name servers Flex's `Dns` stack prints. (2.4)
-4. For each environment, set up the web hosting (4.2):
+2. Set up one sign-in for both apps at GoalCert Hub: everything in "One sign-in for both apps" (Part 1).
+   - Register the Flex Gym Scan client, with exactly the two redirect URIs in `cdk.json`.
+   - Put the `org` claim in the ID token.
+   - Send the account events to the API.
+   - Send the issuer and endpoint URLs, the client id and the organization id. Send the client secret and the events secret through a password manager, never by email or chat. (2.1)
+3. Confirm early whether the Hub can add the `org` claim and send the account events, so that any change on Flex's side can be made in time. (Part 1)
+4. Add the `NS` record delegating each API zone to the name servers Flex's `Dns` stack prints. (2.4)
+5. For each environment, set up the web hosting (4.2):
    - a private S3 bucket;
    - CloudFront with OAC and the SPA error rules;
    - an ACM certificate in `us-east-1`;
    - the response headers policy, with the CSP line Flex sends;
    - the DNS record for the web hostname.
-5. Publish each web build Flex sends (4.4, way 1), or create a deploy role Flex's pipeline can assume, limited to that bucket and distribution (4.4, way 2).
-6. After each publish, check the site loads and signs in (4.5).
+6. Publish each web build Flex sends (4.4, way 1), or create a deploy role Flex's pipeline can assume, limited to that bucket and distribution (4.4, way 2).
+7. After each publish, check the site loads and signs in (4.5). On staging, check that one GoalCert account signs in to both the web app and the iPhone app.
 
 ### Tejesh
 
