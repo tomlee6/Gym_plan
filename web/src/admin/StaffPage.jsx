@@ -143,7 +143,7 @@ function StaffTable({ staff, me, busy, onRole }) {
                     </select>
                   )}
                 </td>
-                <td data-label="Status">{s.status === 'disabled' ? 'Disabled at GoalCert' : 'Active'}</td>
+                <td data-label="Status">{s.status === 'disabled' ? 'Disabled' : 'Active'}</td>
                 <td className="rv-action">
                   {!self && (
                     <button
@@ -180,7 +180,7 @@ function AddStaff({ staff, users, busy, onAdd }) {
         ADD STAFF
       </h2>
       {candidates.length === 0 ? (
-        <p className="muted small">Everyone who has signed in is already staff. A person must sign in with GoalCert once before they can be made staff.</p>
+        <p className="muted small">Everyone who has signed in is already staff. A person must sign in once before they can be made staff.</p>
       ) : (
         <form
           className="ad-inline-form"

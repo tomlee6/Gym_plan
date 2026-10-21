@@ -1,7 +1,8 @@
 /**
- * Auth service: sign-in through the GoalCert Hub, token refresh and
- * sign-out (B-01, B-06). There are no passwords here any more (B-03): the
- * Hub holds them.
+ * Auth service: sign-in through the provider (Amazon Cognito; see
+ * hub/index.js), token refresh and sign-out (B-01, B-06). There are no
+ * passwords here any more (B-03): the provider holds them. Users,
+ * memberships, invites and sessions all live in this service's database.
  *
  *   GET  /v1/auth/hub/config   where to send the user, for the web and the app
  *   POST /v1/auth/hub          swap the Hub's one-time code for Flex tokens
@@ -153,7 +154,7 @@ router.post('/hub', async (req, res) => {
   try {
     ({ idToken } = await hub().exchange(body));
   } catch {
-    throw hubRejected('Your GoalCert sign-in has expired or was already used. Sign in again.');
+    throw hubRejected('Your sign-in has expired or was already used. Sign in again.');
   }
   const identity = await verifyIdentity(idToken, { nonce: body.nonce });
 
@@ -184,7 +185,7 @@ router.post('/hub', async (req, res) => {
       // Rolls back the new user row too: nobody is created without access.
       throw new HttpError(
         403,
-        'Your GoalCert account has no access to Flex Gym Scan yet. Ask your account owner for an invite.',
+        'Your account has no access to Flex Gym Scan yet. Ask your account owner for an invite.',
         { code: 'no_access' },
       );
     }

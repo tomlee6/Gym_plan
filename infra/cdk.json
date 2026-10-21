@@ -12,7 +12,7 @@
     ]
   },
   "context": {
-    "//": "Every value below is a placeholder until the GoalCert team and the product owner confirm domains, accounts and Hub (OIDC) settings. Override per run with -c, e.g. -c deployWebAssets=true.",
+    "//": "Every value below is a placeholder until the product owner confirms domains, accounts and sign-in redirect addresses. Override per run with -c, e.g. -c deployWebAssets=true.",
     "deployWebAssets": false,
     "pipeline": {
       "account": "111111111111",
@@ -52,12 +52,6 @@
         "trellis2Image": "",
         "gpuMaxInstances": 1,
         "hub": {
-          "issuer": "https://hub.goalcert.example",
-          "authorizeUrl": "https://hub.goalcert.example/oauth2/authorize",
-          "tokenUrl": "https://hub.goalcert.example/oauth2/token",
-          "jwksUrl": "https://hub.goalcert.example/.well-known/jwks.json",
-          "clientId": "flex-gym-scan-dev",
-          "orgId": "placeholder-org-id",
           "webRedirectUri": "https://dev.gym.goalcert.example/auth/callback",
           "iosRedirectUri": "com.goalcert.flexgymscan.dev:/auth/callback"
         }
@@ -93,12 +87,6 @@
         "trellis2Image": "",
         "gpuMaxInstances": 1,
         "hub": {
-          "issuer": "https://hub.goalcert.example",
-          "authorizeUrl": "https://hub.goalcert.example/oauth2/authorize",
-          "tokenUrl": "https://hub.goalcert.example/oauth2/token",
-          "jwksUrl": "https://hub.goalcert.example/.well-known/jwks.json",
-          "clientId": "flex-gym-scan-staging",
-          "orgId": "placeholder-org-id",
           "webRedirectUri": "https://staging.gym.goalcert.example/auth/callback",
           "iosRedirectUri": "com.goalcert.flexgymscan.staging:/auth/callback"
         }
@@ -134,12 +122,6 @@
         "trellis2Image": "",
         "gpuMaxInstances": 2,
         "hub": {
-          "issuer": "https://hub.goalcert.example",
-          "authorizeUrl": "https://hub.goalcert.example/oauth2/authorize",
-          "tokenUrl": "https://hub.goalcert.example/oauth2/token",
-          "jwksUrl": "https://hub.goalcert.example/.well-known/jwks.json",
-          "clientId": "flex-gym-scan",
-          "orgId": "placeholder-org-id",
           "webRedirectUri": "https://gym.goalcert.example/auth/callback",
           "iosRedirectUri": "com.goalcert.flexgymscan:/auth/callback"
         }

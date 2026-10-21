@@ -329,7 +329,7 @@ function RemoveMemberDialog({ account: a, member, onCancel, onRemoved }) {
       }
     >
       <p className="small muted">
-        They lose access to {a.name}’s plans straight away. Their GoalCert account and any other gym accounts they
+        They lose access to {a.name}’s plans straight away. Their sign-in and any other gym accounts they
         belong to are not affected. What they captured stays attributed to them.
       </p>
       {error && (
@@ -438,7 +438,7 @@ function InvitesCard({ account: a, onChanged }) {
         </button>
       </form>
       <p className="small muted" style={{ marginTop: 8 }}>
-        They join by signing in with GoalCert using this email address.
+        They get an email with a temporary password and join by signing in with this email address.
       </p>
       {error && (
         <p className="rv-error" role="alert" style={{ marginTop: 10 }}>

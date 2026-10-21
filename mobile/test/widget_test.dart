@@ -11,6 +11,7 @@ import 'package:mobile/services/auth_session.dart';
 import 'package:mobile/services/capture_service.dart';
 import 'package:mobile/services/hub_auth.dart';
 import 'package:mobile/widgets/home_cards.dart';
+import 'package:mobile/widgets/primary_button.dart';
 
 import 'phone_size.dart';
 import 'support/fake_backend.dart';
@@ -29,7 +30,7 @@ Future<void> _openApp(WidgetTester tester, {DeviceCheck? deviceCheck}) async {
 }
 
 Future<void> _signIn(WidgetTester tester) async {
-  await tester.tap(find.text('Sign in with GoalCert'));
+  await tester.tap(find.widgetWithText(PrimaryButton, 'Sign in'));
   await _settle(tester);
 }
 
@@ -50,7 +51,7 @@ Iterable<String> _paths(FakeBackend backend) =>
     backend.requests.map((http.Request r) => '${r.method} ${r.url.path}');
 
 void main() {
-  group('sign-in through the GoalCert Hub', () {
+  group('sign-in through the sign-in page', () {
     late ({FakeBackend backend, FakeUploadQueue uploads}) fakes;
     late MemorySecureStore keychain;
     setUp(() {
@@ -65,7 +66,7 @@ void main() {
 
       expect(find.byType(LoginScreen), findsOneWidget);
       expect(find.text('GYM SCAN'), findsOneWidget);
-      expect(find.text('Sign in with GoalCert'), findsOneWidget);
+      expect(find.widgetWithText(PrimaryButton, 'Sign in'), findsOneWidget);
       expect(find.byType(TextField), findsNothing);
       expect(find.textContaining('Password'), findsNothing);
 

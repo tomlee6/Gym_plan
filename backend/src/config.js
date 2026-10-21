@@ -32,9 +32,38 @@ const publicWebUrl = optional('PUBLIC_WEB_URL', 'http://localhost:3000').replace
 /** Every Flex service runs in Sydney (M-16). */
 export const HOME_REGION = 'ap-southeast-2';
 
-const hubDriver = optional('HUB_DRIVER', isProduction ? 'oidc' : 'dev');
+const hubDriver = optional('HUB_DRIVER', isProduction ? 'cognito' : 'dev');
+if (!['dev', 'oidc', 'cognito'].includes(hubDriver)) throw new Error('HUB_DRIVER must be dev, oidc or cognito');
 // The dev Hub is this API, so its addresses default to it.
 const devHub = `${publicApiUrl}/dev-hub`;
+
+/*
+ * Cognito's addresses follow from the user pool and its sign-in domain, so
+ * only those need setting (the HUB_* URLs still win when given).
+ */
+const cognitoPoolId = optional('COGNITO_USER_POOL_ID', '');
+const cognitoRegion = cognitoPoolId.split('_')[0] || HOME_REGION;
+const cognitoDomain = optional('COGNITO_DOMAIN', '').replace(/\/$/, '');
+const hubDefaults = {
+  dev: {
+    issuer: devHub,
+    authorizeUrl: `${devHub}/authorize`,
+    tokenUrl: `${devHub}/token`,
+    jwksUrl: `${devHub}/jwks`,
+    clientSecret: 'dev-hub-client-secret',
+    eventsSecret: 'dev-hub-events-secret',
+    orgId: 'flex-gym',
+  },
+  oidc: { orgId: 'flex-gym' },
+  cognito: {
+    issuer: cognitoPoolId && `https://cognito-idp.${cognitoRegion}.amazonaws.com/${cognitoPoolId}`,
+    authorizeUrl: cognitoDomain && `${cognitoDomain}/oauth2/authorize`,
+    tokenUrl: cognitoDomain && `${cognitoDomain}/oauth2/token`,
+    jwksUrl: cognitoPoolId && `https://cognito-idp.${cognitoRegion}.amazonaws.com/${cognitoPoolId}/.well-known/jwks.json`,
+    // The pool is Flex Gym's alone: no organisation claim to check.
+    orgId: '',
+  },
+}[hubDriver];
 
 export const config = Object.freeze({
   env,
@@ -76,21 +105,23 @@ export const config = Object.freeze({
   },
 
   /*
-   * The GoalCert Hub (B-01). `oidc` is the real Hub; `dev` is the stand-in
-   * this API serves under /dev-hub for local work and tests, refused in
-   * production.
+   * The sign-in provider (B-01). `cognito` is Amazon Cognito in Sydney;
+   * `oidc` is the GoalCert Hub; `dev` is the stand-in this API serves under
+   * /dev-hub for local work and tests, refused in production.
    */
   hub: {
     driver: hubDriver,
-    issuer: optional('HUB_ISSUER', hubDriver === 'dev' ? devHub : ''),
-    authorizeUrl: optional('HUB_AUTHORIZE_URL', hubDriver === 'dev' ? `${devHub}/authorize` : ''),
-    tokenUrl: optional('HUB_TOKEN_URL', hubDriver === 'dev' ? `${devHub}/token` : ''),
-    jwksUrl: optional('HUB_JWKS_URL', hubDriver === 'dev' ? `${devHub}/jwks` : ''),
+    issuer: optional('HUB_ISSUER', hubDefaults.issuer ?? ''),
+    authorizeUrl: optional('HUB_AUTHORIZE_URL', hubDefaults.authorizeUrl ?? ''),
+    tokenUrl: optional('HUB_TOKEN_URL', hubDefaults.tokenUrl ?? ''),
+    jwksUrl: optional('HUB_JWKS_URL', hubDefaults.jwksUrl ?? ''),
     clientId: optional('HUB_CLIENT_ID', 'flex-gym'),
-    clientSecret: optional('HUB_CLIENT_SECRET', hubDriver === 'dev' ? 'dev-hub-client-secret' : ''),
-    // The single Flex Gym organisation in the Hub (N-01).
-    orgId: optional('HUB_ORG_ID', 'flex-gym'),
-    eventsSecret: optional('HUB_EVENTS_SECRET', hubDriver === 'dev' ? 'dev-hub-events-secret' : ''),
+    clientSecret: optional('HUB_CLIENT_SECRET', hubDefaults.clientSecret ?? ''),
+    // The single Flex Gym organisation in the Hub (N-01); empty = not checked.
+    orgId: process.env.HUB_ORG_ID ?? hubDefaults.orgId,
+    // Cognito sends no events: the endpoint then refuses every delivery.
+    eventsSecret: optional('HUB_EVENTS_SECRET', hubDefaults.eventsSecret ?? ''),
+    cognito: { userPoolId: cognitoPoolId, region: cognitoRegion },
     webRedirectUri: optional('HUB_WEB_REDIRECT_URI', `${publicWebUrl}/auth/callback`),
     iosRedirectUri: optional('HUB_IOS_REDIRECT_URI', 'flexgymscan://auth/callback'),
     scope: 'openid profile email',
@@ -203,7 +234,7 @@ export function productionProblems(c = config) {
     ['JWT_SECRET', c.auth.jwtSecret],
     ['STORAGE_SIGNING_SECRET', c.storage.signingSecret],
     ['HUB_CLIENT_SECRET', c.hub.clientSecret],
-    ['HUB_EVENTS_SECRET', c.hub.eventsSecret],
+    ...(c.hub.driver === 'oidc' ? [['HUB_EVENTS_SECRET', c.hub.eventsSecret]] : []),
   ]) {
     if (!value || value.length < 32 || /^(change-me|dev-|test-)/.test(value)) {
       problems.push(`${name} must be a long random secret in production`);
@@ -232,7 +263,10 @@ export function productionProblems(c = config) {
     }
   }
   if (c.awsRegion !== HOME_REGION) problems.push(`AWS_REGION must be ${HOME_REGION} in production`);
-  if (c.hub.driver !== 'oidc') problems.push('HUB_DRIVER must be oidc in production');
+  if (c.hub.driver === 'dev') problems.push('HUB_DRIVER must be cognito or oidc in production');
+  if (c.hub.driver === 'cognito' && c.hub.cognito.region !== HOME_REGION) {
+    problems.push(`COGNITO_USER_POOL_ID must be a user pool in ${HOME_REGION}`);
+  }
   for (const [name, value] of [
     ['HUB_ISSUER', c.hub.issuer],
     ['HUB_AUTHORIZE_URL', c.hub.authorizeUrl],

@@ -220,6 +220,14 @@ describe('production start-up checks (D-09)', () => {
     assert.deepEqual(productionProblems(prod()), []);
   });
 
+  it('accepts Cognito in Sydney, which needs no events secret, and refuses a pool elsewhere', () => {
+    const cognito = (region) =>
+      prod({ hub: { ...prod().hub, driver: 'cognito', eventsSecret: '', cognito: { userPoolId: `${region}_abc`, region } } });
+    assert.deepEqual(productionProblems(cognito('ap-southeast-2')), []);
+    assert.match(productionProblems(cognito('us-east-1')).join('\n'), /COGNITO_USER_POOL_ID/);
+    assert.match(productionProblems(prod({ hub: { ...prod().hub, driver: 'dev' } })).join('\n'), /HUB_DRIVER/);
+  });
+
   it('refuses simulated scans, local storage, another region and weak secrets', () => {
     const problems = productionProblems(
       prod({

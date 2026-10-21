@@ -181,7 +181,7 @@ function NewAccountDialog({ onCancel, onCreated }) {
   return (
     <Modal
       title="New account"
-      subtitle="A customer account. Its first owner is invited by email and joins by signing in with GoalCert."
+      subtitle="A customer account. Its first owner is invited by email and joins by signing in with that email address."
       onClose={onCancel}
       busy={busy}
       footer={
@@ -219,7 +219,7 @@ function NewAccountDialog({ onCancel, onCreated }) {
           />
         </label>
         <p id="new-account-owner-help" className="small muted wide">
-          The address they sign in to GoalCert with. They are invited as Owner &amp; Surveyor.
+          The address they will sign in with. They are invited as Owner &amp; Surveyor.
         </p>
         {/* Enter submits. */}
         <button type="submit" hidden aria-hidden="true" tabIndex={-1} />

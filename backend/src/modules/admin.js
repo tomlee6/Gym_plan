@@ -19,7 +19,8 @@
  *   GET    /v1/admin/reviewers                             weekly median review time
  *
  * People are not created here with passwords any more (B-03, B-09): an
- * admin invites an email, and the first GoalCert sign-in with that verified
+ * admin invites an email, the sign-in provider lets that email in (Cognito
+ * emails a temporary password), and the first sign-in with that verified
  * email becomes the member.
  */
 import { Router } from 'express';
@@ -29,6 +30,7 @@ import { audit } from '../audit.js';
 import { config } from '../config.js';
 import { many, one, pool, transaction } from '../db/pool.js';
 import { badRequest, conflict, notFound } from '../errors.js';
+import { hub } from '../hub/index.js';
 import { isId, newId } from '../ids.js';
 import { enqueue, jobsCommitted } from '../jobs/index.js';
 import { requireAuth, requireStaff } from '../middleware/auth.js';
@@ -123,6 +125,8 @@ async function createInvite(db, req, account, { email: to, role }) {
     target: { type: 'invite', id, label: to },
     detail: { role },
   });
+  // Last, so a provider that cannot take the person rolls the invite back.
+  await hub().invite?.({ email: to });
   return { id, email: to, role, expiresAt, accountName: account.name };
 }
 

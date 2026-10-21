@@ -68,7 +68,7 @@ export function walkthroughReady(db, { accountId, label, planId }) {
   });
 }
 
-/** An invite (B-05): access follows the first GoalCert sign-in with this email. */
+/** An invite (B-05): access follows the first sign-in with this email. */
 export function invited({ email, accountName, role, expiresAt }) {
   return safely(() =>
     sendMail({
@@ -76,8 +76,12 @@ export function invited({ email, accountName, role, expiresAt }) {
       subject: `You have been invited to ${accountName} on Flex Gym Scan`,
       text:
         `You have been invited to ${accountName} as ${role === 'owner' ? 'an owner' : 'a surveyor'}.\n\n` +
-        `Sign in with your GoalCert account using this email address (${email}) at\n` +
+        `Sign in with this email address (${email}) at\n` +
         `${config.publicWebUrl}/login\n\nor in the Flex Gym Scan iPhone app. ` +
+        (config.hub.driver === 'cognito'
+          ? 'If you are new to Flex Gym Scan, a separate email gives you a temporary password; ' +
+            'you choose your own the first time you sign in. '
+          : '') +
         `The invite works until ${expiresAt.toISOString().slice(0, 10)}.`,
     }),
   );

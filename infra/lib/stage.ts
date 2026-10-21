@@ -9,6 +9,7 @@
  *   EdgeCerts   us-east-1: the web app's CloudFront certificate
  *   Data        KMS, RDS MySQL, S3, SQS, Secrets Manager
  *   Mail        SES identity, configuration set, bounce topic
+ *   Auth        Cognito user pool and its sign-in page (passwords, MFA)
  *   Api         ECS cluster, API service + ALB + WAF, worker service
  *   Web         SPA bucket and CloudFront
  *   Monitoring  dashboard, alarms, Slack
@@ -16,6 +17,7 @@
 import { Stage, StageProps, Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { ApiStack } from './api-stack';
+import { AuthStack } from './auth-stack';
 import { EDGE_CERT_REGION, EnvConfig } from './config';
 import { DataStack } from './data-stack';
 import { DnsStack } from './dns-stack';
@@ -40,6 +42,7 @@ export class FlexGymStage extends Stage {
   /** Only when the environment names an approved TRELLIS.2 image (L-10). */
   readonly gpu?: GpuStack;
   readonly mail: MailStack;
+  readonly auth: AuthStack;
   readonly api: ApiStack;
   readonly web: WebStack;
   readonly monitoring: MonitoringStack;
@@ -80,6 +83,12 @@ export class FlexGymStage extends Stage {
       });
     }
     this.mail = new MailStack(this, 'Mail', { env, config, zone: this.dns.zone, description: description('SES') });
+    this.auth = new AuthStack(this, 'Auth', {
+      env,
+      config,
+      mail: this.mail,
+      description: description('sign-in (Cognito user pool)'),
+    });
     this.api = new ApiStack(this, 'Api', {
       env,
       config,
@@ -87,6 +96,7 @@ export class FlexGymStage extends Stage {
       zone: this.dns.zone,
       data: this.data,
       mail: this.mail,
+      auth: this.auth,
       gpu: this.gpu,
       description: description('API and worker on ECS Fargate'),
     });

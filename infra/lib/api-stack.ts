@@ -24,6 +24,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import { Construct } from 'constructs';
+import { AuthStack } from './auth-stack';
 import { EnvConfig, HOME_REGION, resourcePrefix } from './config';
 import { DataStack, DB_NAME } from './data-stack';
 import { GpuStack } from './gpu-stack';
@@ -42,6 +43,7 @@ export interface ApiStackProps extends StackProps {
   zone: route53.IHostedZone;
   data: DataStack;
   mail: MailStack;
+  auth: AuthStack;
   /** The GPU environment, when there is one (L-10). */
   gpu?: GpuStack;
 }
@@ -53,7 +55,7 @@ export class ApiStack extends Stack {
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
-    const { config, vpc, zone, data, mail } = props;
+    const { config, vpc, zone, data, mail, auth } = props;
     const prefix = resourcePrefix(config);
 
     this.cluster = new ecs.Cluster(this, 'Cluster', {
@@ -107,13 +109,11 @@ export class ApiStack extends Stack {
       MAIL_DRIVER: 'ses',
       MAIL_FROM: mail.fromAddress,
       SES_CONFIGURATION_SET: mail.configurationSet.configurationSetName,
-      HUB_DRIVER: 'oidc',
-      HUB_ISSUER: config.hub.issuer,
-      HUB_AUTHORIZE_URL: config.hub.authorizeUrl,
-      HUB_TOKEN_URL: config.hub.tokenUrl,
-      HUB_JWKS_URL: config.hub.jwksUrl,
-      HUB_CLIENT_ID: config.hub.clientId,
-      HUB_ORG_ID: config.hub.orgId,
+      // Sign-in through Cognito; the backend derives its URLs from these two.
+      HUB_DRIVER: 'cognito',
+      COGNITO_USER_POOL_ID: auth.userPool.userPoolId,
+      COGNITO_DOMAIN: auth.domainUrl,
+      HUB_CLIENT_ID: auth.client.userPoolClientId,
       HUB_WEB_REDIRECT_URI: config.hub.webRedirectUri,
       HUB_IOS_REDIRECT_URI: config.hub.iosRedirectUri,
       ALLOW_SIMULATED_SCANS: 'false',
@@ -141,8 +141,7 @@ export class ApiStack extends Stack {
       DB_PASSWORD: ecs.Secret.fromSecretsManager(data.databaseSecret, 'password'),
       JWT_SECRET: ecs.Secret.fromSecretsManager(data.secrets.jwtSecret),
       STORAGE_SIGNING_SECRET: ecs.Secret.fromSecretsManager(data.secrets.storageSigningSecret),
-      HUB_CLIENT_SECRET: ecs.Secret.fromSecretsManager(data.secrets.hubClientSecret),
-      HUB_EVENTS_SECRET: ecs.Secret.fromSecretsManager(data.secrets.hubEventsSecret),
+      HUB_CLIENT_SECRET: ecs.Secret.fromSecretsManager(auth.clientSecret),
     };
     if (data.secrets.modelsSigningKey) {
       secrets.MODELS_SIGNING_PRIVATE_KEY = ecs.Secret.fromSecretsManager(data.secrets.modelsSigningKey);
@@ -186,6 +185,8 @@ export class ApiStack extends Stack {
         ],
       }),
     );
+    // Invites create the person in the user pool (backend src/hub/cognito.js).
+    auth.userPool.grant(taskRole, 'cognito-idp:AdminCreateUser', 'cognito-idp:AdminGetUser');
     taskRole.addToPrincipalPolicy(
       new iam.PolicyStatement({
         actions: ['cloudwatch:PutMetricData'],

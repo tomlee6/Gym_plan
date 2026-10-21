@@ -18,14 +18,11 @@ export const EDGE_CERT_REGION = 'us-east-1';
 export type EnvName = 'dev' | 'staging' | 'prod';
 export const ENV_NAMES: EnvName[] = ['dev', 'staging', 'prod'];
 
-/** Values the backend reads as HUB_* (sign-in through GoalCert Hub). */
+/**
+ * Where Cognito's sign-in page may send people back to (HUB_*_REDIRECT_URI).
+ * The pool, its domain and client come from the Auth stack.
+ */
 export interface HubConfig {
-  issuer: string;
-  authorizeUrl: string;
-  tokenUrl: string;
-  jwksUrl: string;
-  clientId: string;
-  orgId: string;
   webRedirectUri: string;
   iosRedirectUri: string;
 }
@@ -153,12 +150,6 @@ export function loadEnvConfig(node: Node, name: EnvName): EnvConfig {
     trellis2Image: str(raw, 'trellis2Image', where, true),
     gpuMaxInstances: num(raw, 'gpuMaxInstances', where),
     hub: {
-      issuer: str(hubRaw, 'issuer', hubWhere),
-      authorizeUrl: str(hubRaw, 'authorizeUrl', hubWhere),
-      tokenUrl: str(hubRaw, 'tokenUrl', hubWhere),
-      jwksUrl: str(hubRaw, 'jwksUrl', hubWhere),
-      clientId: str(hubRaw, 'clientId', hubWhere),
-      orgId: str(hubRaw, 'orgId', hubWhere),
       webRedirectUri: str(hubRaw, 'webRedirectUri', hubWhere),
       iosRedirectUri: str(hubRaw, 'iosRedirectUri', hubWhere),
     },
