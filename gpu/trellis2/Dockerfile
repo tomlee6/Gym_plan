@@ -44,7 +44,7 @@ ARG MAX_JOBS=4
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    # Ampere (A10G, 8.6) and Ada (L40S on g6e, 8.9): the GPUs the job may land on.
+    # Ampere (A10G on g5, 8.6) and Ada (L4 on g6, 8.9): the GPUs the job may land on.
     TORCH_CUDA_ARCH_LIST="8.6;8.9" \
     # sm_80 code runs on both, and is all flash-attn 2.7.3 builds for them.
     FLASH_ATTN_CUDA_ARCHS=80 \

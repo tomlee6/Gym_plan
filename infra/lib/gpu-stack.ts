@@ -1,7 +1,7 @@
 /**
  * The GPU environment for machine models (L-10). OWNED BY THE 3D TEAM.
  *
- * AWS Batch in Sydney on g6e.xlarge (one NVIDIA L40S, 48 GB): no hosts while
+ * AWS Batch in Sydney on g5.2xlarge (one NVIDIA A10G, 24 GB): no hosts while
  * there is nothing to do, up to gpuMaxInstances when there is. Each job runs
  * the approved TRELLIS.2 worker image (gpu/trellis2, by digest from
  * cdk.json) on one machine's 360 video from the captures bucket (L-05) and
@@ -9,7 +9,7 @@
  * job state changes go to the gpu-jobs queue, where the backend's worker
  * picks up finished and failed jobs.
  *
- *   backend --SubmitJob--> job queue --> g6e.xlarge --> models bucket
+ *   backend --SubmitJob--> job queue --> g5.2xlarge --> models bucket
  *                                  \--> EventBridge --> gpu-jobs queue --> backend
  *
  * Only built when the environment names an approved image (trellis2Image).
@@ -33,9 +33,12 @@ export interface GpuStackProps extends StackProps {
   data: DataStack;
 }
 
-/** g6e.xlarge: 4 vCPUs, 32 GiB, one L40S, a 250 GB local NVMe disk. */
-const INSTANCE_TYPE = 'g6e.xlarge';
-const VCPUS_PER_HOST = 4;
+/**
+ * g5.2xlarge: 8 vCPUs, 32 GiB, one A10G, a 450 GB local NVMe disk. AWS does
+ * not offer g6e (L40S) in Sydney; docs/trellis2-before-deployment.md, section 4.
+ */
+const INSTANCE_TYPE = 'g5.2xlarge';
+const VCPUS_PER_HOST = 8;
 /** Less than the host's 32 GiB, leaving room for the ECS agent. */
 const JOB_MEMORY_MIB = 28 * 1024;
 

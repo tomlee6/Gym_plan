@@ -1,6 +1,6 @@
 # TRELLIS.2 worker
 
-The GPU job that turns one cut-out photo of a gym machine into a textured 3D model (GLB), using Microsoft's [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) code and model unchanged. It runs on AWS Batch in Sydney (g6e.xlarge, NVIDIA L40S) and is started by the backend's `asset.build` job.
+The GPU job that turns one cut-out photo of a gym machine into a textured 3D model (GLB), using Microsoft's [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) code and model unchanged. It runs on AWS Batch in Sydney (g5.2xlarge, NVIDIA A10G) and is started by the backend's `asset.build` job.
 
 This folder replaces the Digital Twin project's RunPod worker (`apps/trellis2-worker`), whose model calls were checked against Microsoft's code (sheet "TRELLIS check" in `docs/Tejesh-3D-Tasks.xlsx`) and are kept as they are.
 
@@ -117,7 +117,7 @@ The model-facing code (`trellis_model.py`) is the Digital Twin worker's, unchang
 - **Weights.** Copied once per environment into its models bucket in Sydney by `publish_weights.py`, under `gpu/trellis2/weights/<lock digest>/`. The worker reads the folder its own lock names, so an image and the weights it was built for always match.
 - **Release.** A new image is used only after the golden test passes on it (L-14) and a person approves it; the image pipeline then commits its digest into `cdk.json`, and it ships with the next release (N-05).
 
-- **Where jobs run (L-10).** `infra/lib/gpu-stack.ts`: AWS Batch in Sydney on g6e.xlarge (one L40S), no hosts while idle and at most `gpuMaxInstances` (cdk.json) when busy, Amazon Linux 2023 with NVIDIA drivers. Each host mounts its local NVMe disk at `/weights`, so the 18 GB of weights are copied once per host, not per job. A job may read the weights, read machines' videos and frames (`accounts/*/captures/*/equipment/*` in the captures bucket), and read and write under `models/accounts/*/assets/*`, nothing else; it has an hour, three attempts, and none after exit code 2 (bad input). Job outcomes (succeeded or failed) go through EventBridge to the `gpu-jobs` queue for the backend. The stack exists only once `cdk.json` names an approved image by digest (`trellis2Image`).
+- **Where jobs run (L-10).** `infra/lib/gpu-stack.ts`: AWS Batch in Sydney on g5.2xlarge (one A10G), no hosts while idle and at most `gpuMaxInstances` (cdk.json) when busy, Amazon Linux 2023 with NVIDIA drivers. Each host mounts its local NVMe disk at `/weights`, so the 18 GB of weights are copied once per host, not per job. A job may read the weights, read machines' videos and frames (`accounts/*/captures/*/equipment/*` in the captures bucket), and read and write under `models/accounts/*/assets/*`, nothing else; it has an hour, three attempts, and none after exit code 2 (bad input). Job outcomes (succeeded or failed) go through EventBridge to the `gpu-jobs` queue for the backend. The stack exists only once `cdk.json` names an approved image by digest (`trellis2Image`).
 
 How to do each step: `docs/runbooks/trellis2-worker.md`.
 

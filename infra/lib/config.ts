@@ -75,7 +75,7 @@ export interface EnvConfig {
    * Empty = no GPU environment. See docs/runbooks/trellis2-worker.md.
    */
   trellis2Image: string;
-  /** Most g6e.xlarge GPU hosts running at once; idle, there are none. */
+  /** Most g5.2xlarge GPU hosts running at once; idle, there are none. */
   gpuMaxInstances: number;
   hub: HubConfig;
 }

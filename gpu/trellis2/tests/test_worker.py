@@ -54,7 +54,7 @@ class FakeModel:
     def __init__(self, weights):
         FakeModel.loads += 1
         self.weights = weights
-        self.gpu = "NVIDIA L40S"
+        self.gpu = "NVIDIA A10G"
         self.calls = []
 
     def generate(self, image, s):
@@ -122,7 +122,7 @@ class Worker(unittest.TestCase):
         self.assertEqual(meta["input"]["sha256"], hashlib.sha256(self.s3.objects["s3://in/cutout.png"]).hexdigest())
         self.assertEqual(meta["glb"], {"bytes": 15, "sha256": hashlib.sha256(b"glTF fake model").hexdigest()})
         self.assertEqual(meta["versions"], {"trellis2": "75fbf01"})
-        self.assertEqual(meta["gpu"], "NVIDIA L40S")
+        self.assertEqual(meta["gpu"], "NVIDIA A10G")
         self.assertRegex(meta["weights"], r"^[0-9a-f]{64}$")
         self.assertEqual(meta["timings_s"]["weights_fetched"], 2, "the weight and our pipeline.json")
         # The weights were copied from our S3 copy and checked, with our config beside them.

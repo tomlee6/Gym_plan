@@ -42,7 +42,7 @@ def make_glb(triangles=1000, images=1, bounds=((-0.4, -0.5, -0.3), (0.4, 0.5, 0.
     return struct.pack("<4sII", b"glTF", 2, 12 + len(chunks)) + chunks
 
 
-METADATA = {"timings_s": {"generate": 60.0, "extract_glb": 20.0, "total": 140.0}, "settings": {"seed": 42}, "versions": {"trellis2": "75fbf01", "python": ["torch==2.6.0"]}, "gpu": "NVIDIA L40S"}
+METADATA = {"timings_s": {"generate": 60.0, "extract_glb": 20.0, "total": 140.0}, "settings": {"seed": 42}, "versions": {"trellis2": "75fbf01", "python": ["torch==2.6.0"]}, "gpu": "NVIDIA A10G"}
 
 
 class GlbStats(unittest.TestCase):

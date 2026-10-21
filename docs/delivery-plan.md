@@ -386,9 +386,9 @@ tags, zones, flags           as today; new flag kinds: equipment_type, default_u
 
 Yes. It is required anyway, because RunPod would move customer images out of Australia (§10.9).
 
-- **GPU:** `g6e.xlarge`, with one NVIDIA L40S (about 45 GiB usable GPU memory), 4 vCPU and 32 GiB RAM. It is offered in Sydney (`ap-southeast-2`) and matches the 48 GB card the RunPod kit recommends. `g5` (24 GB A10G) meets TRELLIS.2's stated minimum but can run out of memory while rendering.
+- **GPU:** `g5.2xlarge`, with one NVIDIA A10G (24 GB), 8 vCPU and 32 GiB RAM. The plan first chose `g6e.xlarge` (one 48 GB L40S, as the RunPod kit recommends), but AWS does not offer G6e in Sydney (`ap-southeast-2`). 24 GB is TRELLIS.2's stated minimum: enough at the default settings, with little room (`docs/trellis2-before-deployment.md`, section 4).
 - **Packaging:** build one Docker image.
-  - A CUDA 12.4 build stage compiles flash-attn, nvdiffrast, nvdiffrec, cumesh, o-voxel and flexgemm for the L40S (`TORCH_CUDA_ARCH_LIST=8.9`).
+  - A CUDA 12.4 build stage compiles flash-attn, nvdiffrast, cumesh, o-voxel and flexgemm for the A10G and the L4 (`TORCH_CUDA_ARCH_LIST=8.6;8.9`).
   - A slim runtime stage goes to ECR.
   - The TRELLIS.2-4B weights are copied once from Hugging Face into our S3 bucket; each job copies them to local disk.
   - This replaces the RunPod network volume: the 20–40 minute compile happens once per release, not per session.
@@ -397,7 +397,7 @@ Yes. It is required anyway, because RunPod would move customer images out of Aus
   - A gym's machines run back to back on one warm instance.
   - The Gradio web UI from the RunPod kit is not used.
 - **Start-up:** a cold start (instance launch plus image pull) takes minutes, which is fine for a background job.
-- **Cost:** AWS lists `g6e.xlarge` at $1.86 an hour on demand in us-east-1. The Sydney price is higher and was not checked. You pay only while jobs run; Spot instances cost less.
+- **Cost:** AWS lists `g5.2xlarge` at $1.5758 an hour on demand in Sydney. You pay only while jobs run; Spot instances cost less. The full costs are in `docs/deployment-guide.md` (5.13).
 - **Quota:** AWS accounts usually need a quota increase before they can launch GPU instances. Request it for Sydney early.
 - **Licence, blocking production:**
   - TRELLIS.2's code and weights are MIT.
@@ -482,7 +482,7 @@ Phase 0 tests five machines that cover these cases, through both routes.
 |---|---|---|
 | API | ECS Fargate, 2+ tasks, behind an Application Load Balancer | Node 22 container, non-root, `/health` check |
 | Workers | ECS Fargate services, one per queue | Scale on queue depth |
-| GPU worker | AWS Batch on `g6e.xlarge` (NVIDIA L40S) | Scales to zero when idle; equipment models and TRELLIS.2 only (§7.4) |
+| GPU worker | AWS Batch on `g5.2xlarge` (NVIDIA A10G) | Scales to zero when idle; equipment models and TRELLIS.2 only (§7.4) |
 | Database | RDS for MySQL **8.4 LTS**, Multi-AZ in prod | MySQL 8.0 is out of support in 2026. Move local Docker and tests to 8.4. |
 | Queues | SQS, each with a dead-letter queue | |
 | Files | S3 | §10.4 |

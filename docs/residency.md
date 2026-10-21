@@ -70,11 +70,11 @@ Decision owner: product owner with the 3D team (open item 3).
    or self-hosted), it must run in Sydney. If it is a third-party API, its
    processing region must be confirmed in writing as Australia, or it must be
    self-hosted in ap-southeast-2. Owner: ML / 3D team.
-2. **GPU worker.** The 3D reconstruction worker (`gpu-jobs` queue, `g6e.xlarge`)
+2. **GPU worker.** The 3D reconstruction worker (`gpu-jobs` queue, `g5.2xlarge`)
    must run in ap-southeast-2. Its quota request is in
-   `runbooks/service-quotas.md`. If g6e is not available in Sydney, a
-   different Sydney instance type must be chosen, not a different region.
-   Owner: 3D team.
+   `runbooks/service-quotas.md`. g6e, the first choice, is not offered in
+   Sydney, so a different Sydney instance type was chosen, not a different
+   region. Owner: 3D team.
 3. **Models distribution caching** (see above). Owner: product owner and 3D
    team.
 4. **Sign-in.** Done: Amazon Cognito in ap-southeast-2 (`Auth` stack) holds

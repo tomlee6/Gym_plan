@@ -20,7 +20,7 @@ The detailed commands for each step are in `docs/deployment-guide.md` (Part 5) a
 
 | # | Item | State | Who | Blocks |
 |---|---|---|---|---|
-| 1 | **The GPU type.** `g6e.xlarge` (L40S), which the code names, is **not offered in Sydney** (section 4) | Decision needed | Tejesh, with management (cost) | Any GPU deployment |
+| 1 | **The GPU type:** `g5.2xlarge` (A10G), in place of `g6e.xlarge`, which Sydney does not offer (section 4) | Done, in the code | Tejesh | — |
 | 2 | **nvdiffrast licence (O-07):** non-commercial use only (section 2) | Open | Legal, management | Models for customers (prod) |
 | 3 | **DINOv3 access** on Hugging Face (section 3) | Not requested | Someone who can bind the company | Copying the weights |
 | 4 | **GPU quota** in dev, staging and prod (section 5) | Not requested | Flex's AWS team | Any GPU job |
@@ -29,7 +29,7 @@ The detailed commands for each step are in `docs/deployment-guide.md` (Part 5) a
 | 7 | **Weights copied** into each environment's bucket | Not started | Tejesh | The first GPU job |
 | 8 | **The golden reference** recorded from the first image | Not started | Tejesh | Testing new images automatically |
 
-Items 1 to 4 wait on decisions, people or AWS, so start them first, side by side.
+Items 2 to 4 wait on decisions, people or AWS, so start them first, side by side.
 
 ---
 
@@ -109,7 +109,7 @@ GPU jobs read the weights only from that bucket, with Hugging Face switched off.
 
 ### What changed
 
-The code, the guide and the earlier plan chose `g6e.xlarge` (one NVIDIA L40S, 48 GB) in Sydney. **AWS does not offer G6e in Sydney:**
+The code, the guide and the earlier plan first chose `g6e.xlarge` (one NVIDIA L40S, 48 GB) in Sydney. **AWS does not offer G6e in Sydney:**
 - AWS's on-demand price list for Sydney has no `g6e` size at all;
 - AWS lists G6e only in US East, US West (Oregon), Tokyo, Seoul, the UAE, Frankfurt, Spain and Stockholm.
 
@@ -128,16 +128,17 @@ On-demand list prices, USD an hour:
 
 **Memory.** 24 GB is TRELLIS.2's stated minimum; the RunPod kit recommended 48 GB. At the worker's defaults (resolution 1024, a 2048 texture), 24 GB is expected to fit, but with little room. The highest resolution (1536) may run out of memory.
 
-**Recommendation:**
-1. Use **`g5.2xlarge`**. The A10G has twice the memory bandwidth of the L4, which usually makes this kind of model faster, so it should cost the same or less per model despite the higher hourly price.
-2. Run the first golden test on both `g5.2xlarge` and `g6.2xlarge` (same image) and keep whichever is cheaper per model without running out of memory.
-3. Move to `p5.4xlarge` only if 24 GB proves too small. It costs about six times as much an hour, and needs the image rebuilt for Hopper.
+**Decided: `g5.2xlarge`.** The A10G has twice the memory bandwidth of the L4, which usually makes this kind of model faster, so it should cost the same or less per model despite the higher hourly price. The backend asks for no resolution, so every job runs at the default 1024, which is expected to fit in 24 GB.
 
-**What changes in the code** (Tejesh, once the type is chosen):
-- `infra/lib/gpu-stack.ts`: the instance type, 8 vCPUs a host, and the 28 GiB job memory (which fits 32 GiB);
-- its tests;
-- the GPU quota numbers: 8 vCPUs a host, not 4;
-- the guide and the diagram.
+**Changed in the code:**
+- `infra/lib/gpu-stack.ts`: the instance type, and 8 vCPUs a host and a job; the 28 GiB job memory is unchanged and fits the 32 GiB host;
+- its tests (`infra/test/gpu.test.ts`);
+- the GPU quota: 8 vCPUs a host, not 4 (`docs/runbooks/service-quotas.md`);
+- the guide, the diagram and the runbooks.
+
+**If the first real builds disagree:**
+- **The L4 is cheaper per model:** change `INSTANCE_TYPE` in `infra/lib/gpu-stack.ts` to `g6.2xlarge`. Nothing else changes: same vCPUs and memory, and the image already runs on it.
+- **24 GB runs out:** move to `p5.4xlarge`. That costs about six times as much an hour, needs 16 vCPUs a host and a bigger quota, and the image rebuilt for Hopper (9.0).
 
 ---
 
@@ -147,7 +148,7 @@ Each step names its owner, and where the guide (`docs/deployment-guide.md`) has 
 
 | Step | What | Who | Guide |
 |---|---|---|---|
-| 1 | Choose the GPU type (section 4), and change the GPU stack to it | Tejesh, with management | — |
+| 1 | **Done:** the GPU type is `g5.2xlarge` (section 4), in the GPU stack | Tejesh | — |
 | 2 | Ask Legal about nvdiffrast (section 2) | Tejesh, Legal | 5.1 |
 | 3 | Request DINOv3 access (section 3) | The company | 5.2 |
 | 4 | Request the GPU quota, "Running On-Demand G and VT instances" (`L-DB2E81BA`), in each environment account. Hosts have 8 vCPUs: ask for at least 16 in dev and staging and 32 in prod, to leave room. | Flex's AWS team | 5.3 |

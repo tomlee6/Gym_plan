@@ -1,5 +1,5 @@
 /**
- * The GPU environment for machine models (L-10): AWS Batch on g6e.xlarge in
+ * The GPU environment for machine models (L-10): AWS Batch on g5.2xlarge in
  * Sydney, only when an environment names an approved TRELLIS.2 image.
  *
  * Run: npm test
@@ -33,14 +33,14 @@ const ofType = (stack: CloudFormationStackArtifact, type: string): Resource[] =>
 const withGpu = devStacks(IMAGE);
 const gpu = withGpu.get('Gpu')!;
 
-test('g6e.xlarge hosts in Sydney, none while idle, on the GPU image, with the weights disk mounted', () => {
+test('g5.2xlarge hosts in Sydney, none while idle, on the GPU image, with the weights disk mounted', () => {
   assert.ok(gpu, 'a Gpu stack');
   assert.equal(gpu.environment.region, 'ap-southeast-2');
   const [env] = ofType(gpu, 'AWS::Batch::ComputeEnvironment');
   const resources = env.Properties!.ComputeResources;
-  assert.deepEqual(resources.InstanceTypes, ['g6e.xlarge']);
+  assert.deepEqual(resources.InstanceTypes, ['g5.2xlarge']);
   assert.equal(resources.MinvCpus, 0, 'scales to zero');
-  assert.equal(resources.MaxvCpus, 4 * cdkJson.context.environments.dev.gpuMaxInstances);
+  assert.equal(resources.MaxvCpus, 8 * cdkJson.context.environments.dev.gpuMaxInstances);
   assert.equal(resources.Ec2Configuration[0].ImageType, 'ECS_AL2023_NVIDIA');
   const [template] = ofType(gpu, 'AWS::EC2::LaunchTemplate');
   const data = template.Properties!.LaunchTemplateData;
@@ -57,7 +57,7 @@ test('a job definition for the approved image by digest, one GPU, the weights vo
   const p = job.Properties!;
   assert.equal(p.ContainerProperties.Image, IMAGE);
   const resources = Object.fromEntries(p.ContainerProperties.ResourceRequirements.map((r: any) => [r.Type, r.Value]));
-  assert.deepEqual(resources, { GPU: '1', VCPU: '4', MEMORY: String(28 * 1024) });
+  assert.deepEqual(resources, { GPU: '1', VCPU: '8', MEMORY: String(28 * 1024) });
   assert.deepEqual(p.ContainerProperties.Command, ['--input', 'Ref::input', '--output', 'Ref::output', '--params', 'Ref::params']);
   assert.deepEqual(p.ContainerProperties.Volumes, [{ Name: 'weights', Host: { SourcePath: '/weights' } }]);
   // Writable: the job copies the weights there (ReadOnly left out means false).

@@ -32,16 +32,16 @@ The diagram shows prod. Dev and staging are the same components, each in its own
 | API (ECS Fargate, x86_64) | 1 task × 0.5 vCPU, 1 GB; up to 2 | 1 task × 0.5 vCPU, 1 GB; up to 3 | 2 tasks × 1 vCPU, 2 GB; up to 6 |
 | Worker (ECS Fargate, x86_64) | 1 task × 0.5 vCPU, 1 GB | 1 task × 0.5 vCPU, 1 GB | 2 tasks × 1 vCPU, 2 GB |
 | Database (RDS MySQL 8.4, gp3) | db.t4g.micro, 20 GB, one zone, 7-day backups | db.t4g.small, 20 GB, one zone, 7-day backups | db.m7g.large, 100 GB, Multi-AZ, 30-day backups |
-| GPU (AWS Batch, `g5.2xlarge`, recommended) | 0 to 1 instance | 0 to 1 instance | 0 to 2 instances |
+| GPU (AWS Batch, `g5.2xlarge`) | 0 to 1 instance | 0 to 1 instance | 0 to 2 instances |
 | NAT gateways | 1 | 1 | 2 |
 | Logs kept | 30 days | 30 days | 365 days |
 
-**The GPU instance.** The code names `g6e.xlarge` (NVIDIA L40S), but **AWS does not offer G6e in Sydney**, and the work must stay there. The recommendation is a `g5.2xlarge`: 8 vCPUs, 32 GiB, one NVIDIA A10G (24 GB), and a 450 GB local NVMe disk that holds the weights between jobs. The alternatives, prices and the choice are in `docs/trellis2-before-deployment.md` (section 4). A job gets 1 GPU and 28 GiB, for at most an hour, with 3 attempts.
+**The GPU instance** is a `g5.2xlarge`: 8 vCPUs, 32 GiB, one NVIDIA A10G (24 GB), and a 450 GB local NVMe disk that holds the weights between jobs. It replaced `g6e.xlarge` (NVIDIA L40S), which AWS does not offer in Sydney; why, and the alternatives, are in `docs/trellis2-before-deployment.md` (section 4). A job gets 1 GPU, 8 vCPUs and 28 GiB, for at most an hour, with 3 attempts.
 
 | Piece | Where | Holds customer data? |
 |---|---|---|
 | API and background worker (ECS Fargate), database (RDS MySQL), storage (S3), queues (SQS) | Flex's AWS, one account per environment (dev, staging, prod), Sydney (`ap-southeast-2`) | Yes, in Sydney only (`docs/residency.md`) |
-| GPU jobs for machine models (AWS Batch, `g5.2xlarge` recommended), and the models CDN (CloudFront with signed links) | Flex's AWS, the same environment accounts | Yes (machine videos and models), in Sydney |
+| GPU jobs for machine models (AWS Batch, `g5.2xlarge`), and the models CDN (CloudFront with signed links) | Flex's AWS, the same environment accounts | Yes (machine videos and models), in Sydney |
 | Pipelines (release, TRELLIS.2 image), image repository (ECR), the code (CodeCommit `gym_floor_plan`) | Flex's AWS, the tooling account | No |
 | Sign-in: Amazon Cognito user pool, with every user's account and password | Flex's AWS, each environment account, Sydney | Yes: accounts, in Sydney only |
 | Mail (SES), alarms, dashboards | Flex's AWS, environment accounts | Mail only |
@@ -348,7 +348,7 @@ Before these steps: licences and their costs, access to the weights, and the GPU
 
 There is no endpoint and no API key, unlike the Digital Twin's RunPod worker:
 1. A machine's 360 video finishes uploading, or a reviewer presses **Build**. The backend submits a job to AWS Batch (`backend/src/assets/trellis2.js`), naming the video's S3 path, an output folder and the settings.
-2. Batch starts a GPU host in Sydney (`g5.2xlarge` recommended, none while idle) and runs our image. The worker reads the video from S3, picks frames, cuts the machine out, runs TRELLIS.2 and writes `model.glb` back to S3.
+2. Batch starts a GPU host in Sydney (`g5.2xlarge`, none while idle) and runs our image. The worker reads the video from S3, picks frames, cuts the machine out, runs TRELLIS.2 and writes `model.glb` back to S3.
 3. Batch's "job finished" event goes through EventBridge to the `gpu-jobs` queue. The backend worker reads it, prepares the model for the walkthrough (levels of detail, KTX2 textures), and puts it in front of the reviewer.
 
 Permission comes from IAM roles the infrastructure creates.
@@ -421,13 +421,13 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $HF_TOKEN" \
 
 ### 5.3 GPU quota in dev, staging and prod
 
-**Why it matters.** GPU jobs run on a G-family instance: `g5.2xlarge` is recommended, with 8 vCPUs and one NVIDIA A10G. `g6e` is not offered in Sydney (`docs/trellis2-before-deployment.md`, section 4). New AWS accounts usually allow 0 vCPUs of this family, so no job could start. AWS reviews increases by hand, so ask early.
+**Why it matters.** GPU jobs run on `g5.2xlarge`, a G-family instance with 8 vCPUs and one NVIDIA A10G. New AWS accounts usually allow 0 vCPUs of this family, so no job could start. AWS reviews increases by hand, so ask early.
 
 **Who.** Flex's AWS team, in each environment account. The tooling account needs none: building the image uses no GPU.
 
 **Steps.** `docs/runbooks/service-quotas.md`, section 1, in `ap-southeast-2`:
 1. Check the "Running On-Demand G and VT instances" quota (`L-DB2E81BA`).
-2. Confirm the chosen type (`g5.2xlarge`, or `g6.2xlarge`) is offered in the Sydney availability zones the VPC uses.
+2. Confirm `g5.2xlarge` is offered in the Sydney availability zones the VPC uses.
 3. Request `gpuMaxInstances × 8` vCPUs with room to spare: today at least 16 in dev and staging, and 32 in prod.
 
 **Done when** all three accounts show the new value.
@@ -743,7 +743,7 @@ Each list is in order. A step in brackets is another team's, and has to happen f
 
 1. Create, or confirm, the AWS accounts: tooling, dev, staging, prod. Give the team access. (2.1)
 2. Send the account numbers to Thomas for `cdk.json`. (2.1)
-3. Request the GPU quota ("Running On-Demand G and VT instances", `L-DB2E81BA`), in `ap-southeast-2`: at least 16 vCPUs in dev and staging, and 32 in prod (8-vCPU hosts). Confirm the chosen GPU type is offered in the Sydney zones. (5.3)
+3. Request the GPU quota ("Running On-Demand G and VT instances", `L-DB2E81BA`), in `ap-southeast-2`: at least 16 vCPUs in dev and staging, and 32 in prod (8-vCPU hosts). Confirm `g5.2xlarge` is offered in the Sydney zones. (5.3)
 4. In the tooling account, check the CodeBuild quota for concurrent builds on the Linux 2XLARGE environment; ask for at least 1. (5.6)
 5. Request SES production access in staging and prod, once the `Mail` stack is deployed. (2.4)
 6. Bootstrap every account in `ap-southeast-2` and `us-east-1`, staging and prod trusting the tooling account, with Thomas. (2.3)
@@ -771,7 +771,7 @@ GoalCert hosts only the web app's front end. Nothing about users or sign-in is a
 
 ### Tejesh
 
-1. **Done:** the 3D work merged to `main` on CodeCommit (this commit).
+1. **Done:** the 3D work merged to `main` on CodeCommit, with the GPU set to `g5.2xlarge` (5.3).
 2. Ask the company to request DINOv3 access (5.2), and Legal to decide on nvdiffrast (5.1). Follow both up until they are settled.
 3. When DINOv3 access is granted: lock the weights, run the tests, commit and push. (5.4)
 4. Once each environment is deployed: copy the weights into its bucket, dev first. (5.5)
@@ -822,7 +822,7 @@ What was run on the merged code:
 
 What is left is listed in Part 1.
 
-**The GPU type.** The code names `g6e.xlarge`, which AWS does not offer in Sydney, so a GPU deployment there would get no instances. The choice and its costs are in `docs/trellis2-before-deployment.md` (section 4). Owner: Tejesh, before the first GPU deployment.
+**The GPU type.** The code named `g6e.xlarge`, which AWS does not offer in Sydney, so a GPU deployment there would have got no instances. It now names `g5.2xlarge` (`infra/lib/gpu-stack.ts`), and the infrastructure tests check the type, the 8 vCPUs a job and the quota they imply. Why, and the alternatives: `docs/trellis2-before-deployment.md` (section 4).
 
 **Gaps the check found.** Both are in how the web app would be deployed (the release pipeline, and Flex's `Web` stack), not in the app itself. The plan in Part 4 closes both:
 

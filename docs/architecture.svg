@@ -127,7 +127,7 @@
   <text x="517" y="722" class="text">background jobs, GPU outcomes, e-mail</text>
   <rect x="505" y="770" width="310" height="110" rx="6" class="box"/>
   <text x="517" y="792" class="title">AWS Batch: GPU jobs (TRELLIS.2)</text>
-  <text x="517" y="810" class="text">g5.2xlarge (recommended): 8 vCPU, 32 GiB,</text>
+  <text x="517" y="810" class="text">g5.2xlarge: 8 vCPU, 32 GiB,</text>
   <text x="517" y="827" class="text">1 × NVIDIA A10G (24 GB), 450 GB local NVMe</text>
   <text x="517" y="844" class="text">0 to 2 instances, none while idle</text>
   <text x="517" y="861" class="text">job: 1 GPU, 28 GiB, 1 hour, 3 attempts</text>

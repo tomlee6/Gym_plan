@@ -123,7 +123,7 @@ Then ask Batch about the oldest (`aws batch describe-jobs --jobs <gpu_job_id>`),
   ```
 
   - **No hosts at all.** The usual reason is the "Running On-Demand G and VT instances" quota: new accounts have 0. See `service-quotas.md`, section 1.
-  - **Hosts could not be had.** The EC2 console's Auto Scaling activity for the environment says if Sydney had no `g6e.xlarge` capacity. The jobs start when capacity returns.
+  - **Hosts could not be had.** The EC2 console's Auto Scaling activity for the environment says if Sydney had no `g5.2xlarge` capacity. The jobs start when capacity returns.
   - **Every host busy.** Many builds at once queue behind `gpuMaxInstances` (`infra/cdk.json`). Raise it if this is the normal load, and the quota with it.
 - **`RUNNING` with more than one attempt:** the earlier attempts failed and Batch tried again. Each attempt's log stream says why. Usually this ends as a failure, with its own alarm.
 - **`RUNNING`, first attempt, close to an hour:** a slow build. Batch stops it at the hour, and it fails with "ran out of time".

@@ -149,8 +149,8 @@
 |---|---|---|---|---|
 | E-01 | Phase 0 test: 5 machines (chrome, black rubber, against a wall, in a row, large) through both routes. Compare look, scale error, time and file size. | Missing | Decides O14. | 0 · P0 |
 | E-02 | Legal review of TRELLIS.2's dependencies (nvdiffrast, nvdiffrec) for commercial use | Missing | nvdiffrast's licence allows research and evaluation only. Blocks production use (O13). | 0 · P0 |
-| E-03 | TRELLIS.2 Docker image (CUDA 12.4 build stage, L40S target) in ECR; weights copied into S3 | Missing | Replaces the RunPod kit. | 4 |
-| E-04 | AWS Batch GPU environment on `g6e.xlarge` in Sydney, idling at zero | Missing | Request the GPU quota early (F-15). | 4 |
+| E-03 | TRELLIS.2 Docker image (CUDA 12.4 build stage, A10G and L4 targets) in ECR; weights copied into S3 | Missing | Replaces the RunPod kit. | 4 |
+| E-04 | AWS Batch GPU environment on `g5.2xlarge` in Sydney, idling at zero | Missing | Request the GPU quota early (F-15). | 4 |
 | E-05 | `asset.build` worker: frame selection, cut-out, model (measured or generated), scale to footprint, optimise, store | Missing | | 4 |
 | E-06 | Model states and approval API: none → queued → building → awaiting review → approved or failed | Missing | `equipment_videos.status` has an unused `processing` value. | 4 |
 | E-07 | "Same as EQ-xxx" reuse of one model for identical machines | Missing | | 4 |

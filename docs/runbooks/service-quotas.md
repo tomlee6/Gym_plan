@@ -6,19 +6,19 @@ staging and prod accounts exist.
 
 | Request | Needed by | Typical wait |
 |---------|-----------|--------------|
-| GPU instances: G and VT On-Demand vCPU quota (for `g6e.xlarge`) | The 3D (GPU) worker | 1 to 3 business days; can need a follow-up |
+| GPU instances: G and VT On-Demand vCPU quota (for `g5.2xlarge`) | The 3D (GPU) worker | 1 to 3 business days; can need a follow-up |
 | SES production access | Mail to any address (not just verified ones) | About 1 business day |
 
 Use the account the resources run in (staging and prod separately).
 
-## 1. GPU quota for g6e.xlarge
+## 1. GPU quota for g5.2xlarge
 
 EC2 quotas are counted in **vCPUs per instance family group**, not in
-instances. `g6e.xlarge` is 4 vCPUs. New accounts often have 0 for G instances.
+instances. `g5.2xlarge` is 8 vCPUs. New accounts often have 0 for G instances.
 
-Decide the number: maximum concurrent GPU workers x 4. Example: up to 2
-workers in prod = 8 vCPUs; ask for 16 to leave room for a deploy that starts
-new instances before stopping old ones.
+Decide the number: maximum concurrent GPU workers x 8. Example: up to 2
+workers in prod = 16 vCPUs; ask for 32 to leave room for a deploy that starts
+new instances before stopping old ones. Dev and staging (1 worker): ask for 16.
 
 1. Check the current value. The quota is "Running On-Demand G and VT
    instances", code `L-DB2E81BA`:
@@ -29,22 +29,22 @@ new instances before stopping old ones.
      --query "Quota.{name:QuotaName,value:Value}"
    ```
 
-2. Confirm `g6e.xlarge` is offered in the Sydney AZs the VPC uses:
+2. Confirm `g5.2xlarge` is offered in the Sydney AZs the VPC uses:
 
    ```sh
    aws ec2 describe-instance-type-offerings --region ap-southeast-2 \
-     --location-type availability-zone --filters Name=instance-type,Values=g6e.xlarge \
+     --location-type availability-zone --filters Name=instance-type,Values=g5.2xlarge \
      --query "InstanceTypeOfferings[].Location"
    ```
 
    If no AZ lists it, stop and tell the 3D team: the residency rule (M-16)
    means we cannot move the GPU work to another region.
 
-3. Request the increase:
+3. Request the increase (32 in prod, 16 in dev and staging):
 
    ```sh
    aws service-quotas request-service-quota-increase --region ap-southeast-2 \
-     --service-code ec2 --quota-code L-DB2E81BA --desired-value 16
+     --service-code ec2 --quota-code L-DB2E81BA --desired-value 32
    ```
 
 4. Track it:
@@ -57,7 +57,7 @@ new instances before stopping old ones.
 
    If AWS opens a support case asking for the use case, answer: "Batch 3D
    reconstruction of gym floor scans, queue-driven, up to N concurrent
-   g6e.xlarge instances in ap-southeast-2; customer data must remain in
+   g5.2xlarge instances in ap-southeast-2; customer data must remain in
    Australia."
 
 5. If the GPU worker runs on Spot, also request "All G and VT Spot Instance
