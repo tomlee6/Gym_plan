@@ -18,7 +18,7 @@ vi.mock('./Walkthrough.jsx', () => ({
 vi.mock('../lib/client.js', () => ({ plansApi: { model: vi.fn(), share: vi.fn() }, reviewApi: { version: vi.fn() } }));
 
 const PLAN = { format: 'gymplan/3', ceilingHeightM: 3, walls: [], openings: [], columns: [], objects: [], zones: [], tags: [], flags: [] };
-const URL_SIGNED = 'https://d111111abcdef8.cloudfront.net/models/accounts/a/levels/h/build3d-1.glb?Expires=1792000000&Signature=s&Key-Pair-Id=K';
+const URL_SIGNED = 'https://flexgym-dev-models.s3.ap-southeast-2.amazonaws.com/models/accounts/a/levels/h/build3d-1.glb?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=3600&X-Amz-Signature=s';
 const stored = { generatorVersion: 'build3d-1', stored: true, bytes: 66052, url: URL_SIGNED, urlExpiresAt: '2026-10-12T10:15:00.000Z' };
 const notStored = { generatorVersion: 'browser-0', stored: false, bytes: null, url: null, urlExpiresAt: null };
 // J-06: the machines' approved models go to the viewer with the level.

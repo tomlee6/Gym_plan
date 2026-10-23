@@ -67,8 +67,6 @@ export interface EnvConfig {
   /** Optional AWS Chatbot Slack target. Both must be set to enable it. */
   slackWorkspaceId: string;
   slackChannelId: string;
-  /** Public key (PEM) for signed model URLs. Empty = no models distribution. */
-  modelsSigningPublicKeyPem: string;
   /**
    * The approved TRELLIS.2 worker image, by digest (L-10):
    * <tooling account>.dkr.ecr.ap-southeast-2.amazonaws.com/flexgym/trellis2@sha256:...
@@ -146,7 +144,6 @@ export function loadEnvConfig(node: Node, name: EnvName): EnvConfig {
     alarmEmail: str(raw, 'alarmEmail', where, true),
     slackWorkspaceId: str(raw, 'slackWorkspaceId', where, true),
     slackChannelId: str(raw, 'slackChannelId', where, true),
-    modelsSigningPublicKeyPem: str(raw, 'modelsSigningPublicKeyPem', where, true),
     trellis2Image: str(raw, 'trellis2Image', where, true),
     gpuMaxInstances: num(raw, 'gpuMaxInstances', where),
     hub: {

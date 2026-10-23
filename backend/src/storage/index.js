@@ -55,7 +55,7 @@ let modelsInstance;
 
 /**
  * Where generated 3D levels and machine models are kept: the models bucket
- * on AWS (served through CloudFront, M-07), or the same local folder as
+ * on AWS (downloaded with presigned links, M-07), or the same local folder as
  * everything else in development, under keys that start with models/.
  */
 export function modelStorage() {

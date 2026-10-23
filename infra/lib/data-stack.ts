@@ -18,7 +18,6 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { EnvConfig, resourcePrefix } from './config';
-import { ModelsDistribution } from './models-distribution';
 
 export interface DataStackProps extends StackProps {
   config: EnvConfig;
@@ -29,8 +28,6 @@ export interface DataStackProps extends StackProps {
 export interface AppSecrets {
   jwtSecret: secretsmanager.ISecret;
   storageSigningSecret: secretsmanager.ISecret;
-  /** The private key that signs model URLs (M-07); only with a models distribution. */
-  modelsSigningKey?: secretsmanager.ISecret;
 }
 
 /** MySQL database name the backend uses (DB_NAME). */
@@ -49,7 +46,6 @@ export class DataStack extends Stack {
   readonly gpuJobsQueue: sqs.Queue;
   readonly gpuJobsDeadLetterQueue: sqs.Queue;
   readonly secrets: AppSecrets;
-  readonly modelsDistribution?: ModelsDistribution;
 
   constructor(scope: Construct, id: string, props: DataStackProps) {
     super(scope, id, props);
@@ -129,8 +125,9 @@ export class DataStack extends Stack {
     });
 
     // ---- Models bucket -------------------------------------------------------
-    // 3D models produced by the GPU worker, served through the models
-    // CloudFront distribution with signed URLs (M-07).
+    // 3D walkthrough levels and machine models, and the GPU worker's weights.
+    // Browsers download models straight from here with presigned links the
+    // API makes (M-07), hence CORS: reads only, from the web app.
     this.modelsBucket = new s3.Bucket(this, 'ModelsBucket', {
       encryption: s3.BucketEncryption.KMS,
       encryptionKey: this.key,
@@ -142,6 +139,14 @@ export class DataStack extends Stack {
       serverAccessLogsBucket: this.logsBucket,
       serverAccessLogsPrefix: 's3/models/',
       removalPolicy: RemovalPolicy.RETAIN,
+      cors: [
+        {
+          allowedOrigins: [`https://${config.webDomain}`],
+          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+          allowedHeaders: ['*'],
+          maxAge: 3600,
+        },
+      ],
       lifecycleRules: [
         { id: 'abort-multipart', abortIncompleteMultipartUploadAfter: Duration.days(7) },
         { id: 'expire-old-versions', noncurrentVersionExpiration: Duration.days(90) },
@@ -253,28 +258,6 @@ export class DataStack extends Stack {
       jwtSecret: generated('JWT_SECRET', 'Signs API access tokens. Rotating it signs everyone out of access tokens.'),
       storageSigningSecret: generated('STORAGE_SIGNING_SECRET', 'Signs storage URLs issued by the API.'),
     };
-
-    // ---- Models distribution (M-07, owned by the 3D team) -------------------
-    // Hook point: only built once the 3D team supplies the public half of the
-    // signing key pair (context modelsSigningPublicKeyPem), because without a
-    // key group the distribution would serve models to anyone.
-    if (config.modelsSigningPublicKeyPem) {
-      this.modelsDistribution = new ModelsDistribution(this, 'ModelsDistribution', {
-        bucket: this.modelsBucket,
-        publicKeyPem: config.modelsSigningPublicKeyPem,
-        allowedOrigin: `https://${config.webDomain}`,
-      });
-      // The private half, which the backend signs model URLs with
-      // (backend/src/generator/links.js). Like the Hub secrets it starts as a
-      // random placeholder and is set by hand: docs/runbooks/models-signing-key.md.
-      this.secrets.modelsSigningKey = generated(
-        'MODELS_SIGNING_PRIVATE_KEY',
-        'Private key (PEM) that signs model URLs for the models CloudFront distribution. Placeholder: set it by hand to the private half of the key pair whose public half is modelsSigningPublicKeyPem.',
-      );
-    }
-    // Optional (3D team): a custom domain for the models distribution, which
-    // needs a us-east-1 certificate in EdgeCertStack. Signed URLs work on the
-    // distribution's own cloudfront.net name without one.
 
     new CfnOutput(this, 'DatabaseEndpoint', { value: this.database.dbInstanceEndpointAddress });
     new CfnOutput(this, 'CapturesBucketName', { value: this.capturesBucket.bucketName });

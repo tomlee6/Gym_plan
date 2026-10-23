@@ -41,7 +41,7 @@ The diagram shows prod. Dev and staging are the same components, each in its own
 | Piece | Where | Holds customer data? |
 |---|---|---|
 | API and background worker (ECS Fargate), database (RDS MySQL), storage (S3), queues (SQS) | Flex's AWS, one account per environment (dev, staging, prod), Sydney (`ap-southeast-2`) | Yes, in Sydney only (`docs/residency.md`) |
-| GPU jobs for machine models (AWS Batch, `g5.2xlarge`), and the models CDN (CloudFront with signed links) | Flex's AWS, the same environment accounts | Yes (machine videos and models), in Sydney |
+| GPU jobs for machine models (AWS Batch, `g5.2xlarge`) | Flex's AWS, the same environment accounts | Yes (machine videos and models), in Sydney |
 | Pipelines (release, TRELLIS.2 image), image repository (ECR), the code (CodeCommit `gym_floor_plan`) | Flex's AWS, the tooling account | No |
 | Sign-in: Amazon Cognito user pool, with every user's account and password | Flex's AWS, each environment account, Sydney | Yes: accounts, in Sydney only |
 | Mail (SES), alarms, dashboards | Flex's AWS, environment accounts | Mail only |
@@ -51,7 +51,7 @@ The diagram shows prod. Dev and staging are the same components, each in its own
 
 **How the pieces talk:**
 - **The web app**, served from GoalCert's CloudFront, calls the API in Flex's AWS at `https://api.<environment domain>`. The API accepts calls from that one web origin only (`PUBLIC_WEB_URL`).
-- **Browsers fetch files directly from Flex's storage**, through signed links: scans and photos from S3, 3D models from the models CDN. Both allow the same web origin.
+- **Browsers fetch files directly from Flex's S3 buckets in Sydney**, through presigned links the API makes: scans and photos from the captures bucket, 3D models from the models bucket. Both buckets allow the same web origin.
 - **The iPhone app** calls the same API, and uploads straight to S3 through signed links.
 - **Sign-in** is Amazon Cognito, in Flex's AWS, for both the web app and the iPhone app.
 - **The GPU work** is started by the backend, inside Flex's AWS. It has no endpoint and no key; AWS IAM roles give each part only what it needs.
@@ -138,7 +138,7 @@ The release machinery is written: CDK in `infra/`, and the pipeline `flexgym-rel
    - the sign-in settings that replace `hub` (Part 1);
    - `alarmEmail`, and Slack if used.
 
-   Also `context.pipeline.account` (the tooling account). Leave `trellis2Image` and `modelsSigningPublicKeyPem` empty for now.
+   Also `context.pipeline.account` (the tooling account). Leave `trellis2Image` empty for now.
 
 **Done when** `npm test` passes in `infra/` with the real values.
 
@@ -174,19 +174,13 @@ The same stack creates the TRELLIS.2 image pipeline (Part 5).
 
 **Done when** each environment answers `https://api.<domain>/health`, and signing in works from the web app (Part 4) and the iPhone app (Part 3).
 
-### 2.5 Models signing key
+### 2.5 Model downloads: nothing to set up
 
-**Who.** Thomas.
+**Who.** Nobody: it comes with the deploy (2.4).
 
-Browsers download 3D models (levels and machine models) only through the models CloudFront distribution, with links the API signs. Follow `docs/runbooks/models-signing-key.md` in each environment:
-1. Make a key pair.
-2. Put the public half in `cdk.json` (`modelsSigningPublicKeyPem`).
-3. Deploy.
-4. Set the private half in Secrets Manager, and restart the services.
+Browsers download 3D models (levels and machine models) straight from the models bucket in Sydney, with presigned links the API makes, each good for an hour. There is no CDN, and no signing key to make or rotate. The deploy also turns on the 3D level generator: the worker builds each approved level into the models bucket.
 
-This also turns on the 3D level generator.
-
-**Done when** a model link from the API is on the `cloudfront.net` domain and downloads.
+**Done when** an approved walkthrough opens in 3D, and its model link from the API (`GET /v1/plans/<planId>/model`, `generatedModel.url`) is on the bucket's own address, `<bucket>.s3.ap-southeast-2.amazonaws.com`.
 
 ### 2.6 Alarms reach a person
 
@@ -256,7 +250,7 @@ Today the Flex infrastructure would host the web app itself (`infra/lib/web-stac
 **Nothing changes in the backend or the web code.** On Flex's side, everything that lets a browser call in reads `webDomain` from `cdk.json`, so it already allows GoalCert's site:
 - the API's allowed origin (`PUBLIC_WEB_URL`);
 - the storage bucket's CORS rule, for scans, photos and uploads;
-- the models CDN's CORS rule.
+- the models bucket's CORS rule, for downloading 3D models.
 
 Set `webDomain` to the GoalCert hostname, and all three follow.
 
@@ -788,7 +782,7 @@ GoalCert hosts only the web app's front end. Nothing about users or sign-in is a
 
 **Thomas (app and infrastructure code):**
 1. Fill in `cdk.json`. (2.1)
-2. Bootstrap the accounts and deploy the pipelines; deploy the environments; run the migrations; make the first admin; set the models signing keys. (2.3 to 2.5)
+2. Bootstrap the accounts and deploy the pipelines; deploy the environments; run the migrations; make the first admin; check model downloads. (2.3 to 2.5)
 3. Finish the sign-in follow-ups in "Sign-in with Amazon Cognito: as built, and what is left" (Part 1): disabling removed users in Cognito, signing out of Cognito too, and the first-admin step.
 4. Switch off Flex's `Web` stack where GoalCert hosts the web app, and build the web app per environment with `VITE_API_URL`. (4.1, 4.3; see Part 7)
 5. The iPhone app: its bundle id (I-02), signing, TestFlight and App Store builds per environment; ARKit frames (I-05). (Part 3)
@@ -818,7 +812,7 @@ What was run on the merged code:
 
 **Sign-in.** Thomas's Cognito change was merged with the 3D work, and the checks above were run on the result. Conflicts in five files were resolved by keeping both sides:
 - the backend's packages;
-- the infra stacks: the `Auth` stack beside the GPU stack, with the GoalCert Hub secrets removed and the models signing key kept.
+- the infra stacks: the `Auth` stack beside the GPU stack, with the GoalCert Hub secrets removed.
 
 What is left is listed in Part 1.
 

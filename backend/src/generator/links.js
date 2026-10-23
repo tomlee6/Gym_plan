@@ -1,64 +1,41 @@
 /**
- * Links to stored 3D models (task M-07): a level's GLB, and later the
- * machine models. On AWS the models bucket is private and only CloudFront
- * may read it; the API hands out a CloudFront signed URL (canned policy) for
- * the one file, signed with the private half of the key pair whose public
- * half is in the distribution's key group (infra/lib/models-distribution.ts,
- * docs/runbooks/models-signing-key.md). Without a CDN (local work, tests),
- * the models store signs its own download link.
+ * Links to stored 3D models (task M-07): a level's GLB, and the machine
+ * models with their levels of detail. The models bucket is private; the API
+ * hands out a presigned link to the one file, made by the models store (S3
+ * in Sydney on AWS, the local folder in local work and tests), and the
+ * browser downloads it straight from the bucket, which allows the web app's
+ * origin (CORS, infra/lib/data-stack.ts).
  *
- * Expiry is rounded up to the next whole window, so every link to a file
- * issued in the same window is the same URL and the browser's cache can
- * reuse a download. A model's key holds its content hash and generator
- * version, so a file under a key never changes.
+ * On AWS the link is signed with the task role's temporary credentials, so
+ * it can stop working before `expiresAt` if those run out first. The viewer
+ * loads a level and each machine's far level of detail as soon as the page
+ * opens; nearer levels load as the visitor walks up, so on a page left open
+ * past its links they stay at the far level until the page is reloaded.
  */
-import { getSignedUrl } from '@aws-sdk/cloudfront-signer';
-
 import { config } from '../config.js';
 import { modelStorage } from '../storage/index.js';
 
-/** Links issued within the same window share their expiry, and so their URL. */
-const WINDOW_SECONDS = 15 * 60;
-
-/** A PEM from the environment, whether its line breaks came through as real ones or as `\n`. */
-const pem = (value) => value.replace(/\\n/g, '\n');
-
 /**
- * A signed link to a stored model: `{ url, expiresAt }`, valid for at least
- * `MODELS_URL_TTL_SECONDS` (one hour by default) and at most one window more.
+ * A presigned link to a stored model: `{ url, expiresAt }`, valid for
+ * `MODELS_URL_TTL_SECONDS` (one hour by default).
  */
-export async function modelLink(key, { now = Date.now(), store = modelStorage(), models = config.models } = {}) {
-  const ttl = models.urlTtlSeconds;
-  const expires = Math.ceil((now / 1000 + ttl) / WINDOW_SECONDS) * WINDOW_SECONDS;
-  const expiresAt = new Date(expires * 1000).toISOString();
-
-  if (models.cdnDomain) {
-    const path = key.split('/').map(encodeURIComponent).join('/');
-    const url = getSignedUrl({
-      url: `https://${models.cdnDomain}/${path}`,
-      keyPairId: models.signingKeyId,
-      privateKey: pem(models.signingPrivateKey),
-      dateLessThan: expiresAt,
-    });
-    return { url, expiresAt };
-  }
-  // No CDN (local work and tests): the store's own link, for the same time by
-  // our clock; the store reads its own, so the two can differ by a second.
-  return { url: await store.presignDownload(key, expires - Math.floor(now / 1000)), expiresAt };
+export async function modelLink(key, { now = Date.now(), store = modelStorage(), ttlSeconds = config.models.urlTtlSeconds } = {}) {
+  const url = await store.presignDownload(key, ttlSeconds);
+  // The store stamps the expiry by its own clock, a moment after ours.
+  return { url, expiresAt: new Date(now + ttlSeconds * 1000).toISOString() };
 }
 
 /**
  * A stored model's link as the API returns it: `{ url, urlExpiresAt }`. If
- * it cannot be signed (the signing key not yet set after the first deploy,
- * see docs/runbooks/models-signing-key.md), no link: the viewer then draws
- * the level from the plan, as it did before there were stored models.
+ * it cannot be made, no link: the viewer then draws the level from the plan,
+ * as it did before there were stored models.
  */
 export async function linkFields(key, options) {
   try {
     const { url, expiresAt } = await modelLink(key, options);
     return { url, urlExpiresAt: expiresAt };
   } catch (err) {
-    console.error('Could not sign a model link (is MODELS_SIGNING_PRIVATE_KEY set?):', err?.message ?? err);
+    console.error('Could not make a model link:', err?.message ?? err);
     return { url: null, urlExpiresAt: null };
   }
 }

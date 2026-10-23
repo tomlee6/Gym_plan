@@ -192,14 +192,10 @@ export const config = Object.freeze({
   },
 
   /**
-   * Links to stored 3D models (M-07). On AWS: the models CloudFront
-   * distribution and the key pair its signed URLs use (the private key is a
-   * secret, PEM). Without a CDN domain the models store signs its own links.
+   * Links to stored 3D models (M-07): presigned links straight to the models
+   * bucket (generator/links.js), good for this long.
    */
   models: {
-    cdnDomain: optional('MODELS_CDN_DOMAIN', ''),
-    signingKeyId: optional('MODELS_SIGNING_KEY_ID', ''),
-    signingPrivateKey: optional('MODELS_SIGNING_PRIVATE_KEY', ''),
     urlTtlSeconds: int('MODELS_URL_TTL_SECONDS', 3600),
   },
 
@@ -245,10 +241,6 @@ export function productionProblems(c = config) {
   if (c.storage.s3Region !== HOME_REGION) problems.push(`S3_REGION must be ${HOME_REGION} in production`);
   if (c.generator.driver === 'glb' && !c.storage.modelsBucket) {
     problems.push('MODELS_BUCKET must be set when GENERATOR_DRIVER is glb');
-  }
-  // Models are only ever served through the signed CloudFront distribution (M-07).
-  if (c.generator.driver === 'glb' && !(c.models.cdnDomain && c.models.signingKeyId && c.models.signingPrivateKey)) {
-    problems.push('MODELS_CDN_DOMAIN, MODELS_SIGNING_KEY_ID and MODELS_SIGNING_PRIVATE_KEY must be set when GENERATOR_DRIVER is glb');
   }
   if (!['none', 'trellis2'].includes(c.assets.builder)) problems.push('ASSET_BUILDER must be none or trellis2');
   if (!['webp', 'ktx2'].includes(c.assets.textures)) problems.push('MODEL_TEXTURES must be webp or ktx2');

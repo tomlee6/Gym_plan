@@ -1,14 +1,12 @@
 /**
- * Models delivery (M-07). With a signing public key in an environment's
- * context, the stage gets the models CloudFront distribution (signed URLs
- * only), the private key's secret, and a backend set up to generate levels
- * and sign links to them. Without one, none of it, and the viewer keeps
- * building levels in the browser. See docs/runbooks/models-signing-key.md.
+ * Models delivery (M-07). Browsers download 3D models straight from the
+ * private models bucket in Sydney, with presigned links the API makes: no
+ * CDN and no signing key. The worker builds each approved level into that
+ * bucket in every environment.
  *
  * Run: npm test
  */
 import { strict as assert } from 'node:assert';
-import { generateKeyPairSync } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -21,10 +19,9 @@ const cdkJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'cdk.json'
 
 type Resource = { Type: string; Properties?: Record<string, any> };
 
-/** The dev stage's stacks, with `publicKeyPem` as the dev models signing key. */
-function devStacks(publicKeyPem: string): Map<string, CloudFormationStackArtifact> {
+/** The dev stage's stacks. */
+function devStacks(): Map<string, CloudFormationStackArtifact> {
   const context = JSON.parse(JSON.stringify(cdkJson.context));
-  context.environments.dev.modelsSigningPublicKeyPem = publicKeyPem;
   const outdir = fs.mkdtempSync(path.join(os.tmpdir(), 'flexgym-models-'));
   const app = new App({ context: { ...context, deployWebAssets: false }, outdir });
   const stacks = buildApp(app).synth().stacksRecursively.filter((s) => s.hierarchicalId.startsWith('FlexGym-Dev/'));
@@ -45,42 +42,41 @@ function containers(api: CloudFormationStackArtifact) {
   );
 }
 
-const { publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-const withKey = devStacks(publicKey.export({ type: 'spki', format: 'pem' }).toString());
-const withoutKey = devStacks('');
+const stacks = devStacks();
+const data = stacks.get('Data')!;
 
-test('a signing key brings a models distribution that serves signed URLs only', () => {
-  const data = withKey.get('Data')!;
-  const [distribution] = ofType(data, 'AWS::CloudFront::Distribution');
-  assert.ok(distribution, 'a models distribution');
-  const behaviour = distribution.Properties!.DistributionConfig.DefaultCacheBehavior;
-  assert.equal(behaviour.TrustedKeyGroups.length, 1, 'every request must be signed');
-  assert.equal(behaviour.ViewerProtocolPolicy, 'https-only');
-  assert.equal(ofType(data, 'AWS::CloudFront::PublicKey').length, 1);
+/** The models bucket: the one whose access logs go under s3/models/. */
+const modelsBucket = ofType(data, 'AWS::S3::Bucket').find(
+  (b) => b.Properties?.LoggingConfiguration?.LogFilePrefix === 's3/models/',
+)!;
+
+test('no CDN and no signing key for models: they come straight from the bucket', () => {
+  assert.equal(ofType(data, 'AWS::CloudFront::Distribution').length, 0);
+  assert.equal(ofType(data, 'AWS::CloudFront::PublicKey').length, 0);
   const secretNames = ofType(data, 'AWS::SecretsManager::Secret').map((s) => s.Properties!.Name as string);
-  assert.ok(secretNames.some((n) => n.endsWith('/MODELS_SIGNING_PRIVATE_KEY')), 'the private key secret');
+  assert.ok(!secretNames.some((n) => /MODELS_SIGNING/.test(n)));
 });
 
-test('the API and worker can then generate levels and sign links to them', () => {
-  const backend = containers(withKey.get('Api')!);
+test('the models bucket stays private, and lets only the web app read it from a browser', () => {
+  assert.ok(modelsBucket, 'a models bucket');
+  const block = modelsBucket.Properties!.PublicAccessBlockConfiguration;
+  assert.deepEqual(
+    [block.BlockPublicAcls, block.BlockPublicPolicy, block.IgnorePublicAcls, block.RestrictPublicBuckets],
+    [true, true, true, true],
+  );
+  const [rule, ...others] = modelsBucket.Properties!.CorsConfiguration.CorsRules;
+  assert.equal(others.length, 0);
+  assert.deepEqual(rule.AllowedOrigins, [`https://${cdkJson.context.environments.dev.webDomain}`]);
+  assert.deepEqual([...rule.AllowedMethods].sort(), ['GET', 'HEAD'], 'reads only');
+});
+
+test('the API and worker generate levels and make the links, with no signing secret', () => {
+  const backend = containers(stacks.get('Api')!);
   assert.deepEqual(backend.map((c) => c.name).sort(), ['api', 'worker']);
   for (const c of backend) {
     assert.equal(c.env.GENERATOR_DRIVER, 'glb', `${c.name} generates levels`);
-    assert.ok(c.env.MODELS_CDN_DOMAIN, `${c.name} knows the distribution`);
-    assert.ok(c.env.MODELS_SIGNING_KEY_ID, `${c.name} knows the key id`);
     assert.ok(c.env.MODELS_BUCKET, `${c.name} knows the bucket`);
-    assert.ok(c.secrets.includes('MODELS_SIGNING_PRIVATE_KEY'), `${c.name} can sign`);
-  }
-});
-
-test('without a signing key there is no distribution and the generator stays off', () => {
-  const data = withoutKey.get('Data')!;
-  assert.equal(ofType(data, 'AWS::CloudFront::Distribution').length, 0);
-  const secretNames = ofType(data, 'AWS::SecretsManager::Secret').map((s) => s.Properties!.Name as string);
-  assert.ok(!secretNames.some((n) => n.endsWith('/MODELS_SIGNING_PRIVATE_KEY')));
-  for (const c of containers(withoutKey.get('Api')!)) {
-    assert.equal(c.env.GENERATOR_DRIVER, undefined, `${c.name} leaves the generator off`);
     assert.equal(c.env.MODELS_CDN_DOMAIN, undefined);
-    assert.ok(!c.secrets.includes('MODELS_SIGNING_PRIVATE_KEY'));
+    assert.ok(!c.secrets.some((s: string) => /MODELS_SIGNING/.test(s)));
   }
 });

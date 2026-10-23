@@ -157,7 +157,7 @@ subdomain must **also** send it as a header. With
 `VITE_API_URL=https://api.gym.goalcert.example`, the header is:
 
 ```
-Content-Security-Policy: default-src 'self'; script-src 'self'; connect-src 'self' blob: data: https://api.gym.goalcert.example https://*.amazonaws.com https://*.cloudfront.net; img-src 'self' data: blob: https:; media-src https: blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' blob: data: https://api.gym.goalcert.example https://*.amazonaws.com; img-src 'self' data: blob: https:; media-src https: blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
 ```
 
 Print it for your own settings with:
@@ -166,9 +166,9 @@ Print it for your own settings with:
 node -e "import('./vite.config.js').then(m => console.log(m.cspFor(process.env, { header: true })))"
 ```
 
-Notes: `connect-src` covers the API, signed S3 URLs (scans, meshes,
-keyframes, uploads) and CloudFront-served models; narrow the wildcards to
-your bucket and distribution domains if you can. `img-src https:` and
+Notes: `connect-src` covers the API and presigned S3 URLs (scans, meshes,
+keyframes, uploads, and the 3D models from the models bucket); narrow the
+wildcard to your buckets' domains if you can. `img-src https:` and
 `media-src https:` allow signed photo, keyframe and 360° video URLs. The
 Google Fonts origins are there for the Inter stylesheet in `index.html`;
 drop them if the font is self-hosted. The Hub sign-in is a top-level

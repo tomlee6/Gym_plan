@@ -127,14 +127,9 @@ export class ApiStack extends Stack {
       environment.ASSET_BUILDER = 'trellis2';
       environment.ASSET_AUTO_BUILD = 'true';
     }
-    // With the models distribution in place, the worker builds and stores each
-    // approved level (J-01) and the API hands out signed links to it (M-07).
-    // The backend refuses to start with the generator on and no way to sign.
-    if (data.modelsDistribution) {
-      environment.MODELS_CDN_DOMAIN = data.modelsDistribution.distribution.distributionDomainName;
-      environment.MODELS_SIGNING_KEY_ID = data.modelsDistribution.publicKey.publicKeyId;
-      environment.GENERATOR_DRIVER = 'glb';
-    }
+    // The worker builds and stores each approved level (J-01) in the models
+    // bucket, and the API hands out presigned links to it (M-07).
+    environment.GENERATOR_DRIVER = 'glb';
 
     const secrets: Record<string, ecs.Secret> = {
       DB_USER: ecs.Secret.fromSecretsManager(data.databaseSecret, 'username'),
@@ -143,9 +138,6 @@ export class ApiStack extends Stack {
       STORAGE_SIGNING_SECRET: ecs.Secret.fromSecretsManager(data.secrets.storageSigningSecret),
       HUB_CLIENT_SECRET: ecs.Secret.fromSecretsManager(auth.clientSecret),
     };
-    if (data.secrets.modelsSigningKey) {
-      secrets.MODELS_SIGNING_PRIVATE_KEY = ecs.Secret.fromSecretsManager(data.secrets.modelsSigningKey);
-    }
 
     // ---- Task role: what the backend code may do in AWS ----------------------
     // Shared by API and worker; both run the same code base and the API also
