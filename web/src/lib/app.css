@@ -916,7 +916,7 @@
   margin: 0;
 }
 
-/* Sign-in */
+/* Sign-in: what the product does beside the sign-in card (SignInFrame) */
 
 .rv-login {
   min-height: 100dvh;
@@ -925,25 +925,251 @@
   padding: 24px 16px;
 }
 
-.rv-login-card {
-  width: min(380px, 100%);
+.si {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  background:
+    radial-gradient(48rem 32rem at 105% 110%, rgba(0, 170, 226, 0.08), transparent 60%),
+    var(--bg);
+}
+
+.si-showcase {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 40px clamp(28px, 4.5vw, 64px) 36px;
+  overflow: hidden;
+  background:
+    radial-gradient(40rem 28rem at 0% 0%, rgba(0, 202, 178, 0.12), transparent 65%),
+    linear-gradient(165deg, #011f26 0%, #010508 72%);
+  border-right: 1px solid rgba(63, 103, 115, 0.35);
+}
+
+/* A faint metre grid, like the plan canvas, fading out to the edges. */
+.si-showcase::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(63, 103, 115, 0.13) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(63, 103, 115, 0.13) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse 70% 60% at 35% 45%, #000 20%, transparent 80%);
+}
+
+.si-showcase > * {
+  position: relative;
+}
+
+.si-showcase .rv-brand {
+  padding: 0;
+}
+
+.si-showcase .rv-product {
+  display: block;
+}
+
+.si-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2.4px;
+  color: var(--accent);
+}
+
+.si-title {
+  margin-top: 12px;
+  font-size: clamp(30px, 3.4vw, 44px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -1px;
+}
+
+.si-lead {
+  margin-top: 14px;
+  max-width: 46ch;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #a3abb2;
+}
+
+.si-sketch {
+  display: block;
+  width: min(100%, 500px);
+  height: auto;
+  margin: auto 0;
+  align-self: center;
+  transform: perspective(1100px) rotateX(34deg) rotateZ(-6deg);
+  filter: drop-shadow(0 34px 48px rgba(0, 0, 0, 0.55));
+}
+
+.si-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.si-step {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(63, 103, 115, 0.35);
+  background: rgba(1, 6, 10, 0.6);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.si-step strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.si-step-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-bottom: 6px;
+  border-radius: 9px;
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.si-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 40px 24px 28px;
+}
+
+.si-card {
+  position: relative;
   display: grid;
   gap: 14px;
+  width: min(400px, 100%);
+  padding: 34px 30px 28px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #070d15 0%, #01060a 100%);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
 }
 
-.rv-login-card .rv-brand {
-  padding: 0 0 12px;
+/* The app's hairline edge: a gradient border drawn round the card. */
+.si-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: var(--glass-edge);
+  pointer-events: none;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
 }
 
-.rv-login-card h1 {
-  font-size: 22px;
+.si-card h1 {
+  font-size: 26px;
   font-weight: 700;
-  letter-spacing: -0.4px;
+  letter-spacing: -0.6px;
 }
 
-.rv-login-card > p {
-  margin-top: -8px;
-  font-size: 13px;
+.si-card > p.muted {
+  margin-top: -6px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.si-card .rv-button.wide {
+  margin-top: 8px;
+  height: 46px;
+  border-radius: 23px;
+  font-size: 14.5px;
+  box-shadow: 0 10px 28px rgba(0, 202, 178, 0.22);
+  transition:
+    filter 0.15s,
+    transform 0.15s;
+}
+
+.si-card .rv-button.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.si-note {
+  margin-top: 6px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(57, 57, 57, 0.7);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.si-foot {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* A short laptop screen: a smaller sketch, so the steps still fit. */
+@media (min-width: 961px) and (max-height: 860px) {
+  .si-showcase {
+    gap: 20px;
+    padding-top: 30px;
+    padding-bottom: 26px;
+  }
+
+  .si-sketch {
+    width: min(100%, 380px);
+  }
+}
+
+/* One column: the name and the promise, then the card; the sketch and steps go. */
+@media (max-width: 960px) {
+  .si {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+  }
+
+  .si-showcase {
+    gap: 18px;
+    padding: 24px 20px 26px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(63, 103, 115, 0.35);
+  }
+
+  .si-title {
+    font-size: 28px;
+  }
+
+  .si-lead {
+    font-size: 14px;
+  }
+
+  .si-sketch,
+  .si-steps {
+    display: none;
+  }
+
+  .si-panel {
+    justify-content: flex-start;
+    padding: 24px 16px 28px;
+  }
+
+  .si-card {
+    padding: 26px 20px 22px;
+  }
 }
 
 /* Narrow screens */

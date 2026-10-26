@@ -308,6 +308,23 @@ export async function completeHubSignIn(search) {
   }
 }
 
+/**
+ * Signs this tab in with a link from the iPhone app (POST /v1/auth/web-link).
+ * Its token is the first refresh token of a web session made for whoever
+ * is signed in on the phone, so it is swapped like any other, once.
+ * `accountId` is the gym account the phone was working in. Throws a
+ * SignInError 'link_expired' when the link was used already or has lapsed.
+ */
+export async function signInWithLink({ token, accountId = null }) {
+  const res = await raw('POST', '/v1/auth/refresh', { refreshToken: token });
+  if (!res.ok) {
+    throw new SignInError('link_expired', 'This link from the app has been used or has expired.');
+  }
+  const tokens = startSession(await res.json());
+  if (accountId && (tokens.accounts ?? []).some((a) => a.id === accountId)) setAccountId(accountId);
+  return tokens;
+}
+
 export async function signOut() {
   const token = readRefresh();
   endSession();

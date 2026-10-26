@@ -181,7 +181,8 @@ export const config = Object.freeze({
   assets: {
     builder: optional('ASSET_BUILDER', 'none'),
     generatorVersion: optional('ASSET_GENERATOR_VERSION', 'trellis2-1'),
-    // Build a machine's model as soon as its 360 video is in.
+    // Build a machine's model as soon as its 360 video is in. Off in every
+    // AWS environment: the GPU runs only when a reviewer asks for a build.
     autoBuild: bool('ASSET_AUTO_BUILD', false),
     // Machine model textures (N-01): ktx2 (compressed on the graphics card; the web app's transcoder is
     // built without eval, web/vendor/basis), or webp.

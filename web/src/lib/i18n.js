@@ -28,6 +28,18 @@ const en = {
     title: 'Sign in',
     lead: 'Gym owners, surveyors, reviewers and Flex staff all sign in with their Flex Gym Scan email and password.',
     button: 'Sign in',
+    note: 'One sign-in for the web and the Gym Scan iPhone app. New to Flex Gym Scan? Your gym’s owner or Flex invites you by email.',
+    footer: 'Next XR · Flex 2.0',
+    showcase: {
+      eyebrow: 'GYM FLOOR PLANS IN 3D',
+      title: 'Scan it. Check it. Walk it.',
+      lead: 'Scan each level with the Gym Scan iPhone app. Flex checks every plan before anyone sees it, then builds a 3D walkthrough your team can open anywhere.',
+      steps: {
+        scan: { title: 'Scan', body: 'LiDAR on the iPhone captures the walls, doors and every machine.' },
+        review: { title: 'Review', body: 'A Flex reviewer checks the plan and each machine’s 3D model.' },
+        walk: { title: 'Walk through', body: 'Open it in any browser, or share a read-only link.' },
+      },
+    },
     redirecting: 'Taking you to sign-in…',
     finishing: 'Finishing signing in…',
     retry: 'Sign in again',
@@ -46,6 +58,12 @@ const en = {
     noAccess: {
       title: 'No access to this account',
       body: 'Your role in this gym account does not include these pages. Choose another account, or ask its owner.',
+    },
+    link: {
+      opening: 'Opening it from the Gym Scan app…',
+      failedTitle: 'This link has expired',
+      expired:
+        'A link from the Gym Scan app works once, within two minutes. Sign in here instead, or open it again from the app.',
     },
   },
   layout: {

@@ -104,6 +104,32 @@ class AuthService {
     }
   }
 
+  /// [page], a page of the web app, as a link that opens it already signed
+  /// in as whoever is signed in here, in the account they are working in
+  /// (`POST /v1/auth/web-link`). The link works once, within two minutes,
+  /// and this phone's own session is not touched. When there is no session
+  /// here or the server cannot make one, it is [page] as it is: the web app
+  /// then asks to sign in, a step more but never a dead end.
+  Future<Uri> signedInWebLink(Uri page) async {
+    final AuthSession session = _api.session;
+    final String? refreshToken = session.refreshToken;
+    if (refreshToken == null) return page;
+    try {
+      final Map<String, Object?> body = await _api
+          .postPublic('/v1/auth/web-link', <String, Object?>{
+            'refreshToken': refreshToken,
+            'path': page.path,
+            'accountId': ?session.currentAccountId,
+          });
+      final Object? url = body['url'];
+      return url is String ? Uri.parse(url) : page;
+    } on ApiException {
+      return page;
+    } on FormatException {
+      return page;
+    }
+  }
+
   /// Revokes the refresh token on the server, then forgets the session and
   /// the offline copies made for it. Signing out still works offline; the
   /// token then just expires.

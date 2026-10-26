@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router';
 
 import { homeFor, useAuth } from './auth.jsx';
 import { t } from './i18n.js';
-import { Brand } from './LoginPage.jsx';
+import { SignInFrame } from './LoginPage.jsx';
 import { useTitle } from './useTitle.js';
 
 /**
@@ -71,26 +71,23 @@ export default function AuthCallbackPage() {
   }
 
   return (
-    <main className="rv-login">
-      <div className="rv-login-card">
-        <Brand />
-        {error ? (
-          <>
-            <h1>{t('auth.failedTitle')}</h1>
-            <p className="rv-error" role="alert">
-              {error.code === 'config' ? error.message : messageFor(error)}
-            </p>
-            <button type="button" className="rv-button primary wide" onClick={retry} disabled={retrying}>
-              {retrying ? t('auth.redirecting') : t('auth.retry')}
-            </button>
-          </>
-        ) : (
-          <div role="status" className="rv-callback-wait">
-            <span className="rv-spinner" aria-hidden="true" />
-            <span>{t('auth.finishing')}</span>
-          </div>
-        )}
-      </div>
-    </main>
+    <SignInFrame>
+      {error ? (
+        <>
+          <h1>{t('auth.failedTitle')}</h1>
+          <p className="rv-error" role="alert">
+            {error.code === 'config' ? error.message : messageFor(error)}
+          </p>
+          <button type="button" className="rv-button primary wide" onClick={retry} disabled={retrying}>
+            {retrying ? t('auth.redirecting') : t('auth.retry')}
+          </button>
+        </>
+      ) : (
+        <div role="status" className="rv-callback-wait">
+          <span className="rv-spinner" aria-hidden="true" />
+          <span>{t('auth.finishing')}</span>
+        </div>
+      )}
+    </SignInFrame>
   );
 }

@@ -16,6 +16,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 import { EnvConfig, HOME_REGION, resourcePrefix } from './config';
 import { MailStack } from './mail-stack';
+import { SIGN_IN_CSS } from './sign-in-style';
 
 export interface AuthStackProps extends StackProps {
   config: EnvConfig;
@@ -82,6 +83,15 @@ export class AuthStack extends Stack {
       cognitoDomain: { domainPrefix: prefix },
     });
     this.domainUrl = domain.baseUrl();
+
+    // Cognito's sign-in pages in the Flex Gym Scan colours, for every app
+    // client (sign-in-style.ts). Cognito needs the domain first.
+    const style = new cognito.CfnUserPoolUICustomizationAttachment(this, 'SignInStyle', {
+      userPoolId: this.userPool.userPoolId,
+      clientId: 'ALL',
+      css: SIGN_IN_CSS,
+    });
+    style.node.addDependency(domain);
 
     this.client = this.userPool.addClient('AppClient', {
       userPoolClientName: `${prefix}-backend`,

@@ -119,13 +119,13 @@ export class ApiStack extends Stack {
       ALLOW_SIMULATED_SCANS: 'false',
     };
     // The GPU jobs that make machine models (L-10, L-05): where the backend
-    // submits them. Each machine's model is built as soon as its 360 video is
-    // in, and its outcome comes back on the gpu-jobs queue.
+    // submits them, and its outcome comes back on the gpu-jobs queue. A job
+    // runs only when a reviewer asks for a build in the editor: an upload
+    // starts none (ASSET_AUTO_BUILD stays off), so the GPU runs only when needed.
     if (props.gpu) {
       environment.TRELLIS2_JOB_QUEUE = props.gpu.jobQueue.jobQueueName;
       environment.TRELLIS2_JOB_DEFINITION = props.gpu.jobDefinition.jobDefinitionName;
       environment.ASSET_BUILDER = 'trellis2';
-      environment.ASSET_AUTO_BUILD = 'true';
     }
     // The worker builds and stores each approved level (J-01) in the models
     // bucket, and the API hands out presigned links to it (M-07).

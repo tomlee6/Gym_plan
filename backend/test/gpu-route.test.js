@@ -1,8 +1,9 @@
 /**
  * The generated route for machine models (L-05): the build is submitted to
- * AWS Batch as soon as a machine's 360 video is in, and Batch's outcome,
- * read from the gpu-jobs queue, finishes or fails the model. Batch, SQS and
- * the GPU are stood in for; the database, the jobs and the stores are real.
+ * AWS Batch when a reviewer asks for it (an upload starts none), and
+ * Batch's outcome, read from the gpu-jobs queue, finishes or fails the
+ * model. Batch, SQS and the GPU are stood in for; the database, the jobs
+ * and the stores are real.
  *
  * The tests run in order and build on each other.
  */
@@ -98,13 +99,14 @@ describe('the generated route (L-05)', () => {
     if (modelsDir) await rm(modelsDir, { recursive: true, force: true });
   });
 
-  it('submits the build to the GPU as soon as the 360 video is in', async () => {
+  it('submits a build to the GPU only when a reviewer asks for one', async () => {
     reviewer = (await login(ctx, DEMO.reviewer)).accessToken;
     modelsDir = await mkdtemp(path.join(os.tmpdir(), 'gym-gpu-models-'));
     models = new LocalStorage({ dir: modelsDir, secret: config.storage.signingSecret, publicUrl: config.publicApiUrl });
     setModelStorage(models);
     // WebP here, as encoding KTX2 takes seconds a model; KTX2 itself is tested in optimise.test.js.
-    Object.assign(config.assets, { autoBuild: true, jobQueue: 'flexgym-dev-trellis2', jobDefinition: 'flexgym-dev-trellis2', textures: 'webp' });
+    // As every AWS environment has it: no build on upload (ASSET_AUTO_BUILD off).
+    Object.assign(config.assets, { autoBuild: false, jobQueue: 'flexgym-dev-trellis2', jobDefinition: 'flexgym-dev-trellis2', textures: 'webp' });
     Object.assign(config.storage, { s3Bucket: 'flexgym-dev-captures', modelsBucket: 'flexgym-dev-models' });
     setBatch(batch);
     setBuilder(submitBuild);
@@ -137,9 +139,13 @@ describe('the generated route (L-05)', () => {
       .send({ partSize: PART, bytes: video.length, contentType: 'video/mp4', durationSeconds: 40 })
       .expect(201);
     await putPart(ctx, opened.body.files[0].parts[0].url, video).expect(200);
-    assert.equal(batch.submitted.length, 0, 'nothing until the video is complete');
     await as('post', `/v1/captures/${captureId}/equipment/EQ-001/video/complete`).send({}).expect(200);
+    // The video is in, and the GPU has not been asked for anything.
+    assert.equal(batch.submitted.length, 0, 'an upload starts no GPU job');
+    assert.equal(await newest(), null, 'and queues no model');
 
+    // The reviewer asks for one in the editor.
+    await build().expect(202);
     const model = await newest();
     assert.equal(model.status, 'building');
     assert.equal(model.gpu_job_id, 'job-1');
@@ -157,8 +163,9 @@ describe('the generated route (L-05)', () => {
     assert.equal(job.parameters.output, `s3://flexgym-dev-models/models/accounts/${DEMO.account}/assets/${model.id}/try-1/`);
     assert.deepEqual(JSON.parse(job.parameters.params), { seed: 1, machine: { route: 'generated', box: { w: 0.85, d: 2.1, h: 1.5 } } });
 
-    // Saying the video is complete again builds nothing more.
+    // Saying the video is complete again, or asking while it builds, sends nothing more.
     await as('post', `/v1/captures/${captureId}/equipment/EQ-001/video/complete`).send({}).expect(200);
+    await build().expect(200);
     assert.equal(batch.submitted.length, 1);
   });
 

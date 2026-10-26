@@ -6,6 +6,7 @@ import '../models/plan.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../services/api_client.dart';
+import '../services/auth_service.dart';
 import '../services/plans_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_toast.dart';
@@ -21,17 +22,23 @@ class PlanReadyScreen extends StatefulWidget {
 
   final Plan plan;
 
+  /// Opens a link in Safari. Tests replace it.
+  static Future<bool> Function(Uri url) openInSafari = (Uri url) =>
+      launchUrl(url, mode: LaunchMode.externalApplication);
+
   @override
   State<PlanReadyScreen> createState() => _PlanReadyScreenState();
 }
 
 class _PlanReadyScreenState extends State<PlanReadyScreen> {
   final PlansService _service = PlansService();
+  final AuthService _auth = AuthService();
 
   PlanReadyDetail? _detail;
   String? _error;
   String? _shareLink;
   bool _sharing = false;
+  bool _opening = false;
 
   @override
   void initState() {
@@ -71,11 +78,15 @@ class _PlanReadyScreenState extends State<PlanReadyScreen> {
     }
   }
 
+  /// Opens the walkthrough in Safari already signed in, so the web app does
+  /// not ask for the password again.
   Future<void> _openWalkthrough(String url) async {
-    final bool opened = await launchUrl(
-      Uri.parse(url),
-      mode: LaunchMode.externalApplication,
-    );
+    if (_opening) return;
+    setState(() => _opening = true);
+    final Uri link = await _auth.signedInWebLink(Uri.parse(url));
+    if (!mounted) return;
+    setState(() => _opening = false);
+    final bool opened = await PlanReadyScreen.openInSafari(link);
     if (!opened && mounted) {
       showAppToast(context, 'Could not open the walkthrough.');
     }
@@ -181,6 +192,7 @@ class _PlanReadyScreenState extends State<PlanReadyScreen> {
               PrimaryButton(
                 label: 'Open walkthrough in Safari',
                 icon: Icons.open_in_new_rounded,
+                busy: _opening,
                 // Approved but not generated yet: nothing to open.
                 onPressed: d.walkthroughUrl == null
                     ? null

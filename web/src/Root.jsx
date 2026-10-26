@@ -6,6 +6,7 @@ import AccountsPage from './admin/AccountsPage.jsx';
 import AuditPage from './admin/AuditPage.jsx';
 import StaffPage from './admin/StaffPage.jsx';
 import App from './App.jsx';
+import AppLinkPage from './lib/AppLinkPage.jsx';
 import AuthCallbackPage from './lib/AuthCallbackPage.jsx';
 import { homeFor, ROLES, useAuth } from './lib/auth.jsx';
 import Layout from './lib/Layout.jsx';
@@ -49,6 +50,7 @@ function ShareRoute() {
  *
  *   /login                        sign-in for every role, through the GoalCert Hub
  *   /auth/callback                where the Hub sends the browser back (B-07)
+ *   /auth/link                    from the iPhone app, already signed in
  *   /s/:token                     share link, no sign-in (VIEW-07)
  *   /plans, /plans/:id, /upload   owner status and uploads (ACC-03, UPL)
  *   /plans/:id/walkthrough        the 3D walkthrough (VIEW)
@@ -64,6 +66,7 @@ export default function Root() {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
+        <Route path="/auth/link" element={<AppLinkPage />} />
         <Route path="/s/:token" element={<ShareRoute />} />
         <Route
           path="/plans/:planId/walkthrough"

@@ -8,6 +8,7 @@
  *   POST /v1/auth/hub          swap the Hub's one-time code for Flex tokens
  *   POST /v1/auth/refresh      rotate the refresh token
  *   POST /v1/auth/logout       end this session
+ *   POST /v1/auth/web-link     a link that opens the web app signed in, from the phone
  *
  * Access tokens are JWTs valid for 30 minutes. Refresh tokens are random,
  * stored as SHA-256 only, and replaced on every use; reusing an old one
@@ -24,7 +25,7 @@ import { many, one, pool, transaction } from '../db/pool.js';
 import { HttpError, badRequest, unauthorised } from '../errors.js';
 import { hub, hubRejected, verifyIdentity } from '../hub/index.js';
 import { newId, newToken, sha256 } from '../ids.js';
-import { signAccessToken } from '../middleware/auth.js';
+import { membershipOf, signAccessToken } from '../middleware/auth.js';
 
 export const router = Router();
 
@@ -245,4 +246,79 @@ router.post('/logout', async (req, res) => {
     [sha256(refreshToken)],
   );
   res.status(204).end();
+});
+
+/** How long a link from the phone to the web app may wait to be opened. */
+export const WEB_LINK_TTL_SECONDS = 120;
+/** What the new web session is called, beside the phone's own. */
+export const WEB_LINK_DEVICE = 'Web, opened from the iPhone app';
+
+const webLinkBody = z.object({
+  refreshToken: z.string().min(10).max(200),
+  // A page of the web app: a path alone, never another site or a query.
+  path: z
+    .string()
+    .max(300)
+    .regex(/^\/(?!\/)[A-Za-z0-9._~/-]*$/, 'Name a page of the web app, such as /plans.'),
+  accountId: z.string().max(64).nullish(),
+});
+
+/**
+ * The iPhone app opens a page of the web app ("Open walkthrough in Safari")
+ * with the person already signed in. The phone proves its session with its
+ * refresh token, which is not rotated. A web session is made for the same
+ * person, ending with the phone's on a Hub sign-out, and the link carries
+ * its first refresh token in the fragment, which browsers never send to a
+ * server. The web app swaps it straight away with POST /v1/auth/refresh,
+ * as any refresh token, and drops it from the address bar. Unused, it
+ * lapses after WEB_LINK_TTL_SECONDS. Once used it rotates like any other,
+ * so the web session lives as long as one signed in on the web (B-06).
+ */
+router.post('/web-link', async (req, res) => {
+  const body = webLinkBody.parse(req.body);
+
+  const token = await transaction(async (db) => {
+    const phone = await one(
+      db,
+      `SELECT s.*, u.status AS user_status FROM sessions s JOIN users u ON u.id = s.user_id
+       WHERE s.token_hash = ?`,
+      [sha256(body.refreshToken)],
+    );
+    const now = new Date();
+    // Only a live phone session. A rotated-out token is refused, not taken
+    // as theft: the phone may have refreshed while asking.
+    if (
+      !phone ||
+      phone.client !== 'ios' ||
+      phone.revoked_at ||
+      phone.expires_at < now ||
+      phone.absolute_expires_at < now ||
+      phone.user_status !== 'active'
+    ) {
+      throw unauthorised('Your sign-in has ended. Sign in again.');
+    }
+    if (body.accountId && !(await membershipOf(db, phone.user_id, body.accountId))) {
+      throw new HttpError(403, 'You do not have access to this account.', { code: 'no_account' });
+    }
+
+    const fresh = newToken();
+    await db.query(
+      `INSERT INTO sessions
+         (id, user_id, token_hash, client, device_label, hub_session_id, expires_at, absolute_expires_at)
+       VALUES (?, ?, ?, 'web', ?, ?, ?, ?)`,
+      [
+        newId(),
+        phone.user_id,
+        sha256(fresh),
+        WEB_LINK_DEVICE,
+        phone.hub_session_id,
+        new Date(now.getTime() + WEB_LINK_TTL_SECONDS * 1000),
+        lifetimes('web', now.getTime()).absolute,
+      ],
+    );
+    return fresh;
+  });
+
+  const fragment = new URLSearchParams({ token, next: body.path, ...(body.accountId && { account: body.accountId }) });
+  res.json({ url: `${config.publicWebUrl}/auth/link#${fragment}`, expiresIn: WEB_LINK_TTL_SECONDS });
 });

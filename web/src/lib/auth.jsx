@@ -109,6 +109,14 @@ export function AuthProvider({ children }) {
     return { user: me, from };
   }, []);
 
+  /** On /auth/link: signs in with the iPhone app's link and loads who that is. */
+  const completeLinkSignIn = useCallback(async (link) => {
+    await client.signInWithLink(link);
+    const me = await loadMe();
+    setState({ status: 'signedIn', user: me, accountId: client.currentAccountId() });
+    return me;
+  }, []);
+
   /** Works in a different account; pages keyed on accountId reload. */
   const switchAccount = useCallback(async (accountId) => {
     client.setAccountId(accountId);
@@ -123,8 +131,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const value = useMemo(
-    () => ({ ...state, signIn, completeSignIn, switchAccount, signOut }),
-    [state, signIn, completeSignIn, switchAccount, signOut],
+    () => ({ ...state, signIn, completeSignIn, completeLinkSignIn, switchAccount, signOut }),
+    [state, signIn, completeSignIn, completeLinkSignIn, switchAccount, signOut],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

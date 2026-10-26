@@ -173,8 +173,9 @@ export async function queueModel(db, { machineId, route = 'generated', actor = n
 
 /**
  * A machine's 360 video has just arrived: its model is built straight away
- * when ASSET_AUTO_BUILD is on (L-05). Never fails the caller, whose upload
- * has succeeded: a reviewer can always build it from the editor.
+ * when ASSET_AUTO_BUILD is on (L-05). It is off in every AWS environment, so
+ * an upload never starts the GPU: a reviewer builds from the editor. Never
+ * fails the caller, whose upload has succeeded.
  */
 export async function buildOnArrival(machineId) {
   if (!config.assets.autoBuild) return null;

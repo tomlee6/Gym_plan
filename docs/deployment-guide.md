@@ -88,13 +88,15 @@ Everything about the users stays in Flex's AWS. GoalCert holds nothing about the
 **Built:**
 - **Infrastructure:** an `Auth` stack (`infra/lib/auth-stack.ts`) in each environment, in Sydney.
   - **The user pool:** sign-in with email; no self sign-up (invites only); a password policy of 12 characters or more; optional MFA with an authenticator app; account recovery by email; mail through Flex's own SES identity; deletion protection in prod.
-  - **Cognito's sign-in page**, on the domain prefix `flexgym-<env>`.
+  - **Cognito's sign-in page**, on the domain prefix `flexgym-<env>`, in the Flex Gym Scan colours: a dark brand strip, styled fields and the teal button (`infra/lib/sign-in-style.ts`, held to Cognito's list of allowed CSS by `infra/test/sign-in-style.test.ts`). It has no logo yet (item 4 below).
   - **One app client for both apps:** a client secret, kept in Secrets Manager as `flexgym-<env>/COGNITO_CLIENT_SECRET`, and used only by the backend; the authorization code flow; scopes `openid email profile`; the web app's and the iPhone app's callback URLs.
 - **Backend:**
   - **Settings:** `HUB_DRIVER=cognito`, with the pool's addresses worked out from `COGNITO_USER_POOL_ID` and `COGNITO_DOMAIN`, which the deploy sets.
   - **Token checks:** the GoalCert-only `org` check is off, and only an ID token is accepted.
   - **Invites:** an invite creates the person in Cognito, or resends an unfinished invitation, and Cognito emails them a temporary password.
 - **Web app and iPhone app:** "Sign in" wording; the flow is unchanged.
+  - The web app's own sign-in page shows what Flex Gym Scan does beside the sign-in card, in the app's colours, on a laptop and a phone.
+  - The iPhone app's "Open walkthrough in Safari" opens the web app already signed in, as the same person in the same gym account: a one-time link that works for two minutes (`POST /v1/auth/web-link`, `backend/docs/api-contract-v2.md`). It needs no setting and no AWS change.
 
 **What is left** (found when the change was checked; none of it blocks a first deployment):
 1. **Removing a user does not disable them in Cognito.** They are already refused by Flex Gym Scan, because they have no membership left, but their Cognito account stays usable on the sign-in page. Add `AdminDisableUser` and `AdminUserGlobalSignOut` on removal, and the API's permission for both.
@@ -105,6 +107,7 @@ Everything about the users stays in Flex's AWS. GoalCert holds nothing about the
    - give them the admin role with a one-off database update, run like the migrations.
 
    Add this to `docs/runbooks/deploy.md`.
+4. **Cognito's sign-in page has no logo.** CloudFormation sets its CSS only. A logo (PNG or JPG, at most 100 KB) needs Cognito's `SetUICustomization` call with the image and the same CSS, through a small Lambda-backed custom resource: CDK's `AwsCustomResource` cannot pass a binary image. Setting it by hand in the console would be undone by the next change to the CSS.
 
 **To know before the first deploy:**
 - **The domain prefix must be unused in the region.** Cognito's sign-in domain prefix (`flexgym-<env>`) must be unique in `ap-southeast-2`. If another AWS customer already uses it, the `Auth` stack fails to deploy; change the prefix.
@@ -341,7 +344,7 @@ Before these steps: licences and their costs, access to the weights, and the GPU
 ### 5.0 How it works, and what it needs
 
 There is no endpoint and no API key, unlike the Digital Twin's RunPod worker:
-1. A machine's 360 video finishes uploading, or a reviewer presses **Build**. The backend submits a job to AWS Batch (`backend/src/assets/trellis2.js`), naming the video's S3 path, an output folder and the settings.
+1. A reviewer presses **Build the model** in the editor. Nothing else starts a job: an upload does not, so the GPU runs only when someone asks for a model. The backend submits a job to AWS Batch (`backend/src/assets/trellis2.js`), naming the video's S3 path, an output folder and the settings.
 2. Batch starts a GPU host in Sydney (`g5.2xlarge`, none while idle) and runs our image. The worker reads the video from S3, picks frames, cuts the machine out, runs TRELLIS.2 and writes `model.glb` back to S3.
 3. Batch's "job finished" event goes through EventBridge to the `gpu-jobs` queue. The backend worker reads it, prepares the model for the walkthrough (levels of detail, KTX2 textures), and puts it in front of the reviewer.
 
@@ -444,8 +447,7 @@ unset HF_TOKEN
 2. Commit, and push to `main`. Once the image pipeline exists (2.3), that push starts an image build by itself, because the lock goes into the image.
 
 **No other code change is needed.** When the GPU environment is deployed (5.7), the backend is given everything it needs automatically:
-- `ASSET_BUILDER=trellis2`;
-- `ASSET_AUTO_BUILD=true`;
+- `ASSET_BUILDER=trellis2` (builds start only when a reviewer asks; `ASSET_AUTO_BUILD` stays off);
 - the job queue and definition names;
 - the `gpu-jobs` queue URL;
 - permission to submit and look up jobs.
@@ -592,8 +594,8 @@ python golden.py --image <tooling account>.dkr.ecr.ap-southeast-2.amazonaws.com/
 
 **Use our own test recordings, not customer data,** until 5.1 is settled.
 
-1. **Record a machine against dev** with the iPhone app: a capture with a machine and its 360 video. The build starts as soon as the video is uploaded.
-2. **Open the capture in the review editor** and select the machine. Its **3D model** panel shows **Building**, then **Awaiting review**.
+1. **Record a machine against dev** with the iPhone app: a capture with a machine and its 360 video. Nothing runs on the GPU yet.
+2. **Open the capture in the review editor**, select the machine, choose **Review 3D model**, then **Build the model**. This is what starts the GPU. Its **3D model** panel shows **Building**, then **Awaiting review**. A build that finds no GPU host running waits for one to start and for the weights (about 18 GB) to copy onto its disk from S3, so it takes several minutes longer than one sent while a host is still up.
 3. **Check it in the preview:** its size against the scanned box, which way it faces (turn it if needed), and its texture. Then approve it.
 4. **Open the walkthrough** of an approved plan on that capture. The machine shows as its model; nearer and farther levels of detail swap as you walk.
 5. **Look at the dashboard's 3D row** (CloudWatch dashboard `flexgym-dev`): one model built, no faults.
