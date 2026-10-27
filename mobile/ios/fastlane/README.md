@@ -24,7 +24,7 @@ bundle exec fastlane beta    # signed release build -> TestFlight
 |----------|----------|
 | `APP_IDENTIFIER` | Bundle id, e.g. `com.goalcert.flexgymscan`. The Xcode project still says `com.example.mobile`; the `beta` lane overrides it for the build. |
 | `APPLE_TEAM_ID` | Apple Developer team id. |
-| `GYM_PLAN_API` | API base URL compiled into the app, e.g. `https://api.staging.gym.goalcert.example`. |
+| `GYM_PLAN_API` | API base URL compiled into the app, e.g. `https://api.gym.goal-cert.com`. |
 | `ASC_KEY_ID`, `ASC_ISSUER_ID` | App Store Connect API key (Users and Access > Integrations). Role: App Manager. |
 | `ASC_KEY_CONTENT` | The key's `.p8` file, base64-encoded (`base64 -i AuthKey_XXXX.p8`). |
 | `MATCH_GIT_URL` | Private git repository holding the encrypted certificates and profiles. |

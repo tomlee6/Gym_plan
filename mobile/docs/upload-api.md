@@ -187,8 +187,8 @@ surveyor when it stops an upload.
 ## Running the app against it
 
 ```sh
-flutter run --dart-define=GYM_PLAN_API=https://api.gymplan.example
+flutter run --dart-define=GYM_PLAN_API=https://api.gym.goal-cert.com
 ```
 
-Without `GYM_PLAN_API` the app uses `http://localhost:8080`, a backend
-running on the same computer (see `backend/README.md`).
+Without `GYM_PLAN_API` the app uses the deployed backend,
+`https://api.gym.goal-cert.com`.

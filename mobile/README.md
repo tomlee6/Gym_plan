@@ -114,7 +114,7 @@ in the repo root and live in `lib/theme/app_theme.dart`. The brand mark is
 
 ```sh
 flutter pub get
-flutter run --dart-define=GYM_PLAN_API=http://<your-computer>:8080
+flutter run --dart-define-from-file=dev_config.json
 flutter test
 flutter analyze
 ```
