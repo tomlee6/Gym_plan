@@ -5,16 +5,24 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'screens/login_screen.dart';
+import 'screens/startup_screen.dart';
 import 'services/auth_session.dart';
 import 'services/background_upload_queue.dart';
 import 'services/gym_plan_api.dart';
 import 'services/part_transport.dart';
 import 'services/profile_service.dart';
+import 'services/scan_backend.dart';
 import 'services/upload_queue.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // The session lives in the Keychain, so the app opens signed in. It is
+  // restored before the upload queue starts, so an upload interrupted by
+  // the app closing carries on at once, without a sign-in.
+  AuthSession.instance = AuthSession(store: KeychainStore());
+  await AuthSession.instance.restore();
 
   await _startUploads();
 
@@ -41,7 +49,6 @@ Future<void> main() async {
 /// Starts the background upload queue before the first frame, so an upload
 /// left over from the last run carries on straight away: background
 /// transfers that finished while the app was closed are replayed into it.
-/// Calls to the API wait for sign-in, then resume.
 Future<void> _startUploads() async {
   final BackgroundUploadQueue queue = BackgroundUploadQueue(
     api: GymPlanApi(),
@@ -54,10 +61,14 @@ Future<void> _startUploads() async {
 }
 
 class FlexGymScanApp extends StatefulWidget {
-  const FlexGymScanApp({super.key, this.session});
+  const FlexGymScanApp({super.key, this.session, this.deviceCheck});
 
   /// Defaults to [AuthSession.instance].
   final AuthSession? session;
+
+  /// Whether this device can scan. Defaults to [ScanBackend.detect]; tests
+  /// pass a canned answer to see the blocked screen.
+  final DeviceCheck? deviceCheck;
 
   @override
   State<FlexGymScanApp> createState() => _FlexGymScanAppState();
@@ -71,6 +82,7 @@ class _FlexGymScanAppState extends State<FlexGymScanApp> {
   @override
   void initState() {
     super.initState();
+    _wasSignedIn = _session.signedIn;
     _session.addListener(_onSessionChanged);
   }
 
@@ -80,8 +92,9 @@ class _FlexGymScanAppState extends State<FlexGymScanApp> {
     super.dispose();
   }
 
-  /// The session can end under the user's feet: the refresh token expired,
-  /// or the account was switched off. Wherever they are, back to sign-in.
+  /// The session can end under the user's feet: the refresh token was
+  /// revoked, or the Hub disabled the user. Wherever they are, back to
+  /// sign-in.
   void _onSessionChanged() {
     final bool signedIn = _session.signedIn;
     if (_wasSignedIn && !signedIn) {
@@ -102,7 +115,10 @@ class _FlexGymScanAppState extends State<FlexGymScanApp> {
       theme: AppTheme.dark,
       themeMode: ThemeMode.dark,
       darkTheme: AppTheme.dark,
-      home: const LoginScreen(),
+      home: StartupScreen(
+        session: _session,
+        deviceCheck: widget.deviceCheck ?? ScanBackend.detect,
+      ),
       builder: (BuildContext context, Widget? child) {
         // Keep the layout stable regardless of the device font-size setting.
         final MediaQueryData media = MediaQuery.of(context);

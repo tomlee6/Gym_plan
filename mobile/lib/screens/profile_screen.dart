@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/auth_session.dart';
 import '../services/profile_service.dart';
 import '../widgets/app_toast.dart';
 import '../services/upload_queue.dart';
@@ -12,6 +13,7 @@ import '../widgets/gym_tab_bar.dart';
 import '../widgets/hairline_container.dart';
 import '../widgets/nav_bar.dart';
 import '../widgets/pressable.dart';
+import 'account_picker_screen.dart';
 import 'login_screen.dart';
 import 'tab_navigation.dart';
 
@@ -161,7 +163,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  /// Another gym account: everything on screen changes with it, so the
+  /// picker starts the app again from home.
+  void _switchAccount() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => const AccountPickerScreen(switching: true),
+      ),
+    );
+  }
+
   Widget _buildContent(ProfileData p, double bottomInset) {
+    final bool canSwitch = AuthSession.instance.accounts.length > 1;
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       padding: EdgeInsets.fromLTRB(20, 10, 20, bottomInset + 96),
@@ -174,9 +187,40 @@ class _ProfileScreenState extends State<ProfileScreen> {
             label: 'Account',
             children: <Widget>[
               _SettingRow(
-                label: 'Organisation',
-                trailing: _mutedValue(p.organisation),
+                label: 'Account',
+                trailing: Flexible(
+                  child: Text(
+                    p.organisation,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ),
               ),
+              if (canSwitch)
+                _SettingRow(
+                  icon: Icons.swap_horiz_rounded,
+                  label: 'Switch account',
+                  onTap: _switchAccount,
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      _mutedValue(
+                        '${AuthSession.instance.accounts.length} accounts',
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(
+                        CupertinoIcons.chevron_right,
+                        size: 16,
+                        color: AppColors.chevron,
+                      ),
+                    ],
+                  ),
+                ),
               _SettingRow(
                 label: 'Facilities',
                 trailing: _mutedValue('${p.facilities}'),

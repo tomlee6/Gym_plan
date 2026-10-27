@@ -64,6 +64,8 @@ export default function WalkthroughPage() {
   return (
     <Walkthrough
       plan={model.plan}
+      modelUrl={model.generatedModel?.url ?? null}
+      machineModels={model.machineModels ?? null}
       site={model.site}
       level={model.level}
       meta={meta}

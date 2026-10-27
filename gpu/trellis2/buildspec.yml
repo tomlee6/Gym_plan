@@ -1,0 +1,45 @@
+# Builds the TRELLIS.2 worker image and pushes it to ECR (L-09).
+#
+# The Build step of the image pipeline (infra/lib/trellis2-image.ts, N-05),
+# started when a push changes what the image is built from, or by hand
+# (docs/runbooks/trellis2-worker.md):
+#
+#   aws codepipeline start-pipeline-execution --name flexgym-trellis2-image
+#
+# The tag is the commit and build number (tags cannot be overwritten). The
+# digest goes on to the pipeline's golden test (L-14); a GPU job uses an
+# image by digest, and only once that has passed and a person approved it.
+# Compiling flash-attn takes hours and up to 9 GB of memory per compile job;
+# the project runs on a 2XLARGE builder (145 GB).
+version: 0.2
+
+env:
+  variables:
+    MAX_JOBS: "12"
+  exported-variables:
+    - IMAGE_DIGEST
+
+phases:
+  install:
+    commands:
+      # Only for the checks below; the image installs its own, by hash.
+      - pip3 install --quiet -r gpu/trellis2/tests/requirements.txt
+  pre_build:
+    on-failure: ABORT
+    commands:
+      - cd gpu/trellis2
+      # Pins, licence-safe config and the worker, before hours of compiling.
+      - python3 -m unittest discover -s tests
+      - REGISTRY="${IMAGE_REPO%%/*}"
+      - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+      # The pipeline passes the source's commit; a source CodeBuild resolved itself has its own.
+      - TAG="${SOURCE_COMMIT:-$CODEBUILD_RESOLVED_SOURCE_VERSION}-${CODEBUILD_BUILD_NUMBER}"
+  build:
+    on-failure: ABORT
+    commands:
+      - docker build --target runtime --build-arg BASE_REGISTRY="${BASE_REGISTRY:-docker.io}" --build-arg MAX_JOBS="$MAX_JOBS" --tag "$IMAGE_REPO:$TAG" .
+  post_build:
+    commands:
+      - docker push "$IMAGE_REPO:$TAG"
+      - IMAGE_DIGEST="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE_REPO:$TAG")"
+      - echo "Built $IMAGE_DIGEST. The pipeline's golden test (L-14) is next."

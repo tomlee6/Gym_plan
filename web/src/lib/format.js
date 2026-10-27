@@ -133,17 +133,11 @@ export const STATUS_LABELS = {
   uploading: 'Uploading',
   processing: 'Waiting',
   in_review: 'In review',
+  generating: 'Building 3D',
+  generation_failed: '3D build failed',
   ready: 'Approved',
   recapture: 'Sent back',
   superseded: 'Superseded',
 };
 
-/** What the owner sees for each state (PRD section 4). */
-export const OWNER_STATUS = {
-  uploading: { label: 'Received', tone: 'accent' },
-  processing: { label: 'Processing complete, awaiting review', tone: 'fair' },
-  in_review: { label: 'In review', tone: 'fair' },
-  recapture: { label: 'Needs recapture', tone: 'danger' },
-  ready: { label: 'Ready', tone: 'good' },
-  superseded: { label: 'Superseded', tone: 'muted' },
-};
+/* The owner's words for each state live in lib/i18n.js (owner.status) and owner/status.js. */

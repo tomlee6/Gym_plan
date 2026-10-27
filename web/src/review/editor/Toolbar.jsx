@@ -1,6 +1,7 @@
-import { OPENING_TYPES, TAG_TYPES } from '@shared/plan/index.js';
+import { TAG_TYPES } from '@shared/plan/index.js';
 
 import { TAG_LABELS } from '../../lib/format.js';
+import { kindLabel, OPENING_KINDS } from './planKinds.js';
 
 function Svg({ children }) {
   return (
@@ -18,6 +19,11 @@ export const TOOLS = [
   { id: 'opening', key: 'o', label: 'Add a door or window', icon: <Svg><path d="M3 21h18" /><path d="M6 21V4h9v17" /><path d="M15 4l3 2v15" /></Svg> },
   { id: 'column', key: 'c', label: 'Add a column', icon: <Svg><rect x="7" y="7" width="10" height="10" /></Svg> },
   { id: 'zone', key: 'z', label: 'Draw a no-build zone', icon: <Svg><path d="M4 4h16v16H4z" /><path d="m4 12 8-8" /><path d="m4 20 16-16" /><path d="m12 20 8-8" /></Svg> },
+  { id: 'space', key: 'r', label: 'Draw a space (room)', icon: <Svg><path d="M3 3h12v8h6v10H3z" /><path d="M9 21v-6" /></Svg> },
+  { id: 'ceilingZone', key: 'u', label: 'Draw a ceiling zone inside a space', icon: <Svg><path d="M3 5h18" /><path d="M7 5v4h10V5" /><path d="M4 21h16" /></Svg> },
+  { id: 'beam', key: 'b', label: 'Draw a beam or bulkhead', icon: <Svg><path d="M2 6h20v4H2z" /><path d="M6 10v10" /><path d="M18 10v10" /></Svg> },
+  { id: 'levelChange', key: 'l', label: 'Draw a step, platform or ramp', icon: <Svg><path d="M3 20h6v-5h6v-5h6" /></Svg> },
+  { id: 'void', key: 'k', label: 'Draw a stair, lift or void', icon: <Svg><rect x="4" y="4" width="16" height="16" /><path d="M8 20V16h4v-4h4V8h4" /></Svg> },
   { id: 'tag', key: 't', label: 'Add a tag', icon: <Svg><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" /><circle cx="7" cy="7" r="1.5" /></Svg> },
   { id: 'scale', key: 's', label: 'Set or correct the scale', icon: <Svg><path d="M21.3 15.3 8.7 2.7a1 1 0 0 0-1.4 0L2.7 7.3a1 1 0 0 0 0 1.4l12.6 12.6a1 1 0 0 0 1.4 0l4.6-4.6a1 1 0 0 0 0-1.4z" /><path d="m7.5 10.5 2-2" /><path d="m10.5 13.5 2-2" /><path d="m13.5 16.5 2-2" /></Svg> },
 ];
@@ -31,9 +37,36 @@ const HINTS = {
   zone: 'Click each corner. Click the first corner, double-click or press Enter to close.',
   tag: 'Click to place the tag.',
   scale: 'Click both ends of a dimension you know, then enter its length.',
+  space: 'Click each corner of the room. Click the first corner, double-click or press Enter to close.',
+  ceilingZone: 'Draw inside a space: click each corner of the part where the ceiling height changes.',
+  beam: 'Click each corner of the beam or bulkhead’s outline on the floor below it.',
+  levelChange: 'Click each corner of the step, platform or ramp.',
+  void: 'Click each corner of the stair, lift or opening in the floor.',
+  place: 'Click on the plan where the machine stands. Esc cancels.',
 };
 
-export default function Toolbar({ tool, onTool, options, onOptions, disabled, zoom, onZoom, onFit, history, showSource, onShowSource, hasSource }) {
+/** Tools that draw a polygon corner by corner, as the no-build zone always has. */
+export const POLYGON_TOOLS = ['zone', 'space', 'ceilingZone', 'beam', 'levelChange', 'void'];
+
+export default function Toolbar({
+  tool,
+  onTool,
+  options,
+  onOptions,
+  disabled,
+  zoom,
+  onZoom,
+  onFit,
+  history,
+  showSource,
+  onShowSource,
+  hasSource,
+  hasMesh = false,
+  showMesh = false,
+  onShowMesh,
+  meshStatus = null,
+  placing = null,
+}) {
   return (
     <div className="ed-toolbar">
       <div className="ed-tools" role="toolbar" aria-label="Tools" aria-orientation="vertical">
@@ -56,14 +89,16 @@ export default function Toolbar({ tool, onTool, options, onOptions, disabled, zo
       </div>
 
       <div className="ed-optbar">
-        <span className="ed-hint small muted">{HINTS[tool]}</span>
+        <span className="ed-hint small muted" aria-live="polite">
+          {tool === 'place' && placing ? `Placing ${placing.name}. ${HINTS.place}` : HINTS[tool]}
+        </span>
         {tool === 'opening' && (
           <label className="ed-inline-select small">
-            Type
-            <select value={options.openingType} onChange={(e) => onOptions({ ...options, openingType: e.target.value })}>
-              {OPENING_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
+            Kind
+            <select value={options.openingKind} onChange={(e) => onOptions({ ...options, openingKind: e.target.value })}>
+              {OPENING_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {kindLabel(k)}
                 </option>
               ))}
             </select>
@@ -86,6 +121,14 @@ export default function Toolbar({ tool, onTool, options, onOptions, disabled, zo
           <label className="ed-toggle small">
             <input type="checkbox" checked={showSource} onChange={(e) => onShowSource(e.target.checked)} />
             Show source
+          </label>
+        )}
+        {hasMesh && (
+          <label className="ed-toggle small">
+            <input type="checkbox" checked={showMesh} onChange={(e) => onShowMesh(e.target.checked)} />
+            Scan mesh
+            {showMesh && meshStatus === 'loading' && <span className="muted"> · loading…</span>}
+            {showMesh && meshStatus === 'error' && <span className="ed-warn"> · could not be loaded</span>}
           </label>
         )}
         {!disabled && (

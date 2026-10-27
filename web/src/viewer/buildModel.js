@@ -7,6 +7,7 @@
  * (x, height, y).
  */
 import { bounds as boundsOf, direction, dist, lerp, outline, pointInPolygon } from '@shared/plan/index.js';
+import { wallAxis, withArcs } from '@shared/build3d/walls.js';
 
 export const WALL_THICKNESS_M = 0.15;
 export const DOOR_HEAD_M = 2.1;
@@ -24,23 +25,31 @@ const rp = (p) => [round(p[0]), round(p[1])];
 /**
  * Splits one wall into the pieces left standing around its openings.
  * Doors keep a head above 2.1 m, windows a sill below 0.9 m and a head
- * above 2.1 m, plain openings leave a full-height gap.
+ * above 2.1 m, plain openings leave a full-height gap. A curved wall
+ * follows its arc, in short straight pieces, as the generated level does
+ * (shared/build3d's wallAxis); openings on it are placed along the arc in
+ * proportion to where they are along its chord.
  */
 function wallPieces(wall, openings, ceiling) {
   const len = dist(wall.a, wall.b);
+  const axis = wallAxis(wall);
   const head = Math.min(DOOR_HEAD_M, ceiling);
   const pieces = [];
   const piece = (from, to, bottom, top, kind) => {
     if (to - from < 0.01 || top - bottom < 0.01) return;
-    pieces.push({
-      wallId: wall.id,
-      a: rp(lerp(wall.a, wall.b, from / len)),
-      b: rp(lerp(wall.a, wall.b, to / len)),
-      bottom: round(bottom),
-      top: round(top),
-      mirror: Boolean(wall.mirror),
-      kind,
-    });
+    const at = (s) => rp(axis.curved ? axis.at(s) : lerp(wall.a, wall.b, s / axis.length));
+    const stops = axis.samples((from / len) * axis.length, (to / len) * axis.length);
+    for (let i = 1; i < stops.length; i++) {
+      pieces.push({
+        wallId: wall.id,
+        a: at(stops[i - 1]),
+        b: at(stops[i]),
+        bottom: round(bottom),
+        top: round(top),
+        mirror: Boolean(wall.mirror),
+        kind,
+      });
+    }
   };
 
   const cuts = openings
@@ -252,7 +261,9 @@ export function buildModel(plan) {
   const openings = plan.openings ?? [];
 
   const traced = walls.length >= 3 ? outline({ ...plan, walls }) : null;
-  const floor = (traced && canonicalLoop(traced.map(rp))) ?? boxFloor(walls);
+  // A floor edge along a curved wall follows its arc.
+  const axes = new Map(walls.map((w) => [w.id, wallAxis(w)]));
+  const floor = (traced && canonicalLoop(withArcs(traced, walls, axes).map(rp))) ?? boxFloor(walls);
 
   const pieces = walls.flatMap((w) => wallPieces(w, openings, ceiling));
   const columns = (plan.columns ?? []).map((c) => ({

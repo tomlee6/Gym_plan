@@ -1,0 +1,19 @@
+# Ignore rules for `docker build -f backend/Dockerfile .` from the repository
+# root. BuildKit picks up <Dockerfile>.dockerignore next to the Dockerfile, so
+# these patterns are relative to the repo root. Keep in sync with
+# backend/.dockerignore and the `exclude` list in infra/lib/compute.ts.
+**/node_modules
+**/.env
+**/.env.*
+**/*.log
+**/.DS_Store
+.git
+backend/data
+backend/test
+backend/docs
+backend/docker
+backend/docker-compose.yml
+mobile
+web
+infra
+docs

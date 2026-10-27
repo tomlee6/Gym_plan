@@ -1,0 +1,8 @@
+# What the unit tests need (python -m unittest discover -s tests), at the
+# versions in requirements.lock, so frames.py is tested with the image's own
+# OpenCV and its FFmpeg. The image installs its own copies, by hash.
+pillow==12.0.0
+packaging==26.3
+numpy==2.2.6
+opencv-python-headless==4.12.0.88
+scipy==1.17.1

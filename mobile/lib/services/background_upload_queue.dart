@@ -25,7 +25,11 @@ import 'package:room_scan/room_scan.dart';
 ///    capture, then delete the local copy.
 ///
 /// Progress is written to a manifest after every step, so a capture carries
-/// on from where it was after the app is closed or the phone restarts.
+/// on from where it was after the app is closed or the phone restarts. The
+/// session is restored from the Keychain before [restore] runs (see
+/// `main.dart`), so an interrupted upload carries on at once after a
+/// relaunch without anyone signing in again. Each capture remembers the
+/// account it was made in and names it on every call (`X-Account-Id`).
 class BackgroundUploadQueue extends UploadQueue {
   BackgroundUploadQueue({
     required this.api,
@@ -214,6 +218,7 @@ class BackgroundUploadQueue extends UploadQueue {
       metadata: _metadata(result, lidar: export != null),
       files: files,
       createdAt: DateTime.now(),
+      accountId: result.config.accountId ?? api.currentAccountId,
       equipment: <Map<String, Object?>>[
         for (final Equipment e in equipment) e.toJson(),
       ],
@@ -251,23 +256,24 @@ class BackgroundUploadQueue extends UploadQueue {
   Future<void> _sendEquipment(UploadManifest job) async {
     final String captureId = job.captureId!;
     if (job.equipment.isNotEmpty) {
-      await equipmentApi.saveEquipment(captureId, <Equipment>[
-        for (final Map<String, Object?> e in job.equipment)
-          Equipment(
-            equipmentId: e['equipmentId']! as String,
-            type: e['type']! as String,
-            name: e['name']! as String,
-            x: (e['x'] as num?)?.toDouble(),
-            z: (e['z'] as num?)?.toDouble(),
-            elevationM: (e['elevationM'] as num?)?.toDouble(),
-            rotationDeg: (e['rotationDeg'] as num?)?.toDouble(),
-            widthM: (e['widthM'] as num?)?.toDouble(),
-            depthM: (e['depthM'] as num?)?.toDouble(),
-            heightM: (e['heightM'] as num?)?.toDouble(),
-            confidence: (e['confidence'] as num?)?.toDouble(),
-            source: e['source'] as String? ?? 'surveyor',
-          ),
-      ]);
+      await equipmentApi
+          .saveEquipment(captureId, accountId: job.accountId, <Equipment>[
+            for (final Map<String, Object?> e in job.equipment)
+              Equipment(
+                equipmentId: e['equipmentId']! as String,
+                type: e['type']! as String,
+                name: e['name']! as String,
+                x: (e['x'] as num?)?.toDouble(),
+                z: (e['z'] as num?)?.toDouble(),
+                elevationM: (e['elevationM'] as num?)?.toDouble(),
+                rotationDeg: (e['rotationDeg'] as num?)?.toDouble(),
+                widthM: (e['widthM'] as num?)?.toDouble(),
+                depthM: (e['depthM'] as num?)?.toDouble(),
+                heightM: (e['heightM'] as num?)?.toDouble(),
+                confidence: (e['confidence'] as num?)?.toDouble(),
+                source: e['source'] as String? ?? 'surveyor',
+              ),
+          ]);
     }
 
     for (final Map<String, Object?> v in job.videos) {
@@ -287,6 +293,7 @@ class BackgroundUploadQueue extends UploadQueue {
           ),
           contentType: v['contentType'] as String? ?? 'video/quicktime',
         ),
+        accountId: job.accountId,
       );
     }
 
@@ -318,6 +325,11 @@ class BackgroundUploadQueue extends UploadQueue {
               'y': t.position.dy,
               'heightM': t.heightM,
             },
+        ],
+        // Laser-measured checks of the scan's scale (F-03), in the same
+        // plan frame as the tags.
+        'controlDistances': <Object?>[
+          for (final ControlDistance c in r.controlDistances) c.toJson(),
         ],
         'capturedAt': DateTime.now().toUtc().toIso8601String(),
       };
@@ -362,6 +374,7 @@ class BackgroundUploadQueue extends UploadQueue {
         job.captureId = await api.createCapture(
           job.metadata,
           idempotencyKey: job.id,
+          accountId: job.accountId,
         );
         await _save(job);
       }
@@ -384,7 +397,10 @@ class BackgroundUploadQueue extends UploadQueue {
       } else {
         // 5. Everything is sent: ask the platform to confirm it.
         _setPhase(job, UploadStatus.confirming);
-        final CompletionResult result = await api.complete(job.captureId!);
+        final CompletionResult result = await api.complete(
+          job.captureId!,
+          accountId: job.accountId,
+        );
         if (!result.received) {
           // Some parts never arrived, e.g. a transfer iOS reported done but
           // the server lost. Send exactly those again, with fresh URLs.
@@ -442,6 +458,7 @@ class BackgroundUploadQueue extends UploadQueue {
       _setPhase(job, UploadStatus.preparing);
       final List<FileTarget> targets = await api.startUpload(
         captureId,
+        accountId: job.accountId,
         partSize: partSize,
         files: <FileDescription>[
           for (final ManifestFile f in unopened)
@@ -478,7 +495,11 @@ class BackgroundUploadQueue extends UploadQueue {
           ],
     };
     if (stale.isNotEmpty) {
-      final List<FileTarget> fresh = await api.refreshParts(captureId, stale);
+      final List<FileTarget> fresh = await api.refreshParts(
+        captureId,
+        stale,
+        accountId: job.accountId,
+      );
       for (final FileTarget t in fresh) {
         final ManifestFile f = job.files.firstWhere(
           (ManifestFile f) => f.fileId == t.fileId,

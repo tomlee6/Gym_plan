@@ -421,3 +421,61 @@
     flex-direction: column;
   }
 }
+
+/*
+ * H-04: the default pill's grey measured 4.25:1 on its #0f2027 fill;
+ * #9aa0a6 is 6.3:1. Every pill also says its state in words, so colour is
+ * never the only signal.
+ */
+.ow-pill {
+  color: #9aa0a6;
+}
+
+/* D-05: machines and their 3D models. */
+.ow-machines-line {
+  display: block;
+}
+
+.ow-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ow-model::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ow-model.good {
+  color: var(--rv-good);
+}
+
+.ow-model.fair {
+  color: var(--rv-fair);
+}
+
+.ow-model.muted {
+  color: #9aa0a6;
+}
+
+.ow-generating {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ow-generating .rv-spinner {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+}
+
+.ow-timeline {
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+}

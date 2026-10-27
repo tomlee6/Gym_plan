@@ -27,6 +27,11 @@ abstract class EquipmentRecording {
 
   /// What fills the screen while recording: a viewfinder, or the demo walk.
   Widget preview({required bool recording, required Duration elapsed});
+
+  /// Which way the camera points while recording, for the coverage ring
+  /// (I-06). Empty when there is no motion data: the demo walk animates
+  /// its own progress instead.
+  Stream<RecorderMotion> motion();
 }
 
 /// The real thing: AVFoundation on an iPhone, through `room_scan`.
@@ -53,6 +58,9 @@ class CameraRecording implements EquipmentRecording {
   @override
   Widget preview({required bool recording, required Duration elapsed}) =>
       const EquipmentVideoPreview();
+
+  @override
+  Stream<RecorderMotion> motion() => EquipmentRecorder.motion();
 }
 
 /// A demo walk round a machine, for a device that cannot record one.
@@ -93,6 +101,9 @@ class SimulatedRecording implements EquipmentRecording {
   Future<void> dispose() async {}
 
   @override
+  Stream<RecorderMotion> motion() => const Stream<RecorderMotion>.empty();
+
+  @override
   Widget preview({required bool recording, required Duration elapsed}) =>
       EquipmentWalkAnimation(
         recording: recording,
@@ -126,8 +137,14 @@ class EquipmentCaptureBackend {
     return 'Recording equipment video needs an iPhone or iPad.';
   }
 
+  /// Replaces what [create] returns, so a widget test can drive the record
+  /// screen with its own motion samples.
+  @visibleForTesting
+  static EquipmentRecording Function()? debugCreate;
+
   static EquipmentRecording create() =>
-      _usesCamera ? const CameraRecording() : SimulatedRecording();
+      debugCreate?.call() ??
+      (_usesCamera ? const CameraRecording() : SimulatedRecording());
 }
 
 /// The demo walk: a camera going once round a machine, seen from above.

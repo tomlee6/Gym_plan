@@ -4,7 +4,9 @@ import 'package:flutter/material.dart';
 import '../models/plan.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/auth_session.dart';
 import '../services/plans_service.dart';
+import '../services/upload_queue.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/detail_widgets.dart';
@@ -32,6 +34,11 @@ class _HomeScreenState extends State<HomeScreen> {
   HomeData? _data;
   String? _error;
 
+  /// Set while the home screen is built from the session cached on the
+  /// phone because there is no signal (I-04): what the server would have
+  /// said, and why it could not.
+  String? _offline;
+
   @override
   void initState() {
     super.initState();
@@ -45,9 +52,25 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _data = data;
         _error = null;
+        _offline = null;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
+      final SignedInUser? user = AuthSession.instance.user;
+      // No signal, but the session is on the phone: open anyway, so a
+      // capture can still be started. The upload waits for signal.
+      if (e.offline && user != null && (_data == null || _offline != null)) {
+        setState(() {
+          _offline = e.message;
+          _data = HomeData(
+            gymName: AuthSession.instance.currentAccount?.name ?? 'Gym Scan',
+            userInitials: user.initials,
+            plans: const [],
+            pendingUploads: UploadQueue.instance.pendingCount,
+          );
+        });
+        return;
+      }
       // Keep showing what was loaded before; only an empty screen needs
       // the error in its place.
       if (_data == null) {
@@ -168,9 +191,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 onTap: _openNewCapture,
               ),
               const SizedBox(height: 28),
-              _buildSectionHeader(),
-              const SizedBox(height: 12),
-              ..._buildPlanRows(data.plans),
+              if (_offline != null)
+                _OfflineNotice(message: _offline!, onRetry: _load)
+              else ...<Widget>[
+                _buildSectionHeader(),
+                const SizedBox(height: 12),
+                ..._buildPlanRows(data.plans),
+              ],
               if (data.pendingUploads > 0) ...<Widget>[
                 const SizedBox(height: 24),
                 PendingUploadBanner(
@@ -259,5 +286,43 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
     return rows;
+  }
+}
+
+/// Shown in place of the plan list when the app opened without signal.
+class _OfflineNotice extends StatelessWidget {
+  const _OfflineNotice({required this.message, required this.onRetry});
+
+  final String message;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return StatusCallout(
+      color: AppColors.warning,
+      icon: Icons.cloud_off_rounded,
+      title: 'Offline',
+      subtitle: message,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            'Your plans load when you are back online. You can still start '
+            'a capture; it uploads once there is signal.',
+            style: AppTheme.caption,
+          ),
+          const SizedBox(height: 10),
+          Pressable(
+            onTap: onRetry,
+            haptic: HapticImpact.selection,
+            semanticLabel: 'Try again',
+            child: const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Text('Try again', style: AppTheme.link),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

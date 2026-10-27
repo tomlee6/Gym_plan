@@ -76,6 +76,35 @@ abstract class ScanSession extends ChangeNotifier {
     return tag;
   }
 
+  /// Width × length in metres of the walls scanned so far (F-04): the
+  /// bounding box of the live outline, leaving out walls not yet reached
+  /// and the unwalked part of the wall in progress. Null before any wall.
+  Size? get scannedExtentM {
+    final List<WallSegment> segments = geometry.walls;
+    final List<WallQuality> qualities = walls;
+    final List<double>? progress = wallProgress;
+    final List<WallSegment> scanned = <WallSegment>[
+      for (int i = 0; i < segments.length; i++)
+        if ((progress != null && i < progress.length
+                ? progress[i]
+                : (i < qualities.length && qualities[i] == WallQuality.missing
+                      ? 0.0
+                      : 1.0)) >
+            0)
+          WallSegment(
+            segments[i].start,
+            progress != null && i < progress.length
+                ? Offset.lerp(segments[i].start, segments[i].end, progress[i])!
+                : segments[i].end,
+          ),
+    ];
+    return PlanGeometry(
+      walls: scanned,
+      frame: geometry.frame,
+      metresPerUnit: geometry.metresPerUnit,
+    ).wallExtentM;
+  }
+
   /// Walls that were captured but read at low confidence.
   List<WallSegment> get weakWalls {
     final List<WallQuality> qualities = walls;

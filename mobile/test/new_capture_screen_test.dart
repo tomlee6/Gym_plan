@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mobile/screens/new_capture_screen.dart';
 import 'package:mobile/screens/scanning_screen.dart';
 import 'package:mobile/services/capture_service.dart';
+import 'package:mobile/services/offline_cache.dart';
 import 'package:mobile/theme/app_theme.dart';
 import 'package:mobile/widgets/capture_fields.dart';
 import 'package:mobile/widgets/primary_button.dart';
@@ -274,6 +277,8 @@ void main() {
     );
     expect(scan.config.facilityId, 'fac_riverside');
     expect(scan.config.facility, 'Riverside Gym');
+    // The capture remembers its account, for the upload.
+    expect(scan.config.accountId, 'acc_northgate');
 
     await tester.pumpWidget(const SizedBox());
   });
@@ -292,5 +297,50 @@ void main() {
     await tester.tap(find.text('Try again'));
     await _settle(tester);
     expect(find.text('Start scan'), findsOneWidget);
+  });
+
+  testWidgets('offline after an online visit: starts from the saved list', (
+    WidgetTester tester,
+  ) async {
+    // Online once: the list is saved for this account.
+    await tester.pumpWidget(_wrap());
+    await _settle(tester);
+    expect(find.textContaining('saved facility list'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+
+    fakes.backend.offline = true;
+    await tester.pumpWidget(_wrap());
+    await _settle(tester);
+
+    expect(find.text('Offline · saved facility list'), findsOneWidget);
+    expect(find.text('Northgate Fitness'), findsOneWidget);
+    final PrimaryButton start = tester.widget<PrimaryButton>(
+      find.widgetWithText(PrimaryButton, 'Start scan'),
+    );
+    expect(start.onPressed, isNotNull);
+  });
+
+  test('the facility list survives on disk, per account', () async {
+    final Directory dir = await Directory.systemTemp.createTemp('fac_cache');
+    addTearDown(() => dir.delete(recursive: true));
+    final FacilityCache cache = FacilityCache(directory: () async => dir);
+
+    await cache.save(
+      'acc/1',
+      const FacilityList(
+        facilities: <Facility>[Facility(id: 'f1', name: 'One')],
+        defaultId: 'f1',
+      ),
+    );
+    final FacilityList? back = await FacilityCache(
+      directory: () async => dir,
+    ).load('acc/1');
+    expect(back!.facilities.single.name, 'One');
+    expect(back.defaultId, 'f1');
+    expect(back.offline, isTrue);
+    expect(await cache.load('acc_2'), isNull);
+
+    await cache.clear();
+    expect(await cache.load('acc/1'), isNull);
   });
 }

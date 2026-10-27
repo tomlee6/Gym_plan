@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models/scan.dart';
+import '../services/app_config.dart';
 import '../services/profile_service.dart';
 import '../services/scan_backend.dart';
 import '../services/scan_session.dart';
@@ -18,9 +19,18 @@ import 'review_submit_screen.dart';
 /// Live scan: the outline fills in as the surveyor walks, with coverage, the
 /// closure check, and actions to tag features and take reference photos.
 class ScanningScreen extends StatefulWidget {
-  const ScanningScreen({super.key, required this.config, this.session});
+  const ScanningScreen({
+    super.key,
+    required this.config,
+    this.session,
+    this.maxExtentM,
+  });
 
   final ScanConfig config;
+
+  /// The largest floor one scan may cover, in metres along either side
+  /// (F-04). Defaults to [AppConfig.maxScanExtentM].
+  final double? maxExtentM;
 
   /// Injectable so tests can control the walk. When omitted the screen uses
   /// the LiDAR scanner if this device has one (see [ScanBackend]), and
@@ -34,6 +44,15 @@ class ScanningScreen extends StatefulWidget {
 class _ScanningScreenState extends State<ScanningScreen> {
   late final ScanSession _session =
       widget.session ?? ScanBackend.createSession(widget.config);
+
+  late final double _maxExtentM = widget.maxExtentM ?? AppConfig.maxScanExtentM;
+
+  /// The scanned walls already span more than one scan may hold.
+  bool get _tooLarge {
+    final Size? extent = _session.scannedExtentM;
+    return extent != null &&
+        (extent.width > _maxExtentM || extent.height > _maxExtentM);
+  }
 
   /// The photo privacy warning is shown once per scan, not once per photo.
   bool _photoWarningAccepted = false;
@@ -199,7 +218,16 @@ class _ScanningScreenState extends State<ScanningScreen> {
                         ],
                         const SizedBox(height: 14),
                         _CoverageBar(coverage: _session.coverage),
+                        const SizedBox(height: 10),
+                        _ExtentRow(
+                          extent: _session.scannedExtentM,
+                          maxM: _maxExtentM,
+                        ),
                         const SizedBox(height: 12),
+                        if (_tooLarge) ...<Widget>[
+                          _TooLargeCallout(maxM: _maxExtentM),
+                          const SizedBox(height: 12),
+                        ],
                         _buildClosureCallout(),
                         const SizedBox(height: 14),
                         _TagChips(tags: _session.tags),
@@ -412,7 +440,10 @@ class _ScanningScreenState extends State<ScanningScreen> {
           Expanded(
             child: PrimaryButton(
               label: 'Finish scan',
-              onPressed: live ? _finish : null,
+              // Past the size limit the scan cannot be finished: one scan
+              // of a floor that size would not be reliable. The callout
+              // above says why.
+              onPressed: live && !_tooLarge ? _finish : null,
             ),
           ),
           const SizedBox(width: 12),
@@ -420,6 +451,104 @@ class _ScanningScreenState extends State<ScanningScreen> {
             icon: Icons.photo_camera_outlined,
             semanticLabel: 'Take a reference photo',
             onTap: live ? _takePhoto : null,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Scanned extent 24.4 × 19.0 m", live as the outline grows (F-04).
+class _ExtentRow extends StatelessWidget {
+  const _ExtentRow({required this.extent, required this.maxM});
+
+  final Size? extent;
+  final double maxM;
+
+  @override
+  Widget build(BuildContext context) {
+    final Size? e = extent;
+    final bool over = e != null && (e.width > maxM || e.height > maxM);
+    final String value = e == null
+        ? '—'
+        : '${e.width.toStringAsFixed(1)} × ${e.height.toStringAsFixed(1)} m';
+    return Semantics(
+      label: 'Scanned extent $value, limit ${maxM.round()} metres',
+      excludeSemantics: true,
+      child: Row(
+        children: <Widget>[
+          const Icon(
+            Icons.straighten_rounded,
+            size: 16,
+            color: AppColors.textMuted,
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('Scanned extent', style: AppTheme.caption),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+              color: over ? AppColors.warning : AppColors.textPrimary,
+            ),
+          ),
+          Text(' / max ${maxM.round()} m', style: AppTheme.caption),
+        ],
+      ),
+    );
+  }
+}
+
+/// Stays on screen while the scanned walls are past the limit, and
+/// explains why Finish is off.
+class _TooLargeCallout extends StatelessWidget {
+  const _TooLargeCallout({required this.maxM});
+
+  final double maxM;
+
+  @override
+  Widget build(BuildContext context) {
+    return HairlineContainer(
+      radius: 15,
+      borderColors: AppColors.edgeInto(AppColors.warning),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Padding(
+            padding: EdgeInsets.only(top: 1),
+            child: Icon(
+              Icons.crop_free_rounded,
+              size: 17,
+              color: AppColors.warning,
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  'Too large for one scan',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'This floor is over ${maxM.round()} m across, more than one '
+                  'scan can hold accurately. It must be scanned in sections, '
+                  'so Finish is off for this scan. Discard it and scan the '
+                  'floor one section at a time.',
+                  style: AppTheme.caption,
+                ),
+              ],
+            ),
           ),
         ],
       ),

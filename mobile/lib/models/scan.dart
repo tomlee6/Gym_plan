@@ -12,7 +12,12 @@ class ScanConfig {
     required this.facility,
     required this.level,
     required this.heightM,
+    this.accountId,
   });
+
+  /// The gym account the capture is made in. The upload names it on every
+  /// call, even if the surveyor switches account before it finishes.
+  final String? accountId;
 
   /// The facility's id on the platform, sent when the capture is registered.
   final String facilityId;
@@ -100,6 +105,43 @@ class ScanTag {
 
   /// Only set for [TagType.ceiling].
   final double? heightM;
+}
+
+/// A laser-measured distance between two points of the scanned outline
+/// (F-03), so the reviewer can check the scan's scale against a tape.
+///
+/// [a] and [b] are in the same plan frame (and units) as tags: metres on
+/// the floor plane for a LiDAR scan. Two or more long distances, ideally
+/// across the floor in both directions, catch a scan that drifted.
+@immutable
+class ControlDistance {
+  const ControlDistance({
+    required this.a,
+    required this.b,
+    required this.measuredM,
+  });
+
+  /// Shorter than this, a laser check says little about the scan's scale.
+  static const double shortM = 3;
+
+  /// Fewer than this, a single bad reading cannot be spotted.
+  static const int recommended = 2;
+
+  final Offset a;
+  final Offset b;
+
+  /// What the laser measure read, in metres.
+  final double measuredM;
+
+  /// The same distance on the scan, in metres.
+  double scannedM(PlanGeometry geometry) =>
+      (b - a).distance * geometry.metresPerUnit;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'a': <double>[a.dx, a.dy],
+    'b': <double>[b.dx, b.dy],
+    'measuredM': measuredM,
+  };
 }
 
 /// How well a stretch of wall was captured.
@@ -216,6 +258,25 @@ class PlanGeometry {
 
   double get perimeter =>
       walls.fold(0, (double sum, WallSegment w) => sum + w.length);
+
+  /// Width × length in metres of the box around the scanned walls (F-04),
+  /// or null before any wall is found. Objects and the surveyor's position
+  /// are left out: it is the floor being scanned that has to stay within
+  /// what one scan can hold.
+  Size? get wallExtentM {
+    if (walls.isEmpty) return null;
+    double left = walls.first.start.dx, right = left;
+    double top = walls.first.start.dy, bottom = top;
+    for (final WallSegment w in walls) {
+      for (final Offset p in <Offset>[w.start, w.end]) {
+        if (p.dx < left) left = p.dx;
+        if (p.dx > right) right = p.dx;
+        if (p.dy < top) top = p.dy;
+        if (p.dy > bottom) bottom = p.dy;
+      }
+    }
+    return Size((right - left) * metresPerUnit, (bottom - top) * metresPerUnit);
+  }
 }
 
 /// The demo outline the simulated scan walks, in a 325 × 290 canvas.
@@ -311,6 +372,7 @@ class ScanResult {
     this.photoPaths = const <String>[],
     this.overrideReason,
     this.detected = const <RoomScanObject>[],
+    this.controlDistances = const <ControlDistance>[],
   });
 
   /// Photos the reviewer asks for: one per corner of the room.
@@ -339,7 +401,25 @@ class ScanResult {
   /// (CHANGE 2.1). Empty for a simulated scan, which has no real objects.
   final List<RoomScanObject> detected;
 
+  /// Laser checks of the scan's scale added on the review screen (F-03).
+  final List<ControlDistance> controlDistances;
+
   double? get areaM2 => geometry.areaM2;
+
+  ScanResult copyWith({List<ControlDistance>? controlDistances}) => ScanResult(
+    config: config,
+    geometry: geometry,
+    coverage: coverage,
+    closed: closed,
+    walls: walls,
+    tags: tags,
+    photos: photos,
+    elapsed: elapsed,
+    photoPaths: photoPaths,
+    overrideReason: overrideReason,
+    detected: detected,
+    controlDistances: controlDistances ?? this.controlDistances,
+  );
 
   int get coveragePercent => (coverage * 100).round();
 }

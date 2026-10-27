@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 
 import '../models/scan.dart';
 import '../services/api_client.dart';
+import '../services/auth_session.dart';
 import '../services/capture_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/formatting.dart';
 import '../widgets/capture_fields.dart';
 import '../widgets/detail_widgets.dart';
 import '../widgets/nav_bar.dart';
@@ -53,6 +55,9 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
       widget.captureService ?? CaptureService();
 
   List<Facility> _facilities = const <Facility>[];
+
+  /// When the list came from the phone's offline copy, when it was saved.
+  DateTime? _cachedAt;
   Facility? _facility;
   DeviceCapability? _device;
   String? _loadError;
@@ -112,6 +117,7 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
 
     setState(() {
       _facilities = list.facilities;
+      _cachedAt = list.cachedAt;
       _device = device;
       // The gym passed in if the user can pick it, else their default.
       _facility =
@@ -148,6 +154,9 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
       MaterialPageRoute<void>(
         builder: (_) => ScanningScreen(
           config: ScanConfig(
+            // The account the capture belongs to, kept with it so the
+            // upload goes to the right account even after a switch.
+            accountId: AuthSession.instance.currentAccountId,
             facilityId: _facility!.id,
             facility: _facility!.name,
             level: int.parse(level),
@@ -233,6 +242,19 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
                     style: AppTheme.body,
                   ),
                   const SizedBox(height: 26),
+
+                  if (_cachedAt != null) ...<Widget>[
+                    StatusCallout(
+                      color: AppColors.warning,
+                      icon: Icons.cloud_off_rounded,
+                      title: 'Offline · saved facility list',
+                      subtitle:
+                          'No signal, so this is the list saved on this '
+                          'iPhone on ${Formatting.stamp(_cachedAt!)}. The scan '
+                          'uploads once you are back online.',
+                    ),
+                    const SizedBox(height: 18),
+                  ],
 
                   LabelledField(
                     label: 'Facility',

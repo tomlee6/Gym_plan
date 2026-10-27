@@ -15,20 +15,32 @@ Needs Node 22+ and Docker.
 ```sh
 cd backend
 npm install
-npm run db:up        # MySQL 8 in Docker on port 3317 (gymplan + gymplan_test)
+npm run db:up        # MySQL 8.4 in Docker on port 3317 (gymplan + gymplan_test)
 cp .env.example .env # then set JWT_SECRET and STORAGE_SIGNING_SECRET
-npm run db:migrate
+npm run db:migrate   # one baseline: migrations/001_baseline.sql
 npm run db:seed      # demo data, see below
-npm run dev          # http://localhost:8080
+npm run dev          # the API, http://localhost:8080
+npm run dev:worker   # background jobs: plan reading, 3D generation, removal, retention
 ```
 
-Demo accounts from the seed:
+Sign-in goes through Amazon Cognito in Sydney (`HUB_DRIVER=cognito`): its
+managed sign-in page holds passwords, "forgot password" and MFA, and an
+admin's invite creates the person there. Everything else about a person
+(name, accounts, roles, invites, sessions) stays in this database. Locally
+`HUB_DRIVER=dev` serves a stand-in Hub at `/dev-hub`, so the web app and the
+phone run the real flow, and its page lists the seeded people:
 
-| Who            | Email                             | Password     | Web home   |
-| -------------- | --------------------------------- | ------------ | ---------- |
-| Owner/surveyor | `sam.okafor@northgatefitness.com` | `flex1234`   | `/plans`   |
-| Flex reviewer  | `maya.restrepo@flexmotion.app`    | `review1234` | `/review`  |
-| Platform admin | `admin@flexmotion.app`            | `admin1234`  | `/admin`   |
+| Who           | Access                                                       | Web home  |
+| ------------- | ------------------------------------------------------------ | --------- |
+| Sam Okafor    | owner at Northgate Group, surveyor at Kestrel Health Clubs   | `/plans`  |
+| Lee Tan       | surveyor at Northgate Group                                  | `/plans`  |
+| Maya Restrepo | Flex reviewer                                                | `/review` |
+| Jordan Kaur   | Flex platform admin                                          | `/admin`  |
+
+Anyone else can be signed in by email on the dev Hub page; they get in once
+an admin has invited that email to an account. See `docs/api-contract-v2.md`
+for sign-in, `X-Account-Id`, plan states and plan format 3, and
+`../docs/runbooks/` for running it in AWS.
 
 Every seeded version carries a plan read from a synthetic scan, so the
 editor and the walkthrough have something to show.
@@ -217,9 +229,6 @@ credentials.
 
 ## Not built yet
 
-- **GoalCert sign-in.** Sign-in uses this service's own accounts. Swap the
-  password check in `modules/auth.js` for the GoalCert exchange; tokens and
-  everything after stay the same.
 - **Automatic reading of uploaded drawings (RDR-05) and DWG layers
   (RDR-04).** Drawings are traced by the reviewer over the uploaded image. A
   DWG cannot be previewed in the browser, so it is drawn in metres from the

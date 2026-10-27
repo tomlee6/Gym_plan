@@ -1,0 +1,26 @@
+{
+  "name": "flexgym-infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AWS CDK app for Flex Gym Scan: network, data stores, queues, compute, web hosting, email, monitoring and the release pipeline.",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "synth": "cdk synth",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "cdk": "cdk"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.273.0",
+    "constructs": "^10.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "aws-cdk": "2.1145.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3"
+  }
+}

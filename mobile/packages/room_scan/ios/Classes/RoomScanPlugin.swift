@@ -5,17 +5,25 @@ import UIKit
 import RoomPlan
 #endif
 
-/// Flutter entry point. Methods arrive on `flex/room_scan`; live updates go
-/// out on `flex/room_scan/events`.
+/// Flutter entry point. Methods arrive on `flex/room_scan`; live scan
+/// updates go out on `flex/room_scan/events`, and the walkaround recorder's
+/// motion samples on `flex/room_scan/video_events`.
+///
+/// The app's minimum is iOS 17, so RoomPlan (iOS 16+) and every API used
+/// here is always there; the only remaining check is whether the device has
+/// a LiDAR sensor (`RoomCaptureSession.isSupported`).
 public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   private var eventSink: FlutterEventSink?
 
   /// A `RoomScanner` while a scan exists. Typed loosely because the class
-  /// only exists on iOS 16+.
+  /// is only compiled where RoomPlan can be imported.
   private var scanner: AnyObject?
 
-  /// The 360 degree equipment recorder, made on first use (iOS 13+).
-  private var recorderStorage: AnyObject?
+  /// The 360 degree equipment recorder, made on first use.
+  private lazy var videoRecorder = EquipmentVideoRecorder()
+
+  /// Forwards the recorder's motion samples to Flutter (I-06).
+  private let videoEvents = VideoEventStream()
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = RoomScanPlugin()
@@ -25,19 +33,20 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     let events = FlutterEventChannel(
       name: "flex/room_scan/events", binaryMessenger: registrar.messenger())
     events.setStreamHandler(instance)
+    let videoEvents = FlutterEventChannel(
+      name: "flex/room_scan/video_events", binaryMessenger: registrar.messenger())
+    videoEvents.setStreamHandler(instance.videoEvents)
 
-    if #available(iOS 13.0, *) {
-      registrar.register(
-        EquipmentVideoPreviewFactory(recorder: { instance.recorder() }),
-        withId: "flex/equipment_video_preview")
-    }
+    registrar.register(
+      EquipmentVideoPreviewFactory(recorder: { instance.recorder() }),
+      withId: "flex/equipment_video_preview")
   }
 
-  @available(iOS 13.0, *)
   private func recorder() -> EquipmentVideoRecorder {
-    if let existing = recorderStorage as? EquipmentVideoRecorder { return existing }
-    let made = EquipmentVideoRecorder()
-    recorderStorage = made
+    let made = videoRecorder
+    if made.onMotion == nil {
+      made.onMotion = { [weak self] sample in self?.videoEvents.send(sample) }
+    }
     return made
   }
 
@@ -52,22 +61,11 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     // The 360 equipment recorder (CHANGE 3). It needs no LiDAR, so it is
     // handled before the RoomPlan availability check below.
     if call.method.hasPrefix("video.") {
-      if #available(iOS 13.0, *) {
-        handleVideo(call, result: result)
-      } else {
-        result(
-          FlutterError(
-            code: "unsupported",
-            message: "Recording equipment video needs iOS 13 or later.", details: nil))
-      }
+      handleVideo(call, result: result)
       return
     }
 
     #if canImport(RoomPlan)
-    guard #available(iOS 16.0, *) else {
-      result(unsupported())
-      return
-    }
     handleScan(call, result: result)
     #else
     result(unsupported())
@@ -81,14 +79,10 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       "supported": false,
     ]
     #if canImport(RoomPlan)
-    if #available(iOS 16.0, *) {
-      if RoomCaptureSession.isSupported {
-        info["supported"] = true
-      } else {
-        info["reason"] = "This device has no LiDAR sensor."
-      }
+    if RoomCaptureSession.isSupported {
+      info["supported"] = true
     } else {
-      info["reason"] = "Scanning needs iOS 16 or later."
+      info["reason"] = "This device has no LiDAR sensor."
     }
     #else
     info["reason"] = "RoomPlan is not available in this build."
@@ -99,12 +93,11 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   private func unsupported() -> FlutterError {
     FlutterError(
       code: "unsupported",
-      message: "LiDAR scanning needs a LiDAR iPhone or iPad on iOS 16 or later.",
+      message: "LiDAR scanning needs an iPhone or iPad with a LiDAR sensor.",
       details: nil)
   }
 
   #if canImport(RoomPlan)
-  @available(iOS 16.0, *)
   private func handleScan(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     let active = scanner as? RoomScanner
 
@@ -183,7 +176,6 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
    cannot share one. The workflow records equipment after the room scan,
    so this only ever fires if the two are asked for out of order.
    */
-  @available(iOS 13.0, *)
   private func handleVideo(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     let args = call.arguments as? [String: Any] ?? [:]
     let recorder = self.recorder()
@@ -252,6 +244,28 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
   public func onCancel(withArguments arguments: Any?) -> FlutterError? {
     eventSink = nil
+    return nil
+  }
+}
+
+/// The stream handler for `flex/room_scan/video_events`. Samples sent while
+/// nobody listens are dropped.
+final class VideoEventStream: NSObject, FlutterStreamHandler {
+  private var sink: FlutterEventSink?
+
+  func send(_ event: [String: Any]) {
+    sink?(event)
+  }
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink)
+    -> FlutterError?
+  {
+    sink = events
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    sink = nil
     return nil
   }
 }

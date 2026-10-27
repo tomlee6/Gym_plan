@@ -42,7 +42,7 @@ async function upload(key, body, files) {
 describe('uploaded drawings', () => {
   // These tests make many plans; the quota is not what they are about.
   it('starts with room in the quota', async () => {
-    await pool.query(`UPDATE organisations SET plan_quota = 100 WHERE id = 'org_northgate'`);
+    await pool.query(`UPDATE accounts SET plan_quota = 100 WHERE id = ?`, [DEMO.account]);
   });
 
   it('turns a scaled image into a plan the reviewer traces over', async () => {
@@ -107,7 +107,7 @@ describe('uploaded drawings', () => {
     await post(`/v1/captures/${id}/complete`).send({}).expect(200);
 
     // UPL-04: the original is stored unchanged.
-    const stored = await ctx.storage.read(`orgs/org_northgate/captures/${id}/source.pdf`);
+    const stored = await ctx.storage.read(`accounts/${DEMO.account}/captures/${id}/source.pdf`);
     assert.ok(stored.equals(pdf));
   });
 

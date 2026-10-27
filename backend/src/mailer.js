@@ -1,20 +1,46 @@
-import { config } from './config.js';
-
 /**
- * Outgoing email. The PRD says notifications go through GoalCert; until that
- * is wired up, messages are logged outside production so the flow can be
- * tested, and dropped in production with a warning.
+ * Outgoing email (D-07): Amazon SES in Sydney in production, the console
+ * everywhere else.
+ *
+ * SES is reached through its v2 API with the task's IAM role; the sending
+ * domain's SPF, DKIM and DMARC records are set up by the infrastructure
+ * (M-09). Bounces and complaints go to the configuration set's event
+ * destination (see docs/runbooks/ses-bounces.md).
  *
  * Tests read `sentMail` to check what would have gone out.
  */
+import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
+
+import { config } from './config.js';
+
 export const sentMail = [];
+
+let ses;
+
+/** Tests may swap the SES client for a fake. */
+export function setSesClient(client) {
+  ses = client;
+}
 
 export async function sendMail({ to, subject, text }) {
   sentMail.push({ to, subject, text });
-  if (config.env === 'test') return;
-  if (config.isProduction) {
-    console.warn(`Email to ${to} not sent: no mail provider is configured.`);
+  if (config.env === 'test' && config.mail.driver !== 'ses') return;
+  if (config.mail.driver !== 'ses') {
+    console.log(`\n--- email to ${to}: ${subject}\n${text}\n---\n`);
     return;
   }
-  console.log(`\n--- email to ${to}: ${subject}\n${text}\n---\n`);
+  ses ??= new SESv2Client({ region: config.awsRegion });
+  await ses.send(
+    new SendEmailCommand({
+      FromEmailAddress: config.mail.from,
+      Destination: { ToAddresses: [to] },
+      ...(config.mail.configurationSet && { ConfigurationSetName: config.mail.configurationSet }),
+      Content: {
+        Simple: {
+          Subject: { Data: subject, Charset: 'UTF-8' },
+          Body: { Text: { Data: text, Charset: 'UTF-8' } },
+        },
+      },
+    }),
+  );
 }

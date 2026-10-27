@@ -120,6 +120,27 @@ export const CubeIcon = (p) => (
   </Icon>
 );
 
+export const PhoneIcon = (p) => (
+  <Icon {...p}>
+    <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+    <path d="M11 18h2" />
+  </Icon>
+);
+
+export const ShieldCheckIcon = (p) => (
+  <Icon {...p}>
+    <path d="M12 3 5 6v5.5c0 4.2 2.9 7.9 7 9.5 4.1-1.6 7-5.3 7-9.5V6z" />
+    <path d="m9 12 2.2 2.2L15.5 10" />
+  </Icon>
+);
+
+export const ArrowRightIcon = (p) => (
+  <Icon {...p}>
+    <path d="M5 12h14" />
+    <path d="m13 6 6 6-6 6" />
+  </Icon>
+);
+
 export const LinkIcon = (p) => (
   <Icon {...p}>
     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
@@ -154,5 +175,12 @@ export const TrashIcon = (p) => (
     <path d="M3 6h18" />
     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
     <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+  </Icon>
+);
+
+export const StaffIcon = (p) => (
+  <Icon {...p}>
+    <path d="M12 3 4 6v6c0 4.4 3.4 8.3 8 9 4.6-.7 8-4.6 8-9V6z" />
+    <path d="m9 12 2 2 4-4" />
   </Icon>
 );

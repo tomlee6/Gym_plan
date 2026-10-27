@@ -11,7 +11,6 @@ import simd
 ///
 /// Everything here runs on the main thread: the Flutter channels require it,
 /// and the update timer is scheduled on the main run loop.
-@available(iOS 16.0, *)
 final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
   enum ScanError: LocalizedError {
     case noFrame
@@ -402,10 +401,10 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
     return (Double(confidence * (0.5 + 0.5 * joinShare)), closed)
   }
 
-  /// Floor area from the recognised floor polygon. iOS 17+ only; earlier
-  /// versions do not report the floor's shape.
+  /// Floor area from the recognised floor polygon (`floors` is iOS 17+,
+  /// the app's minimum). Nil until RoomPlan has recognised the floor.
   private static func floorArea(of room: CapturedRoom) -> Double? {
-    guard #available(iOS 17.0, *), let floor = room.floors.first else { return nil }
+    guard let floor = room.floors.first else { return nil }
     let corners = floor.polygonCorners.map { corner -> SIMD2<Float> in
       let world = floor.transform * SIMD4<Float>(corner, 1)
       return SIMD2(world.x, world.z)

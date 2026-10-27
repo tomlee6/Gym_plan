@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:mobile/models/scan.dart';
+import 'package:mobile/screens/control_distance_screen.dart';
 import 'package:mobile/screens/review_submit_screen.dart';
 import 'package:mobile/screens/scanning_screen.dart';
 import 'package:mobile/screens/uploading_screen.dart';
@@ -10,6 +11,7 @@ import 'package:mobile/services/simulated_scan_session.dart';
 import 'support/fake_backend.dart';
 import 'package:mobile/services/upload_queue.dart';
 import 'package:mobile/theme/app_theme.dart';
+import 'package:mobile/widgets/floor_plan.dart';
 import 'package:mobile/widgets/tag_sheet.dart';
 
 import 'phone_size.dart';
@@ -26,8 +28,9 @@ const ScanConfig _config = ScanConfig(
 /// setup screen, so "Submit" has a home route to return to.
 Future<void> _openScan(
   WidgetTester tester,
-  SimulatedScanSession session,
-) async {
+  SimulatedScanSession session, {
+  double? maxExtentM,
+}) async {
   usePhoneSize(tester);
   await tester.pumpWidget(
     MaterialApp(
@@ -37,8 +40,11 @@ Future<void> _openScan(
           child: TextButton(
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
-                builder: (_) =>
-                    ScanningScreen(config: _config, session: session),
+                builder: (_) => ScanningScreen(
+                  config: _config,
+                  session: session,
+                  maxExtentM: maxExtentM,
+                ),
               ),
             ),
             child: const Text('launch'),
@@ -297,7 +303,11 @@ void main() {
     // The app's own nav bar, which labels its back button.
     await tester.tap(find.text('Review'));
     await tester.pumpAndSettle();
-    expect(submit().onPressed, isNull, reason: 'backing out does not finish the step');
+    expect(
+      submit().onPressed,
+      isNull,
+      reason: 'backing out does not finish the step',
+    );
 
     // Finishing it does.
     await _finishEquipmentStep(tester);
@@ -371,6 +381,130 @@ void main() {
     await _advance(tester, const Duration(milliseconds: 1500));
     expect(find.byType(ScanningScreen), findsNothing);
     expect(find.text('launch'), findsOneWidget);
+
+    await _tearDown(tester);
+  });
+
+  group('scan size limit (F-04)', () {
+    testWidgets('shows the live extent of the scanned walls', (
+      WidgetTester tester,
+    ) async {
+      final SimulatedScanSession session = SimulatedScanSession(
+        config: _config,
+        unitsPerTick: 200,
+      );
+      addTearDown(session.dispose);
+      await _openScan(tester, session);
+
+      expect(find.text('Scanned extent'), findsOneWidget);
+
+      await _advance(tester, const Duration(seconds: 2));
+      // The demo outline, in metres.
+      expect(find.text('24.4 × 19.0 m'), findsOneWidget);
+      expect(find.text(' / max 40 m'), findsOneWidget);
+      expect(find.text('Too large for one scan'), findsNothing);
+      expect(
+        tester
+            .widget<PrimaryButton>(
+              find.widgetWithText(PrimaryButton, 'Finish scan'),
+            )
+            .onPressed,
+        isNotNull,
+      );
+
+      await _tearDown(tester);
+    });
+
+    testWidgets('past the limit it warns and Finish is off', (
+      WidgetTester tester,
+    ) async {
+      final SimulatedScanSession session = SimulatedScanSession(
+        config: _config,
+        unitsPerTick: 200,
+      );
+      addTearDown(session.dispose);
+      await _openScan(tester, session, maxExtentM: 20);
+      await _advance(tester, const Duration(seconds: 2));
+
+      expect(find.text('Too large for one scan'), findsOneWidget);
+      expect(find.textContaining('scanned in sections'), findsOneWidget);
+      expect(
+        tester
+            .widget<PrimaryButton>(
+              find.widgetWithText(PrimaryButton, 'Finish scan'),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      await _tearDown(tester);
+    });
+  });
+
+  testWidgets('control distances are marked on the plan and submitted', (
+    WidgetTester tester,
+  ) async {
+    final SimulatedScanSession session = SimulatedScanSession(
+      config: _config,
+      unitsPerTick: 200,
+    );
+    addTearDown(session.dispose);
+    await _openScan(tester, session);
+    await _advance(tester, const Duration(seconds: 2));
+    await tester.tap(find.text('Finish scan'));
+    await _advance(tester, const Duration(milliseconds: 600));
+
+    // None yet: encouraged, not required.
+    expect(
+      find.textContaining('Add at least 2 long distances'),
+      findsOneWidget,
+    );
+
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'Add distance'));
+    await tester.tap(find.widgetWithText(TextButton, 'Add distance'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ControlDistanceScreen), findsOneWidget);
+
+    // Tap near the north-west and north-east corners; taps snap to them.
+    final Rect plan = tester.getRect(find.byType(FloorPlanView));
+    final double scale = plan.width / FloorOutline.canvas.width;
+    Offset at(double x, double y) => plan.topLeft + Offset(x, y) * scale;
+    await tester.tapAt(at(36, 44) + const Offset(4, 3));
+    await tester.pump();
+    await tester.tapAt(at(288, 44) + const Offset(-3, 4));
+    await tester.pump();
+    // The plan does not move between taps (the instructions sit under it).
+    expect(tester.getRect(find.byType(FloorPlanView)), plan);
+    expect(find.text('On the scan: 24.39 m'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextField), '24.42');
+    await tester.pump();
+    await tester.tap(find.widgetWithText(PrimaryButton, 'Add distance'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ReviewSubmitScreen), findsOneWidget);
+    expect(find.text('Control distances · 1'), findsOneWidget);
+    expect(find.text('Laser 24.42 m · scan 24.39 m'), findsOneWidget);
+    // Still fewer than two.
+    expect(
+      find.textContaining('Add at least 2 long distances'),
+      findsOneWidget,
+    );
+
+    await _finishEquipmentStep(tester);
+    await tester.tap(find.text('Submit scan'));
+    await _advance(tester, const Duration(seconds: 2));
+
+    final ControlDistance sent =
+        fakes.uploads.enqueued.single.controlDistances.single;
+    expect(sent.a, const Offset(36, 44));
+    expect(sent.b, const Offset(288, 44));
+    expect(sent.measuredM, 24.42);
+    expect(sent.toJson(), <String, Object?>{
+      'a': <double>[36, 44],
+      'b': <double>[288, 44],
+      'measuredM': 24.42,
+    });
 
     await _tearDown(tester);
   });

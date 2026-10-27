@@ -475,6 +475,69 @@ void main() {
     await _until(() => second.active!.complete);
   });
 
+  test(
+    'a relaunch resumes in the capture\'s own account, unprompted',
+    () async {
+      // Signed in to two accounts, capturing in the first.
+      session.signedInWith(<String, Object?>{
+        ...tokens(),
+        'accounts': <Object?>[
+          <String, Object?>{'id': 'acc_a', 'name': 'A', 'role': 'owner'},
+          <String, Object?>{'id': 'acc_b', 'name': 'B', 'role': 'surveyor'},
+        ],
+      });
+      session.selectAccount('acc_a');
+      final BackgroundUploadQueue first = newQueue();
+      await first.enqueue(
+        result().copyWith(
+          controlDistances: const <ControlDistance>[
+            ControlDistance(
+              a: Offset(0, 0),
+              b: Offset(12, 0),
+              measuredM: 12.03,
+            ),
+          ],
+        ),
+        export: export(),
+      );
+      await _until(() => transport.enqueued.length == parts());
+
+      // The surveyor switches account, then the app is killed.
+      session.selectAccount('acc_b');
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      first.dispose();
+      transport.active.clear();
+      transport.enqueued.clear();
+      final int before = backend.requests.length;
+
+      // On relaunch the session is already there (restored from the
+      // Keychain), so nothing waits for a sign-in.
+      final BackgroundUploadQueue second = newQueue();
+      addTearDown(second.dispose);
+      await second.restore();
+      await _until(() => transport.enqueued.length == parts());
+      transport.finishAll();
+      await _until(() => second.active!.complete);
+
+      // Every call, before and after the relaunch, named the capture's
+      // account, not the one the phone was switched to.
+      expect(backend.requests.length, greaterThan(before));
+      expect(
+        backend.requests.map((http.Request r) => r.headers['X-Account-Id']),
+        everyElement('acc_a'),
+      );
+      final Map<String, Object?> meta =
+          jsonDecode(backend.requests.first.body) as Map<String, Object?>;
+      expect(meta['controlDistances'], <Object?>[
+        <String, Object?>{
+          'a': <Object?>[0.0, 0.0],
+          'b': <Object?>[12.0, 0.0],
+          'measuredM': 12.03,
+        },
+      ]);
+    },
+  );
+
   test('stops when signed out, and resumes after sign-in', () async {
     backend.unauthorised = true;
     final BackgroundUploadQueue queue = newQueue();
@@ -482,7 +545,9 @@ void main() {
 
     await queue.enqueue(result(), export: export());
     await _until(() => queue.active!.status == UploadStatus.failed);
-    expect(queue.active!.error, 'Token expired');
+    // The refresh was refused too, so the session ended.
+    expect(queue.active!.error, 'Your sign-in has ended. Sign in again.');
+    expect(session.signedIn, isFalse);
 
     backend.unauthorised = false;
     // The app retries uploads once the user signs in again.

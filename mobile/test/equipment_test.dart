@@ -114,10 +114,12 @@ void main() {
       requests = <http.Request>[];
       partBodies = <List<int>>[];
       dir = await Directory.systemTemp.createTemp('gym_equipment_test');
-      videoFile = await File('${dir.path}/360.mov')
-          .writeAsBytes(List<int>.generate(2048, (int i) => i % 251));
-      thumbnailFile = await File('${dir.path}/360.jpg')
-          .writeAsBytes(List<int>.filled(256, 9));
+      videoFile = await File(
+        '${dir.path}/360.mov',
+      ).writeAsBytes(List<int>.generate(2048, (int i) => i % 251));
+      thumbnailFile = await File(
+        '${dir.path}/360.jpg',
+      ).writeAsBytes(List<int>.filled(256, 9));
 
       final MockClient client = MockClient((http.Request req) async {
         requests.add(req);
@@ -126,7 +128,8 @@ void main() {
           // The platform opens a thumbnail upload only when one was offered,
           // as the real one does.
           final bool withThumbnail =
-              (jsonDecode(req.body) as Map<String, Object?>)['thumbnail'] != null;
+              (jsonDecode(req.body) as Map<String, Object?>)['thumbnail'] !=
+              null;
           return http.Response(
             jsonEncode(<String, Object?>{
               'videoId': 'vid-1',
@@ -137,7 +140,10 @@ void main() {
                   'fileId': 'f-video',
                   'name': 'equipment/EQ-001/video/360.mov',
                   'parts': <Object?>[
-                    <String, Object?>{'number': 1, 'url': 'https://storage.test/v1'},
+                    <String, Object?>{
+                      'number': 1,
+                      'url': 'https://storage.test/v1',
+                    },
                   ],
                 },
                 if (withThumbnail)
@@ -146,7 +152,10 @@ void main() {
                     'fileId': 'f-thumb',
                     'name': 'equipment/EQ-001/thumbnail/thumbnail.jpg',
                     'parts': <Object?>[
-                      <String, Object?>{'number': 1, 'url': 'https://storage.test/t1'},
+                      <String, Object?>{
+                        'number': 1,
+                        'url': 'https://storage.test/t1',
+                      },
                     ],
                   },
               ],
@@ -157,7 +166,10 @@ void main() {
         }
         if (path.endsWith('/video/complete')) {
           return http.Response(
-            jsonEncode(<String, Object?>{'videoId': 'vid-1', 'status': 'ready'}),
+            jsonEncode(<String, Object?>{
+              'videoId': 'vid-1',
+              'status': 'ready',
+            }),
             200,
             headers: <String, String>{'content-type': 'application/json'},
           );
@@ -249,23 +261,26 @@ void main() {
       expect(progress.last.fraction, 1.0);
     });
 
-    test('skips a poster frame whose file has gone, keeping the video', () async {
-      await thumbnailFile.delete();
-      await service.uploadVideo(
-        'cap-1',
-        EquipmentVideo(
-          equipmentId: 'EQ-001',
-          path: videoFile.path,
-          thumbnailPath: thumbnailFile.path,
-          bytes: 2048,
-          duration: const Duration(seconds: 9),
-          contentType: 'video/quicktime',
-        ),
-      );
-      // The walkaround still went up, and was confirmed.
-      expect(partBodies.single.length, 2048);
-      expect(requests.last.url.path, endsWith('/video/complete'));
-    });
+    test(
+      'skips a poster frame whose file has gone, keeping the video',
+      () async {
+        await thumbnailFile.delete();
+        await service.uploadVideo(
+          'cap-1',
+          EquipmentVideo(
+            equipmentId: 'EQ-001',
+            path: videoFile.path,
+            thumbnailPath: thumbnailFile.path,
+            bytes: 2048,
+            duration: const Duration(seconds: 9),
+            contentType: 'video/quicktime',
+          ),
+        );
+        // The walkaround still went up, and was confirmed.
+        expect(partBodies.single.length, 2048);
+        expect(requests.last.url.path, endsWith('/video/complete'));
+      },
+    );
 
     test('a take with no poster frame still uploads', () async {
       await service.uploadVideo(
@@ -369,10 +384,7 @@ void simulatedRecordingTests() {
         walk: const Duration(seconds: 10),
       );
       final EquipmentWalkAnimation half =
-          recorder.preview(
-                recording: true,
-                elapsed: const Duration(seconds: 5),
-              )
+          recorder.preview(recording: true, elapsed: const Duration(seconds: 5))
               as EquipmentWalkAnimation;
       expect(half.progress, closeTo(0.5, 1e-9));
 

@@ -4,7 +4,10 @@ import { Navigate, Route, Routes, useLocation } from 'react-router';
 import AccountPage from './admin/AccountPage.jsx';
 import AccountsPage from './admin/AccountsPage.jsx';
 import AuditPage from './admin/AuditPage.jsx';
+import StaffPage from './admin/StaffPage.jsx';
 import App from './App.jsx';
+import AppLinkPage from './lib/AppLinkPage.jsx';
+import AuthCallbackPage from './lib/AuthCallbackPage.jsx';
 import { homeFor, ROLES, useAuth } from './lib/auth.jsx';
 import Layout from './lib/Layout.jsx';
 import LoginPage from './lib/LoginPage.jsx';
@@ -18,6 +21,7 @@ import './lib/app.css';
 // The editor and the 3D viewer are the heavy pages: load them on demand.
 const EditorPage = lazy(() => import('./review/editor/EditorPage.jsx'));
 const WalkthroughPage = lazy(() => import('./viewer/WalkthroughPage.jsx'));
+const ReviewWalkthroughPage = lazy(() => import('./review/ReviewWalkthroughPage.jsx'));
 
 function Loading() {
   return (
@@ -32,7 +36,7 @@ function Loading() {
 function Home() {
   const { status, user } = useAuth();
   if (status === 'checking') return <Loading />;
-  return <Navigate to={status === 'signedIn' ? homeFor(user.role) : '/login'} replace />;
+  return <Navigate to={status === 'signedIn' ? homeFor(user) : '/login'} replace />;
 }
 
 /** The share viewer reads the token from the path itself. */
@@ -44,13 +48,16 @@ function ShareRoute() {
 /**
  * Every page of the web module:
  *
- *   /login                        sign-in for every role
+ *   /login                        sign-in for every role, through the GoalCert Hub
+ *   /auth/callback                where the Hub sends the browser back (B-07)
+ *   /auth/link                    from the iPhone app, already signed in
  *   /s/:token                     share link, no sign-in (VIEW-07)
  *   /plans, /plans/:id, /upload   owner status and uploads (ACC-03, UPL)
  *   /plans/:id/walkthrough        the 3D walkthrough (VIEW)
  *   /review, /review/versions/:id reviewer queue and editor (REV)
  *   /admin, /admin/accounts/:id,
- *   /admin/audit                  accounts and audit log (ACC-05..07)
+ *   /admin/staff, /admin/audit    accounts, invites, staff roles and the
+ *                                 audit log (ACC-05..07, B-09)
  */
 export default function Root() {
   return (
@@ -58,12 +65,22 @@ export default function Root() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/auth/callback" element={<AuthCallbackPage />} />
+        <Route path="/auth/link" element={<AppLinkPage />} />
         <Route path="/s/:token" element={<ShareRoute />} />
         <Route
           path="/plans/:planId/walkthrough"
           element={
             <RequireRole roles={ROLES.customer}>
               <WalkthroughPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/review/versions/:id/walkthrough"
+          element={
+            <RequireRole roles={ROLES.review}>
+              <ReviewWalkthroughPage />
             </RequireRole>
           }
         />
@@ -127,6 +144,14 @@ export default function Root() {
             element={
               <RequireRole roles={ROLES.admin}>
                 <AccountPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/admin/staff"
+            element={
+              <RequireRole roles={ROLES.admin}>
+                <StaffPage />
               </RequireRole>
             }
           />

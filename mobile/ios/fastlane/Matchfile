@@ -1,0 +1,12 @@
+# Code signing with match: certificates and profiles live encrypted in a
+# private git repository shared by the team and CI.
+#
+#   MATCH_GIT_URL                  the signing repository (SSH or HTTPS)
+#   MATCH_PASSWORD                 passphrase that encrypts it
+#   MATCH_GIT_BASIC_AUTHORIZATION  base64 "user:token", for HTTPS in CI
+
+git_url(ENV.fetch("MATCH_GIT_URL"))
+storage_mode("git")
+type("appstore")
+app_identifier([ENV.fetch("APP_IDENTIFIER")])
+team_id(ENV.fetch("APPLE_TEAM_ID"))

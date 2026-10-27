@@ -146,6 +146,24 @@
   touch-action: none;
 }
 
+/* While the generated model downloads (K-01). */
+.wt-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  background: #01060a;
+  color: #fff;
+  text-align: center;
+}
+
+.wt-loading p {
+  margin: 0;
+}
+
 .wt-canvas {
   position: absolute;
   inset: 0;

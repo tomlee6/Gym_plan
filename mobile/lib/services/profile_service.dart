@@ -1,8 +1,11 @@
 import 'package:flutter/foundation.dart';
 
 import 'api_client.dart';
+import 'auth_session.dart';
 
-/// The signed-in user's account, as `GET /v1/me` describes it.
+/// The signed-in user and their current gym account, as `GET /v1/me`
+/// describes them (contract v2 §2). The account block is the one named by
+/// the `X-Account-Id` header the call was sent with.
 @immutable
 class ProfileData {
   const ProfileData({
@@ -14,29 +17,43 @@ class ProfileData {
     required this.facilities,
     required this.plansUsed,
     required this.planQuota,
+    this.accounts = const <Account>[],
   });
 
-  factory ProfileData.fromJson(Map<String, Object?> json) => ProfileData(
-    name: json['name']! as String,
-    initials: json['initials']! as String,
-    role: json['roleLabel']! as String,
-    email: json['email']! as String,
-    organisation: json['organisation']! as String,
-    facilities: (json['facilityCount']! as num).toInt(),
-    plansUsed: (json['plansUsed']! as num).toInt(),
-    planQuota: (json['planQuota']! as num).toInt(),
-  );
+  factory ProfileData.fromJson(Map<String, Object?> json) {
+    final Map<String, Object?> account =
+        json['account'] as Map<String, Object?>? ?? const <String, Object?>{};
+    return ProfileData(
+      name: json['name']! as String,
+      initials: json['initials'] as String? ?? '',
+      role: account['roleLabel'] as String? ?? 'No account selected',
+      email: json['email'] as String? ?? '',
+      organisation: account['name'] as String? ?? '—',
+      facilities: (account['facilityCount'] as num? ?? 0).toInt(),
+      plansUsed: (account['plansUsed'] as num? ?? 0).toInt(),
+      planQuota: (account['planQuota'] as num? ?? 0).toInt(),
+      accounts: <Account>[
+        for (final Object? a in json['accounts'] as List<Object?>? ?? const [])
+          if (a is Map<String, Object?>) Account.fromJson(a),
+      ],
+    );
+  }
 
   final String name;
   final String initials;
 
-  /// e.g. "Owner & Surveyor".
+  /// The user's role in the current account, e.g. "Owner & Surveyor".
   final String role;
   final String email;
+
+  /// The current account's name, e.g. "Northgate Group".
   final String organisation;
   final int facilities;
   final int plansUsed;
   final int planQuota;
+
+  /// Every account the user belongs to; more than one offers a switch.
+  final List<Account> accounts;
 }
 
 /// Capture settings, kept on the server so they follow the user. A local
@@ -63,21 +80,27 @@ class CaptureSettings {
   }
 }
 
-/// The account and settings endpoints (`backend/src/modules/profile.js`).
+/// The profile and settings endpoints (`/v1/me`).
 class ProfileService {
   ProfileService({ApiClient? client}) : _client = client;
 
   final ApiClient? _client;
   ApiClient get _api => _client ?? ApiClient.instance;
 
-  /// Loads the profile and refreshes the local copy of the settings.
+  /// Loads the profile, refreshes the local copy of the settings, and
+  /// brings the session's account list up to date (an invite accepted on
+  /// the web, a membership removed).
   Future<ProfileData> load() async {
     final Map<String, Object?> me = await _api.get('/v1/me');
     final Object? settings = me['settings'];
     if (settings is Map<String, Object?>) {
       CaptureSettings.instance.apply(settings);
     }
-    return ProfileData.fromJson(me);
+    final ProfileData profile = ProfileData.fromJson(me);
+    if (me['accounts'] is List<Object?>) {
+      _api.session.updateAccounts(profile.accounts);
+    }
+    return profile;
   }
 
   /// Saves one or both settings and returns what the server stored.

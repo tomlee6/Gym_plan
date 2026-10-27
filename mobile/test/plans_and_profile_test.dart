@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:mobile/models/plan.dart';
+import 'package:mobile/screens/account_picker_screen.dart';
+import 'package:mobile/screens/home_screen.dart';
 import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/new_capture_screen.dart';
 import 'package:mobile/screens/plan_ready_screen.dart';
@@ -13,6 +15,7 @@ import 'package:mobile/screens/plan_rejected_screen.dart';
 import 'package:mobile/screens/plans_screen.dart';
 import 'package:mobile/screens/profile_screen.dart';
 import 'package:mobile/screens/uploading_screen.dart';
+import 'package:mobile/services/auth_session.dart';
 import 'package:mobile/services/profile_service.dart';
 import 'package:mobile/services/upload_queue.dart';
 import 'package:mobile/theme/app_theme.dart';
@@ -275,6 +278,61 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
       await tester.pumpAndSettle();
     });
+
+    group('Open walkthrough in Safari', () {
+      final List<Uri> opened = <Uri>[];
+      final Future<bool> Function(Uri) original = PlanReadyScreen.openInSafari;
+      setUp(() {
+        opened.clear();
+        PlanReadyScreen.openInSafari = (Uri url) async {
+          opened.add(url);
+          return true;
+        };
+      });
+      tearDown(() => PlanReadyScreen.openInSafari = original);
+
+      testWidgets('opens it already signed in, in the same account', (
+        WidgetTester tester,
+      ) async {
+        await _pump(tester, const PlanReadyScreen(plan: _northgate));
+        await _settle(tester);
+
+        await tester.tap(find.text('Open walkthrough in Safari'));
+        await _settle(tester);
+
+        // The phone proves its own session; the web gets one of its own.
+        final Map<String, Object?> asked = fakes.backend.webLinkRequest!;
+        expect(asked['refreshToken'], fakes.backend.currentRefreshToken);
+        expect(asked['path'], '/w/plan_ng1');
+        expect(asked['accountId'], AuthSession.instance.currentAccountId);
+        expect(asked['accountId'], isNotNull);
+
+        final Uri link = opened.single;
+        expect('${link.origin}${link.path}', 'https://gym.test/auth/link');
+        final Map<String, String> fragment = Uri.splitQueryString(
+          link.fragment,
+        );
+        expect(fragment['token'], 'web-link-token');
+        expect(fragment['next'], '/w/plan_ng1');
+        expect(fragment['account'], asked['accountId']);
+        // Making the link does not rotate or end the phone's session.
+        expect(AuthSession.instance.refreshToken, 'refresh-token');
+        expect(AuthSession.instance.signedIn, isTrue);
+      });
+
+      testWidgets('opens the plain walkthrough when no signed-in link can '
+          'be made', (WidgetTester tester) async {
+        await _pump(tester, const PlanReadyScreen(plan: _northgate));
+        await _settle(tester);
+        fakes.backend.webLinkFails = true;
+
+        await tester.tap(find.text('Open walkthrough in Safari'));
+        await _settle(tester);
+
+        expect(opened.single.toString(), 'https://walkthrough.test/w/plan_ng1');
+        expect(AuthSession.instance.signedIn, isTrue);
+      });
+    });
   });
 
   group('Background upload', () {
@@ -364,6 +422,42 @@ void main() {
 
       final GymTabBar bar = tester.widget<GymTabBar>(find.byType(GymTabBar));
       expect(bar.current, GymTab.profile);
+    });
+
+    testWidgets('one account: nothing to switch to', (
+      WidgetTester tester,
+    ) async {
+      await _pump(tester, const ProfileScreen());
+      await _settle(tester);
+      expect(find.text('Switch account'), findsNothing);
+    });
+
+    testWidgets('several accounts: switch, and start again in the new one', (
+      WidgetTester tester,
+    ) async {
+      fakes = useFakeBackend(
+        configure: (FakeBackend b) => b.accounts.add(FakeBackend.riverside),
+      );
+      AuthSession.instance.selectAccount('acc_northgate');
+      await _pump(tester, const ProfileScreen());
+      await _settle(tester);
+
+      expect(find.text('Northgate Group'), findsOneWidget);
+      await tester.tap(find.text('Switch account'));
+      await _settle(tester);
+
+      expect(find.byType(AccountPickerScreen), findsOneWidget);
+      expect(find.byIcon(Icons.check_circle), findsOneWidget);
+      await tester.tap(find.text('Riverside Leisure'));
+      await _settle(tester);
+
+      expect(find.byType(HomeScreen), findsOneWidget);
+      expect(find.text('Riverside Gym'), findsOneWidget);
+      expect(AuthSession.instance.currentAccountId, 'acc_riverside');
+      expect(
+        fakes.backend.requests.last.headers['X-Account-Id'],
+        'acc_riverside',
+      );
     });
 
     testWidgets('settings come from the server', (WidgetTester tester) async {

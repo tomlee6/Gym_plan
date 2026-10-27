@@ -11,9 +11,13 @@ import {
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   ListPartsCommand,
+  PutObjectCommand,
+  PutObjectTaggingCommand,
   S3Client,
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
@@ -35,7 +39,7 @@ export class S3Storage {
         Bucket: this.bucket,
         Key: key,
         ContentType: contentType,
-        ServerSideEncryption: 'AES256', // PRD: encrypted at rest.
+        // Encrypted at rest by the bucket's default KMS key (M-03).
       }),
     );
     return out.UploadId;
@@ -116,6 +120,14 @@ export class S3Storage {
     );
   }
 
+  /**
+   * Stores a whole object the server produced itself (a generated model).
+   * Encrypted at rest by the bucket's default KMS key, like uploads.
+   */
+  async write(key, body, { contentType = 'application/octet-stream' } = {}) {
+    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: contentType }));
+  }
+
   /** A stored object's bytes. */
   async read(key) {
     const out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
@@ -127,6 +139,28 @@ export class S3Storage {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
+  /**
+   * Removes every object under a folder (`prefix` ends in `/`), a thousand
+   * at a time: a model's files from each try, or all of an account's models.
+   */
+  async deleteFolder(prefix) {
+    if (!prefix.endsWith('/')) throw new Error('A folder to delete must end in /');
+    let token;
+    do {
+      const page = await this.client.send(
+        new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: token }),
+      );
+      const keys = (page.Contents ?? []).map((o) => ({ Key: o.Key }));
+      if (keys.length) {
+        const out = await this.client.send(
+          new DeleteObjectsCommand({ Bucket: this.bucket, Delete: { Objects: keys, Quiet: true } }),
+        );
+        if (out.Errors?.length) throw new Error(`Could not delete ${out.Errors[0].Key}: ${out.Errors[0].Message}`);
+      }
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
+  }
+
   /** A short-lived presigned GetObject URL for a stored object. */
   presignDownload(key, ttlSeconds = 3600) {
     return getSignedUrl(this.client, new GetObjectCommand({ Bucket: this.bucket, Key: key }), {
@@ -134,9 +168,29 @@ export class S3Storage {
     });
   }
 
+  /** Abandons a multipart upload; one already finished or gone is not an error. */
   async abort(key, uploadId) {
+    try {
+      await this.client.send(
+        new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }),
+      );
+    } catch (err) {
+      if (err?.name !== 'NoSuchUpload' && err?.$metadata?.httpStatusCode !== 404) throw err;
+    }
+  }
+
+  /**
+   * Marks an object for cold storage (E-05). The bucket's lifecycle rule
+   * moves objects tagged retention=cold to Glacier Instant Retrieval, so
+   * they stay readable by the same key if a reviewer ever needs them.
+   */
+  async archive(key) {
     await this.client.send(
-      new AbortMultipartUploadCommand({ Bucket: this.bucket, Key: key, UploadId: uploadId }),
+      new PutObjectTaggingCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Tagging: { TagSet: [{ Key: 'retention', Value: 'cold' }] },
+      }),
     );
   }
 }

@@ -4,9 +4,12 @@ import { describe, it } from 'node:test';
 
 import { config } from '../src/config.js';
 import { pool } from '../src/db/pool.js';
+import { hub } from '../src/hub/index.js';
+import { newId } from '../src/ids.js';
 import { api, createOtherTenant, DEMO, login, putPart, useTestServer } from './helpers.js';
 
 const ctx = useTestServer();
+const TOM = { email: 'tom@flexmotion.app' };
 const PART = 5 * 1024 * 1024; // The smallest part size allowed.
 
 const post = (path, t = ctx.token) => api(ctx).post(path).set('Authorization', `Bearer ${t}`);
@@ -65,7 +68,7 @@ describe('captures', () => {
   it('registers a capture once per idempotency key', async () => {
     const first = await register('key-1').expect(201);
     captureId = first.body.captureId;
-    assert.match(captureId, /^cap_/);
+    assert.match(captureId, /^[0-9a-f]{8}-[0-9a-f]{4}-7/);
 
     // The response was lost and the app asks again.
     const retry = await register('key-1').expect(200);
@@ -132,7 +135,7 @@ describe('captures', () => {
     const res = await post(`/v1/captures/${captureId}/complete`).send({}).expect(200);
     assert.equal(res.body.status, 'received');
 
-    const stored = await ctx.storage.read(`orgs/${'org_northgate'}/captures/${captureId}/scan.usdz`);
+    const stored = await ctx.storage.read(`accounts/${DEMO.account}/captures/${captureId}/scan.usdz`);
     assert.ok(stored.equals(model), 'the assembled model matches what was sent');
 
     // Confirming again (a lost response) still says received.
@@ -169,24 +172,28 @@ describe('captures', () => {
   it('validates the metadata', async () => {
     const res = await register('key-bad', metadata({ floorToFloorM: 40 })).expect(400);
     assert.match(res.body.message, /floorToFloorM/);
-    await register('key-bad-2', metadata({ facilityId: 'fac_nope' })).expect(400);
+    await register('key-bad-2', metadata({ facilityId: DEMO.facilities.kestrel })).expect(400);
     await post('/v1/captures').send(metadata()).expect(400); // No idempotency key.
   });
 
-  it('keeps captures inside their organisation', async () => {
+  it('keeps captures inside their account', async () => {
     const other = await createOtherTenant();
     const { accessToken } = await login(ctx, other);
+    const asOther = (req) => req.set('Authorization', `Bearer ${accessToken}`).set('X-Account-Id', other.accountId);
     // Someone else's facility id is refused...
-    await register('key-x', metadata()).set('Authorization', `Bearer ${accessToken}`).expect(400);
+    await asOther(register('key-x', metadata())).expect(400);
     // ...and someone else's capture does not exist for them.
-    await post(`/v1/captures/${captureId}/complete`, accessToken).send({}).expect(404);
+    await asOther(post(`/v1/captures/${captureId}/complete`)).send({}).expect(404);
+    // Nor may they name the other account to get at it.
+    const sneaky = await post(`/v1/captures/${captureId}/complete`, accessToken).send({}).expect(403);
+    assert.equal(sneaky.body.code, 'no_account');
   });
 
   it('stops at the monthly plan quota', async () => {
-    await pool.query(`UPDATE organisations SET plan_quota = 0 WHERE id = 'org_northgate'`);
+    await pool.query(`UPDATE accounts SET plan_quota = 0 WHERE id = ?`, [DEMO.account]);
     const res = await register('key-quota', metadata({ level: 9 })).expect(403);
     assert.match(res.body.message, /used up/);
-    await pool.query(`UPDATE organisations SET plan_quota = 10 WHERE id = 'org_northgate'`);
+    await pool.query(`UPDATE accounts SET plan_quota = 10 WHERE id = ?`, [DEMO.account]);
   });
 });
 
@@ -257,6 +264,9 @@ describe('review', () => {
 
     const approved = await as('post', `/v1/review/versions/${version.id}/approve`).send({}).expect(200);
     assert.match(approved.body.contentHash, /^[0-9a-f]{64}$/);
+    // Approval queues the 3D level (D-04); here the placeholder generator
+    // finishes at once, so the version is ready by the time we look.
+    assert.equal(approved.body.status, 'ready');
     // Approving twice is refused, and an approved plan is read-only.
     await as('post', `/v1/review/versions/${version.id}/approve`).send({}).expect(409);
     await as('put', `/v1/review/versions/${version.id}/plan`).send({ plan, revision: 1 }).expect(409);
@@ -272,25 +282,25 @@ describe('review', () => {
 
     // ACC-06: each step is in the audit log, against the version.
     const [log] = await pool.query(
-      'SELECT action FROM audit_log WHERE target_id = ? AND version = 1',
+      'SELECT action FROM audit_log WHERE target_id = ? AND version_no = 1',
       [level4.id],
     );
-    for (const action of ['CAPTURED', 'PLAN_PRODUCED', 'CLAIMED', 'CORRECTED', 'APPROVED']) {
+    for (const action of ['CAPTURED', 'PLAN_PRODUCED', 'CLAIMED', 'CORRECTED', 'APPROVED', 'GENERATED']) {
       assert.ok(log.some((l) => l.action === action), `${action} is logged`);
     }
   });
 
   it('a rejection needs a reason and a note', async () => {
     const { accessToken: reviewer } = await login(ctx, DEMO.reviewer);
-    await post('/v1/review/versions/pv_ng2_1/reject', reviewer).send({ reason: 'x' }).expect(400);
+    await post(`/v1/review/versions/${DEMO.versions.ng2}/reject`, reviewer).send({ reason: 'x' }).expect(400);
     // REV-08: one of the reason codes.
-    await post('/v1/review/versions/pv_ng2_1/reject', reviewer)
+    await post(`/v1/review/versions/${DEMO.versions.ng2}/reject`, reviewer)
       .send({ reason: 'Bad vibes', note: 'Please rescan.' })
       .expect(400);
-    await post('/v1/review/versions/pv_ng2_1/reject', reviewer)
+    await post(`/v1/review/versions/${DEMO.versions.ng2}/reject`, reviewer)
       .send({ reason: 'Incomplete coverage', note: 'Rewalk the south wall.' })
       .expect(204);
-    const plan = await api(ctx).get('/v1/plans/plan_ng2').set('Authorization', `Bearer ${ctx.token}`);
+    const plan = await api(ctx).get(`/v1/plans/${DEMO.plans.ng2}`).set('Authorization', `Bearer ${ctx.token}`);
     assert.equal(plan.body.status, 'recapture');
     assert.equal(plan.body.review.note, 'Rewalk the south wall.');
   });
@@ -301,7 +311,7 @@ describe('review', () => {
       .get('/v1/review/queue')
       .set('Authorization', `Bearer ${reviewer}`)
       .expect(200);
-    const riverside = body.versions.find((v) => v.id === 'pv_rv1_1');
+    const riverside = body.versions.find((v) => v.id === DEMO.versions.rv1);
     assert.equal(riverside.status, 'processing');
     assert.equal(riverside.reviewer, null);
     assert.equal(typeof riverside.coverage, 'number');
@@ -312,60 +322,58 @@ describe('review', () => {
 
   it('a claimed plan belongs to its reviewer until released', async () => {
     const { accessToken: maya } = await login(ctx, DEMO.reviewer);
+    const tomPerson = hub().person({ email: 'tom@flexmotion.app', name: 'Tom Alder' });
     await pool.query(
-      `INSERT INTO users (id, org_id, email, password_hash, name, role, role_label)
-       SELECT 'usr_tom', org_id, 'tom@flexmotion.app', password_hash, 'Tom Alder', 'reviewer', 'Reviewer'
-       FROM users WHERE id = ?`,
-      [DEMO.reviewer.id],
+      `INSERT INTO users (id, hub_user_id, email, name, staff_role) VALUES (?, ?, 'tom@flexmotion.app', 'Tom Alder', 'reviewer')`,
+      [newId(), tomPerson.sub],
     );
-    const { accessToken: tom } = await login(ctx, {
-      email: 'tom@flexmotion.app',
-      password: DEMO.reviewer.password,
-    });
+    const { accessToken: tom } = await login(ctx, TOM);
 
-    await post('/v1/review/versions/pv_rv1_1/start', maya).send({}).expect(204);
-    const taken = await post('/v1/review/versions/pv_rv1_1/start', tom).send({}).expect(409);
+    await post(`/v1/review/versions/${DEMO.versions.rv1}/start`, maya).send({}).expect(204);
+    const taken = await post(`/v1/review/versions/${DEMO.versions.rv1}/start`, tom).send({}).expect(409);
     assert.match(taken.body.message, /Maya Restrepo is reviewing/);
-    await post('/v1/review/versions/pv_rv1_1/approve', tom).send({}).expect(409);
-    await post('/v1/review/versions/pv_rv1_1/release', tom).send({}).expect(409);
+    await post(`/v1/review/versions/${DEMO.versions.rv1}/approve`, tom).send({}).expect(409);
+    await post(`/v1/review/versions/${DEMO.versions.rv1}/release`, tom).send({}).expect(409);
 
     const queue = await api(ctx).get('/v1/review/queue').set('Authorization', `Bearer ${tom}`);
-    const row = queue.body.versions.find((v) => v.id === 'pv_rv1_1');
+    const row = queue.body.versions.find((v) => v.id === DEMO.versions.rv1);
     assert.deepEqual(row.reviewer, { id: DEMO.reviewer.id, name: 'Maya Restrepo', isMe: false });
 
-    await post('/v1/review/versions/pv_rv1_1/release', maya).send({}).expect(204);
-    await post('/v1/review/versions/pv_rv1_1/start', tom).send({}).expect(204);
+    await post(`/v1/review/versions/${DEMO.versions.rv1}/release`, maya).send({}).expect(204);
+    await post(`/v1/review/versions/${DEMO.versions.rv1}/start`, tom).send({}).expect(204);
     const detail = await api(ctx)
-      .get('/v1/review/versions/pv_rv1_1')
+      .get(`/v1/review/versions/${DEMO.versions.rv1}`)
       .set('Authorization', `Bearer ${tom}`)
       .expect(200);
     assert.equal(detail.body.reviewer.isMe, true);
   });
 
   it('counts reviewer time but not idle spells over 10 minutes', async () => {
-    const { accessToken: tom } = await login(ctx, { email: 'tom@flexmotion.app', password: DEMO.reviewer.password });
+    const { accessToken: tom } = await login(ctx, TOM);
     const seconds = async () =>
-      (await pool.query('SELECT review_active_seconds AS s FROM plan_versions WHERE id = ?', ['pv_rv1_1']))[0][0].s;
+      (await pool.query('SELECT review_active_seconds AS s FROM plan_versions WHERE id = ?', [DEMO.versions.rv1]))[0][0].s;
     const before = await seconds();
 
     await pool.query(
-      "UPDATE plan_versions SET review_last_activity_at = UTC_TIMESTAMP(3) - INTERVAL 20 MINUTE WHERE id = 'pv_rv1_1'",
+      "UPDATE plan_versions SET review_last_activity_at = UTC_TIMESTAMP(3) - INTERVAL 20 MINUTE WHERE id = ?",
+      [DEMO.versions.rv1],
     );
-    await post('/v1/review/versions/pv_rv1_1/activity', tom).send({}).expect(204);
+    await post(`/v1/review/versions/${DEMO.versions.rv1}/activity`, tom).send({}).expect(204);
     assert.equal(await seconds(), before, 'twenty idle minutes do not count');
 
     await pool.query(
-      "UPDATE plan_versions SET review_last_activity_at = UTC_TIMESTAMP(3) - INTERVAL 2 MINUTE WHERE id = 'pv_rv1_1'",
+      "UPDATE plan_versions SET review_last_activity_at = UTC_TIMESTAMP(3) - INTERVAL 2 MINUTE WHERE id = ?",
+      [DEMO.versions.rv1],
     );
-    await post('/v1/review/versions/pv_rv1_1/activity', tom).send({}).expect(204);
+    await post(`/v1/review/versions/${DEMO.versions.rv1}/activity`, tom).send({}).expect(204);
     const after = await seconds();
     assert.ok(after - before >= 119 && after - before <= 125, `two working minutes count (${after - before} s)`);
   });
 
   it('refuses a malformed plan', async () => {
-    const { accessToken: tom } = await login(ctx, { email: 'tom@flexmotion.app', password: DEMO.reviewer.password });
+    const { accessToken: tom } = await login(ctx, TOM);
     await api(ctx)
-      .put('/v1/review/versions/pv_rv1_1/plan')
+      .put(`/v1/review/versions/${DEMO.versions.rv1}/plan`)
       .set('Authorization', `Bearer ${tom}`)
       .send({ plan: { format: 'gymplan/1', walls: 'lots' }, revision: 0 })
       .expect(400);
@@ -376,9 +384,9 @@ describe('review', () => {
     const as = (method, path) => api(ctx)[method](path).set('Authorization', `Bearer ${maya}`);
     const owner = (path) => api(ctx).get(path).set('Authorization', `Bearer ${ctx.token}`);
 
-    const { body } = await as('post', '/v1/review/versions/pv_eb0_1/revise').send({}).expect(201);
+    const { body } = await as('post', `/v1/review/versions/${DEMO.versions.eb0}/revise`).send({}).expect(201);
     // Only one revision at a time.
-    await as('post', '/v1/review/versions/pv_eb0_1/revise').send({}).expect(409);
+    await as('post', `/v1/review/versions/${DEMO.versions.eb0}/revise`).send({}).expect(409);
 
     const draft = await as('get', `/v1/review/versions/${body.id}`).expect(200);
     assert.equal(draft.body.version, 2);
@@ -386,7 +394,7 @@ describe('review', () => {
     assert.equal(draft.body.status, 'in_review');
     assert.equal(draft.body.reviewer.isMe, true);
     // The owner keeps the approved walkthrough while the revision is in review.
-    assert.equal((await owner('/v1/plans/plan_eb0/model').expect(200)).body.version, 1);
+    assert.equal((await owner(`/v1/plans/${DEMO.plans.eb0}/model`).expect(200)).body.version, 1);
 
     const plan = draft.body.plan;
     plan.ceilingHeightM = 3.4;
@@ -395,18 +403,19 @@ describe('review', () => {
       .expect(200);
     await as('post', `/v1/review/versions/${body.id}/approve`).send({}).expect(200);
 
-    const after = await owner('/v1/plans/plan_eb0').expect(200);
+    const after = await owner(`/v1/plans/${DEMO.plans.eb0}`).expect(200);
     assert.deepEqual(
       after.body.history.map((h) => `v${h.version} ${h.status}`),
       ['v2 ready', 'v1 superseded'],
     );
-    assert.equal((await owner('/v1/plans/plan_eb0/model').expect(200)).body.plan.ceilingHeightM, 3.4);
+    assert.equal((await owner(`/v1/plans/${DEMO.plans.eb0}/model`).expect(200)).body.plan.ceilingHeightM, 3.4);
 
     // A revision does not use the customer's monthly quota.
     const me = await owner('/v1/me').expect(200);
     const [[{ n }]] = await pool.query(
-      `SELECT COUNT(*) AS n FROM plan_versions WHERE org_id = 'org_northgate' AND origin = 'capture'
+      `SELECT COUNT(*) AS n FROM plan_versions WHERE account_id = ? AND origin = 'capture'
          AND created_at >= DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-01')`,
+      [DEMO.account],
     );
     assert.equal(me.body.plansUsed, Number(n));
   });
@@ -426,5 +435,63 @@ describe('review', () => {
 
   it('gym users cannot review', async () => {
     await api(ctx).get('/v1/review/queue').set('Authorization', `Bearer ${ctx.token}`).expect(403);
+  });
+});
+
+describe('control distances and scan files (F-03, F-05)', () => {
+  it('corrects the scan scale from laser distances and records what is left over', async () => {
+    await pool.query('UPDATE accounts SET plan_quota = 50 WHERE id = ?', [DEMO.account]);
+    // The scan reads the 10 m room 1 % short; the laser says 10.10 and 6.06.
+    const { body } = await register(
+      'key-control',
+      metadata({
+        level: 7,
+        controlDistances: [
+          { a: [0, 0], b: [10, 0], measuredM: 10.1 },
+          { a: [10, 0], b: [10, 6], measuredM: 6.06 },
+        ],
+      }),
+    ).expect(201);
+    const room = Buffer.from(JSON.stringify(ROOM));
+    const model = randomBytes(100);
+    const up = await post(`/v1/captures/${body.captureId}/uploads`)
+      .send({
+        partSize: PART,
+        files: [
+          { name: 'scan.usdz', kind: 'model', bytes: model.length, contentType: 'model/vnd.usdz+zip' },
+          { name: 'scan.json', kind: 'room', bytes: room.length, contentType: 'application/json' },
+          { name: 'mesh.obj', kind: 'mesh', bytes: 10, contentType: 'text/plain' },
+          { name: 'keyframes/0001.jpg', kind: 'keyframes', bytes: 10, contentType: 'image/jpeg' },
+        ],
+      })
+      .expect(200);
+    const byName = Object.fromEntries(up.body.files.map((f) => [f.name, f]));
+    await putPart(ctx, byName['scan.usdz'].parts[0].url, model).expect(200);
+    await putPart(ctx, byName['scan.json'].parts[0].url, room).expect(200);
+    await putPart(ctx, byName['mesh.obj'].parts[0].url, Buffer.alloc(10)).expect(200);
+    await putPart(ctx, byName['keyframes/0001.jpg'].parts[0].url, Buffer.alloc(10)).expect(200);
+    await post(`/v1/captures/${body.captureId}/complete`).send({}).expect(200);
+
+    const [[cap]] = await pool.query('SELECT scale_residual_mm FROM captures WHERE id = ?', [body.captureId]);
+    assert.equal(Number(cap.scale_residual_mm), 0);
+    const [[v]] = await pool.query('SELECT id, width_m, length_m FROM plan_versions WHERE capture_id = ?', [body.captureId]);
+    assert.equal(Number(v.width_m), 10.1);
+    assert.equal(Number(v.length_m), 6.06);
+
+    const { accessToken: reviewer } = await login(ctx, DEMO.reviewer);
+    const detail = await api(ctx).get(`/v1/review/versions/${v.id}`).set('Authorization', `Bearer ${reviewer}`).expect(200);
+    assert.equal(detail.body.plan.scale.control.factor, 1.01);
+    assert.equal(detail.body.capture.controlDistances.length, 2);
+    assert.deepEqual(detail.body.files.filter((f) => ['mesh', 'keyframes'].includes(f.kind)).map((f) => f.name).sort(), [
+      'keyframes/0001.jpg',
+      'mesh.obj',
+    ]);
+  });
+
+  it('only keyframe images may sit in a folder', async () => {
+    const { body } = await register('key-folder', metadata({ level: 8 })).expect(201);
+    await post(`/v1/captures/${body.captureId}/uploads`)
+      .send({ partSize: PART, files: [{ name: 'other/x.jpg', kind: 'photo', bytes: 10, contentType: 'image/jpeg' }] })
+      .expect(400);
   });
 });

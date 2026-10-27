@@ -1,0 +1,6 @@
+{
+  "name": "gym-plan-shared",
+  "private": true,
+  "type": "module",
+  "description": "Plan format, reading and validation shared by backend/ and web/."
+}

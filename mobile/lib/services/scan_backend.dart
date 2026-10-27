@@ -9,7 +9,7 @@ import 'scan_session.dart';
 
 /// Decides whether scans use the LiDAR sensor or the simulated walk.
 ///
-/// - A LiDAR iPhone or iPad on iOS 16+ always scans for real.
+/// - A LiDAR iPhone or iPad (the app needs iOS 17) always scans for real.
 /// - Anywhere else, debug builds fall back to the simulated walk so the
 ///   flow can be developed on a simulator, emulator or desktop.
 /// - Release builds on other devices refuse to scan: a simulated plan would
@@ -53,7 +53,7 @@ class ScanBackend {
     return DeviceCapability(
       supported: false,
       headline: 'Cannot scan on this device',
-      detail: reason ?? 'Needs a LiDAR iPhone or iPad Pro on iOS 16+',
+      detail: reason ?? 'Needs a LiDAR iPhone or iPad Pro',
     );
   }
 

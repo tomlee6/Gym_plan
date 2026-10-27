@@ -11,6 +11,8 @@ import '../widgets/hairline_container.dart';
 import '../widgets/nav_bar.dart';
 import '../widgets/primary_button.dart';
 import '../services/equipment_recording.dart';
+import '../services/walk_coverage.dart';
+import '../widgets/coverage_ring.dart';
 
 /// CHANGE 3: the 360 degree walk round each gym machine.
 ///
@@ -596,6 +598,12 @@ class _RecordScreenState extends State<_RecordScreen> {
   Timer? _ticker;
   Duration _elapsed = Duration.zero;
 
+  /// How far round the machine the camera has turned (I-06), from the
+  /// recorder's motion samples. Stays empty for the demo walk, which
+  /// animates its own progress.
+  final WalkCoverage _coverage = WalkCoverage();
+  StreamSubscription<RecorderMotion>? _motion;
+
   @override
   void initState() {
     super.initState();
@@ -605,6 +613,7 @@ class _RecordScreenState extends State<_RecordScreen> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _motion?.cancel();
     // Hand the camera back; the next machine prepares it again.
     unawaited(_recorder.dispose());
     super.dispose();
@@ -631,7 +640,12 @@ class _RecordScreenState extends State<_RecordScreen> {
       setState(() {
         _recording = true;
         _elapsed = Duration.zero;
+        _coverage.reset();
       });
+      _motion = _recorder.motion().listen((RecorderMotion m) {
+        if (!mounted) return;
+        setState(() => _coverage.add(m.headingDeg, pitchDeg: m.pitchDeg));
+      }, onError: (Object _) {});
       const Duration tick = Duration(milliseconds: 100);
       _ticker = Timer.periodic(tick, (_) {
         if (mounted) setState(() => _elapsed += tick);
@@ -643,6 +657,8 @@ class _RecordScreenState extends State<_RecordScreen> {
 
   Future<void> _stop() async {
     _ticker?.cancel();
+    unawaited(_motion?.cancel());
+    _motion = null;
     try {
       final EquipmentVideo stopped = await _recorder.stop();
       // A simulated take carries no file, so the machine and the length
@@ -705,9 +721,18 @@ class _RecordScreenState extends State<_RecordScreen> {
                   (_, final EquipmentVideo video?) => _Preview(video: video),
                   _ =>
                     _ready
-                        ? _recorder.preview(
-                            recording: _recording,
-                            elapsed: _elapsed,
+                        ? Stack(
+                            alignment: Alignment.center,
+                            children: <Widget>[
+                              _recorder.preview(
+                                recording: _recording,
+                                elapsed: _elapsed,
+                              ),
+                              // Driven by real heading data, so only shown
+                              // once some arrives.
+                              if (_recording && _coverage.hasData)
+                                CoverageRing(coverage: _coverage),
+                            ],
                           )
                         : const CircularProgressIndicator(),
                 },

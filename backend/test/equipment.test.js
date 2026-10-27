@@ -155,10 +155,13 @@ describe('equipment on a capture', () => {
     const other = await createOtherTenant();
     const { accessToken } = await login(ctx, other);
     // Another customer's capture is absent, not forbidden.
-    await get(`/v1/captures/${captureId}/equipment`, accessToken).expect(404);
-    await post(`/v1/captures/${captureId}/equipment`, accessToken)
+    const theirs = (req) => req.set('X-Account-Id', other.accountId);
+    await theirs(get(`/v1/captures/${captureId}/equipment`, accessToken)).expect(404);
+    await theirs(post(`/v1/captures/${captureId}/equipment`, accessToken))
       .send({ equipment: [TREADMILL] })
       .expect(404);
+    // Naming our account instead is refused outright.
+    await get(`/v1/captures/${captureId}/equipment`, accessToken).expect(403);
   });
 });
 
@@ -190,16 +193,16 @@ describe('the 360 degree video', () => {
     assert.deepEqual(opened.video.parts.map((p) => p.number), [1, 2, 3]);
     assert.equal(opened.thumbnail.parts.length, 1);
     assert.match(opened.video.parts[0].url, /expires=\d+&sig=/);
-    // CHANGE 4.3: equipment/{equipmentId}/video/360.mp4
-    assert.equal(opened.video.name, 'equipment/EQ-001/video/360.mp4');
-    assert.equal(opened.thumbnail.name, 'equipment/EQ-001/thumbnail/thumbnail.jpg');
+    // CHANGE 4.3, D-02: equipment/{ref}/{take}/360.mp4 — each take its own keys.
+    assert.equal(opened.video.name, `equipment/EQ-001/${res.body.videoId}/360.mp4`);
+    assert.equal(opened.thumbnail.name, `equipment/EQ-001/${res.body.videoId}/thumbnail.jpg`);
   });
 
-  it('keeps the video inside the organisation’s own storage', async () => {
+  it('keeps the video inside the account’s own storage', async () => {
     const row = await pool
       .query('SELECT storage_key FROM capture_files WHERE id = ?', [opened.video.fileId])
       .then(([rows]) => rows[0]);
-    assert.equal(row.storage_key, `orgs/${DEMO.org}/captures/${captureId}/equipment/EQ-001/video/360.mp4`);
+    assert.equal(row.storage_key, `accounts/${DEMO.account}/captures/${captureId}/${opened.video.name}`);
   });
 
   it('names the parts still missing instead of confirming', async () => {
@@ -233,6 +236,8 @@ describe('the 360 degree video', () => {
   });
 
   it('starts a fresh upload for a retake, leaving one video on the machine', async () => {
+    const oldKey = `accounts/${DEMO.account}/captures/${captureId}/${opened.video.name}`;
+    assert.equal(await ctx.storage.exists(oldKey), true);
     const retake = randomBytes(1024);
     const res = await post(`/v1/captures/${captureId}/equipment/EQ-001/video`)
       .send({ partSize: PART, bytes: retake.length, contentType: 'video/mp4', durationSeconds: 11 })
@@ -242,9 +247,13 @@ describe('the 360 degree video', () => {
     await post(`/v1/captures/${captureId}/equipment/EQ-001/video/complete`).send({}).expect(200);
 
     const rows = await pool
-      .query('SELECT COUNT(*) AS n FROM equipment_videos WHERE capture_id = ?', [captureId])
+      .query('SELECT COUNT(*) AS n FROM machine_videos v JOIN machines m ON m.id = v.machine_id WHERE m.capture_id = ?', [captureId])
       .then(([r]) => r[0]);
     assert.equal(Number(rows.n), 1, 'the retake replaced the first take');
+    // D-02: the first take's rows and stored objects are gone too.
+    assert.equal(await ctx.storage.exists(oldKey), false, 'the old video object was deleted');
+    const [[{ n: oldRows }]] = await pool.query('SELECT COUNT(*) AS n FROM capture_files WHERE id IN (?, ?)', [opened.video.fileId, opened.thumbnail.fileId]);
+    assert.equal(Number(oldRows), 0);
 
     const { body } = await get(`/v1/captures/${captureId}/equipment`).expect(200);
     const treadmill = body.equipment.find((e) => e.equipmentId === 'EQ-001');
@@ -307,7 +316,7 @@ describe('equipment in the plan and in front of the reviewer', () => {
   it('puts both machines in the 2D plan, in the scan’s own frame', async () => {
     const row = await pool
       .query(
-        `SELECT id, plan_json, equipment_count, object_count FROM plan_versions WHERE capture_id = ?`,
+        `SELECT id, plan_json, machine_count FROM plan_versions WHERE capture_id = ?`,
         [captureId],
       )
       .then(([rows]) => rows[0]);
@@ -316,7 +325,7 @@ describe('equipment in the plan and in front of the reviewer', () => {
 
     const named = plan.objects.filter((o) => o.equipment);
     assert.equal(named.length, 2, 'both machines are in the plan');
-    assert.equal(Number(row.equipment_count), 2, 'and counted on the version row');
+    assert.equal(Number(row.machine_count), 2, 'and counted on the version row, from the plan (C-05)');
 
     // The treadmill was marked on top of a scanned object, so it is that
     // object: the measured footprint is kept, not the typed one.
@@ -356,7 +365,9 @@ describe('equipment in the plan and in front of the reviewer', () => {
 
     assert.equal(body.equipment.find((e) => e.equipmentId === 'EQ-002').video, null);
     const videoFile = body.files.find((f) => f.kind === 'video');
-    assert.equal(videoFile.equipmentId, treadmill.planObjectId ?? videoFile.equipmentId);
+    assert.equal(videoFile.equipmentId, 'EQ-001');
+    assert.equal(treadmill.placed, true);
+    assert.ok(treadmill.planObjectId);
     assert.ok(videoFile.url, 'the video is downloadable like any other file');
   });
 
@@ -373,9 +384,9 @@ describe('equipment in the plan and in front of the reviewer', () => {
     assert.equal(saved.body.summary.equipment, 2, 'the save did not drop the machines');
 
     const row = await pool
-      .query('SELECT plan_json, equipment_count FROM plan_versions WHERE id = ?', [versionId])
+      .query('SELECT plan_json, machine_count FROM plan_versions WHERE id = ?', [versionId])
       .then(([rows]) => rows[0]);
-    assert.equal(Number(row.equipment_count), 2);
+    assert.equal(Number(row.machine_count), 2);
     const treadmill = row.plan_json.objects.find((o) => o.equipment?.equipmentId === 'EQ-001');
     assert.equal(treadmill.equipment.name, 'Treadmill 1', 'the name survived the round trip');
   });

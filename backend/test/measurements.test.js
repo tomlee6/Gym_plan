@@ -68,10 +68,10 @@ const ROOM = {
 
 const plan = planFromScan(ROOM, {});
 
-describe('the gymplan/2 format', () => {
+describe('the current plan format', () => {
   it('is what a new plan is written in, in metres', () => {
     assert.equal(plan.format, FORMAT);
-    assert.equal(FORMAT, 'gymplan/2');
+    assert.equal(FORMAT, 'gymplan/3');
     assert.equal(plan.units, 'm');
   });
 
