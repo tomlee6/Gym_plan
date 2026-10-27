@@ -111,9 +111,9 @@ class AppTheme {
       // Slide-in-from-right transitions on both platforms, matching iOS.
       pageTransitionsTheme: const PageTransitionsTheme(
         builders: <TargetPlatform, PageTransitionsBuilder>{
-          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
-          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          // TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          // TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+          // TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
         },
       ),
       textSelectionTheme: const TextSelectionThemeData(

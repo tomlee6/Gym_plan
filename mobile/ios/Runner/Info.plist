@@ -4,15 +4,6 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<!-- Lets debug builds reach a development backend over plain HTTP on the
-		     local network. Internet traffic still has to use HTTPS. -->
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<key>NSCameraUsageDescription</key>
-	<string>The camera and LiDAR sensor map the walls of the gym floor while you scan, and take the reference photos for the reviewer.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -35,6 +26,15 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera and LiDAR sensor map the walls of the gym floor while you scan, and take the reference photos for the reviewer.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The microphone records sound with the equipment videos you capture.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

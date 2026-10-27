@@ -1,0 +1,34 @@
+PODS:
+  - background_downloader (0.0.1):
+    - Flutter
+  - Flutter (1.0.0)
+  - room_scan (0.1.0):
+    - Flutter
+  - url_launcher_ios (0.0.1):
+    - Flutter
+
+DEPENDENCIES:
+  - background_downloader (from `.symlinks/plugins/background_downloader/ios`)
+  - Flutter (from `Flutter`)
+  - room_scan (from `.symlinks/plugins/room_scan/ios`)
+  - url_launcher_ios (from `.symlinks/plugins/url_launcher_ios/ios`)
+
+EXTERNAL SOURCES:
+  background_downloader:
+    :path: ".symlinks/plugins/background_downloader/ios"
+  Flutter:
+    :path: Flutter
+  room_scan:
+    :path: ".symlinks/plugins/room_scan/ios"
+  url_launcher_ios:
+    :path: ".symlinks/plugins/url_launcher_ios/ios"
+
+SPEC CHECKSUMS:
+  background_downloader: 50e91d979067b82081aba359d7d916b3ba5fadad
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  room_scan: 20510ccc3047b547c21a16de5236ad2050bfb21f
+  url_launcher_ios: 7a95fa5b60cc718a708b8f2966718e93db0cef1b
+
+PODFILE CHECKSUM: 53a6aebc29ccee84c41f92f409fc20cd4ca011f1
+
+COCOAPODS: 1.16.2
