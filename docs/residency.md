@@ -31,7 +31,7 @@ Run it with `cd infra && npm test`.
 | SNS (mail events, alarms) | Bounce/complaint events; alarm messages | ap-southeast-2 | Mail events: addresses | Mail-events topic is KMS-encrypted |
 | CloudWatch Logs, metrics, dashboard, alarms | App logs, metrics | ap-southeast-2 | Logs may contain ids and emails | Retention 30 days (dev/staging), 365 days (prod) |
 | Route 53 | DNS records | Global service | No | DNS names only |
-| **CloudFront** (web app; models when enabled) | Edge cache | **Global edge locations** | Web app: no. Models: cached copies of signed responses | See below |
+| **CloudFront** (web app only) | Edge cache | **Global edge locations** | No: the app's public static files | See below |
 | **ACM certificate for CloudFront** | Public TLS certificate | **us-east-1** (AWS requirement) | No | `<env>/EdgeCerts` stack. Holds only the certificate |
 | **CDK Pipelines support stack** | Artifact bucket for deploying EdgeCerts | **us-east-1** | No | `cross-region-stack-<account>:us-east-1`: templates and build artifacts only |
 | CodePipeline, CodeBuild, CodeCommit | Source, build, release | ap-southeast-2 | No | Backend tests use a throwaway MySQL with test data only |
@@ -39,21 +39,13 @@ Run it with `cd infra && npm test`.
 
 ### CloudFront and edge caching
 
-CloudFront serves from edge locations worldwide, so responses can be cached
-outside Australia close to the viewer. **Origins stay in Sydney**: the web
-bucket, and the models bucket behind signed URLs. For the web app this is
-fine (public static files, no customer data). For 3D models, cached copies of
-a model can sit at an edge location near whoever opened the signed link,
-for as long as the cache policy allows. If that is not acceptable for
-models, the 3D team should either:
+CloudFront serves the web app from edge locations worldwide, so its files
+can be cached outside Australia close to the viewer. That is fine: they are
+the app's public static files, with no customer data.
 
-- switch the models distribution to `CachePolicy.CACHING_DISABLED` (edges
-  then pass requests through to Sydney without keeping a copy; no price class
-  limits edges to Australia), or
-- serve models with presigned S3 URLs from the Sydney bucket directly and drop
-  the models distribution.
-
-Decision owner: product owner with the 3D team (open item 3).
+**3D models do not go through CloudFront.** Browsers download them straight
+from the models bucket in Sydney, with presigned links the API makes (M-07),
+so no copy of a model is kept outside Australia.
 
 ## Outside AWS
 
@@ -75,8 +67,8 @@ Decision owner: product owner with the 3D team (open item 3).
    `runbooks/service-quotas.md`. g6e, the first choice, is not offered in
    Sydney, so a different Sydney instance type was chosen, not a different
    region. Owner: 3D team.
-3. **Models distribution caching** (see above). Owner: product owner and 3D
-   team.
+3. **Models distribution caching.** Done: there is no models distribution;
+   models are downloaded straight from the Sydney bucket (see above).
 4. **Sign-in.** Done: Amazon Cognito in ap-southeast-2 (`Auth` stack) holds
    only email, password and MFA; every other user record is in RDS.
 5. **Backups.** No cross-region backup copy is configured, on purpose. If a

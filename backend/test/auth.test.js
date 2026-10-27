@@ -128,6 +128,91 @@ describe('sessions', () => {
   });
 });
 
+describe('opening the web app from the phone', () => {
+  const webLink = (body) => api(ctx).raw.post('/v1/auth/web-link').send(body);
+  const sessionOf = async (token) =>
+    (await pool.query('SELECT * FROM sessions WHERE token_hash = SHA2(?, 256)', [token]))[0][0];
+  /** The token, page and account a link carries in its fragment. */
+  const fragmentOf = (url) => Object.fromEntries(new URLSearchParams(new URL(url).hash.slice(1)));
+
+  it('gives the phone a link that signs the web app in as the same person, in the same account', async () => {
+    const phone = await login(ctx, DEMO.owner, { client: 'ios' });
+    const path = `/plans/${DEMO.plans.ng1}/walkthrough`;
+    const { body } = await webLink({ refreshToken: phone.refreshToken, path, accountId: DEMO.account }).expect(200);
+
+    assert.ok(body.url.startsWith(`${config.publicWebUrl}/auth/link#`), body.url);
+    assert.equal(body.expiresIn, 120);
+    const link = fragmentOf(body.url);
+    assert.equal(link.next, path);
+    assert.equal(link.account, DEMO.account);
+
+    // A web session of its own, ending with the phone's on a Hub sign-out, and unused for two minutes at most.
+    const before = await sessionOf(link.token);
+    const phoneRow = await sessionOf(phone.refreshToken);
+    assert.equal(before.client, 'web');
+    assert.equal(before.user_id, DEMO.owner.id);
+    assert.equal(before.hub_session_id, phoneRow.hub_session_id);
+    assert.ok(before.expires_at - Date.now() <= 120 * 1000);
+    assert.equal(Math.round((before.absolute_expires_at - Date.now()) / 3600000), 12);
+
+    // The web app swaps it like any refresh token: signed in as the owner, for a web session's day.
+    const web = await api(ctx).raw.post('/v1/auth/refresh').send({ refreshToken: link.token }).expect(200);
+    assert.equal(web.body.user.id, DEMO.owner.id);
+    assert.ok(web.body.accounts.some((a) => a.id === DEMO.account));
+    const after = await sessionOf(web.body.refreshToken);
+    assert.equal(after.client, 'web');
+    assert.equal(after.absolute_expires_at.getTime(), before.absolute_expires_at.getTime());
+    await api(ctx).get('/v1/me').set('Authorization', `Bearer ${web.body.accessToken}`).expect(200);
+
+    // The phone's own token was not rotated by making the link.
+    await api(ctx).raw.post('/v1/auth/refresh').send({ refreshToken: phone.refreshToken }).expect(200);
+  });
+
+  it('works once: a link used again is a copied token, as any refresh token', async () => {
+    const phone = await login(ctx, DEMO.owner, { client: 'ios' });
+    const { body } = await webLink({ refreshToken: phone.refreshToken, path: '/plans' }).expect(200);
+    const { token, account } = fragmentOf(body.url);
+    assert.equal(account, undefined);
+    await api(ctx).raw.post('/v1/auth/refresh').send({ refreshToken: token }).expect(200);
+    await api(ctx).raw.post('/v1/auth/refresh').send({ refreshToken: token }).expect(401);
+  });
+
+  it('lapses unused after two minutes', async () => {
+    const phone = await login(ctx, DEMO.owner, { client: 'ios' });
+    const { body } = await webLink({ refreshToken: phone.refreshToken, path: '/plans' }).expect(200);
+    const { token } = fragmentOf(body.url);
+    await pool.query(
+      'UPDATE sessions SET expires_at = UTC_TIMESTAMP(3) - INTERVAL 1 SECOND WHERE token_hash = SHA2(?, 256)',
+      [token],
+    );
+    await api(ctx).raw.post('/v1/auth/refresh').send({ refreshToken: token }).expect(401);
+  });
+
+  it('only for a live phone session, an account the person is in, and a page of the web app', async () => {
+    const web = await login(ctx, DEMO.owner, { client: 'web' });
+    await webLink({ refreshToken: web.refreshToken, path: '/plans' }).expect(401);
+    await webLink({ refreshToken: 'x'.repeat(43), path: '/plans' }).expect(401);
+
+    const phone = await login(ctx, DEMO.owner, { client: 'ios' });
+    // A token the phone has just rotated is refused, without ending its sessions.
+    const rotated = await api(ctx).raw.post('/v1/auth/refresh').send({ refreshToken: phone.refreshToken }).expect(200);
+    await webLink({ refreshToken: phone.refreshToken, path: '/plans' }).expect(401);
+    await webLink({ refreshToken: rotated.body.refreshToken, path: '/plans' }).expect(200);
+
+    const reviewer = await login(ctx, DEMO.reviewer, { client: 'ios' });
+    const notMember = await webLink({ refreshToken: reviewer.refreshToken, path: '/plans', accountId: DEMO.account }).expect(403);
+    assert.equal(notMember.body.code, 'no_account');
+    await webLink({ refreshToken: reviewer.refreshToken, path: '/review' }).expect(200);
+
+    for (const path of ['https://evil.example/', '//evil.example/x', '/plans?next=//evil.example', '/plans#x', 'plans', '/a b']) {
+      await webLink({ refreshToken: rotated.body.refreshToken, path }).expect(400);
+    }
+
+    await api(ctx).raw.post('/v1/auth/logout').send({ refreshToken: rotated.body.refreshToken }).expect(204);
+    await webLink({ refreshToken: rotated.body.refreshToken, path: '/plans' }).expect(401);
+  });
+});
+
 describe('invites (B-05)', () => {
   it('the first sign-in with a verified matching email takes the invite; after that the Hub id is what counts', async () => {
     const admin = (await login(ctx, DEMO.admin)).accessToken;

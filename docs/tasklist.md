@@ -90,7 +90,7 @@
 | ID | Task | Status | Notes | Phase |
 |---|---|---|---|---|
 | B-40 | Generator worker: plan v2 to a level GLB plus machine placements, stored under the plan hash and generator version | Missing | `buildModel.js` is the starting point. | 3 |
-| B-41 | Signed CloudFront links for level and machine models | Missing | | 3 |
+| B-41 | Presigned S3 links for level and machine models | Missing | | 3 |
 | B-50 | Send email through SES: the three PRD notifications and invites | Missing | [mailer.js](../backend/src/mailer.js) only logs. | 1 |
 | B-51 | Store share tokens hashed | Missing | Stored in plain text today. | 5 |
 | B-52 | Production config checks: no simulated scans, S3 storage, default region Sydney | Missing | [config.js:54](../backend/src/config.js#L54) still defaults to `eu-west-2`. | 1 |
@@ -170,7 +170,7 @@
 | F-04 | SQS queues with dead-letter queues | Missing | | 1 |
 | F-05 | ECS API and workers, load balancer, WAF | Missing | | 1 |
 | F-06 | AWS Batch GPU environment | Missing | Same as E-04. | 4 |
-| F-07 | CloudFront for models; web hosting for the GoalCert subdomain (O1) | Missing | | 1 |
+| F-07 | Web hosting for the GoalCert subdomain (O1); models need no CDN (presigned S3 links) | Missing | | 1 |
 | F-08 | DNS and certificates, including the GoalCert subdomain records | Missing | | 1 |
 | F-09 | SES sending domain (SPF, DKIM, DMARC) and production access | Missing | | 1 |
 | F-10 | Secrets Manager: database, JWT key, Hub client secret, Hub events secret | Missing | | 1 |

@@ -147,6 +147,10 @@ class FakeBackend {
   /// Knobs for failure cases.
   bool offline = false;
   bool failSettings = false;
+  bool webLinkFails = false;
+
+  /// What the app last sent to `POST /v1/auth/web-link`.
+  Map<String, Object?>? webLinkRequest;
 
   /// Routes that should answer 500 once, then work.
   final Set<String> failOnce = <String>{};
@@ -234,6 +238,26 @@ class FakeBackend {
         return _json(_tokens());
       case ('POST', '/v1/auth/logout'):
         return http.Response('', 204);
+      case ('POST', '/v1/auth/web-link'):
+        webLinkRequest = body;
+        if (webLinkFails) {
+          return _json(<String, Object?>{'message': 'Not right now.'}, 503);
+        }
+        if (refreshRevoked || body['refreshToken'] != currentRefreshToken) {
+          return _json(<String, Object?>{'message': 'Sign in again.'}, 401);
+        }
+        final String fragment = Uri(
+          queryParameters: <String, String>{
+            'token': 'web-link-token',
+            'next': body['path']! as String,
+            if (body['accountId'] != null)
+              'account': body['accountId']! as String,
+          },
+        ).query;
+        return _json(<String, Object?>{
+          'url': 'https://gym.test/auth/link#$fragment',
+          'expiresIn': 120,
+        });
     }
 
     if (req.headers['Authorization'] != 'Bearer $accessToken') {

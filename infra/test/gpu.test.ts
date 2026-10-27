@@ -93,7 +93,8 @@ test('outcomes go to the gpu-jobs queue, and the backend can submit jobs and rea
     const env = Object.fromEntries((c.Environment ?? []).map((e: any) => [e.Name, e.Value]));
     assert.ok(env.TRELLIS2_JOB_QUEUE && env.TRELLIS2_JOB_DEFINITION, c.Name);
     assert.equal(env.ASSET_BUILDER, 'trellis2', c.Name);
-    assert.equal(env.ASSET_AUTO_BUILD, 'true', c.Name);
+    // The GPU runs only when a reviewer asks for a build: an upload starts none.
+    assert.equal(env.ASSET_AUTO_BUILD, undefined, c.Name);
     assert.ok(env.GPU_JOBS_QUEUE_URL, c.Name);
   }
   const apiPolicies = JSON.stringify(ofType(api, 'AWS::IAM::Policy').map((p) => p.Properties!.PolicyDocument));

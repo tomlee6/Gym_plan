@@ -3,7 +3,7 @@
   "directives": {
     "default-src": ["'self'"],
     "script-src": ["'self'", "'wasm-unsafe-eval'"],
-    "connect-src": ["'self'", "blob:", "data:", "%API_ORIGIN%", "https://*.amazonaws.com", "https://*.cloudfront.net", "%EXTRA_CONNECT%"],
+    "connect-src": ["'self'", "blob:", "data:", "%API_ORIGIN%", "https://*.amazonaws.com", "%EXTRA_CONNECT%"],
     "img-src": ["'self'", "data:", "blob:", "https:"],
     "media-src": ["https:", "blob:"],
     "worker-src": ["'self'", "blob:"],

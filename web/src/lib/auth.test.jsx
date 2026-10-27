@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter, Outlet, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import AppLinkPage from './AppLinkPage.jsx';
 import AuthCallbackPage from './AuthCallbackPage.jsx';
 import { AuthProvider, hasRole, homeFor } from './auth.jsx';
 import * as client from './client.js';
@@ -61,7 +62,11 @@ function fakeBackend({ who = SAM, accounts = ACCOUNTS, hubError = null } = {}) {
 
 function Where() {
   const loc = useLocation();
-  return <div data-testid="where">{loc.pathname}</div>;
+  return (
+    <div data-testid="where" data-hash={loc.hash}>
+      {loc.pathname}
+    </div>
+  );
 }
 
 function Page({ name }) {
@@ -75,6 +80,7 @@ function renderAt(path) {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          <Route path="/auth/link" element={<AppLinkPage />} />
           <Route
             element={
               <RequireRole>
@@ -117,6 +123,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+/**
+ * The backend swapping an iPhone app link's token (POST /v1/auth/refresh):
+ * `valid` signs in as `who`; any other token is spent or lapsed.
+ */
+function withLink(fetch, { valid = 'link-token', who = SAM, accounts = ACCOUNTS } = {}) {
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation((url, init = {}) => {
+    if (!url.endsWith('/v1/auth/refresh')) return original(url, init);
+    const body = JSON.parse(init.body);
+    fetch.calls.push({ method: 'POST', path: '/v1/auth/refresh', body, headers: init.headers ?? {} });
+    return Promise.resolve(
+      body.refreshToken === valid
+        ? { ok: true, status: 200, json: () => Promise.resolve({ accessToken: 'a2', refreshToken: 'r2', expiresIn: 1800, user: who, accounts }) }
+        : { ok: false, status: 401, json: () => Promise.resolve({ message: 'Sign in again.' }) },
+    );
+  });
+  return fetch;
+}
 
 /** Clicks the sign-in button and returns the Hub URL the page went to. */
 async function startSignIn() {
@@ -320,5 +345,58 @@ describe('roles', () => {
     expect(hasRole(reviewer, ['reviewer', 'admin'])).toBe(true);
     expect(hasRole(reviewer, ['admin'])).toBe(false);
     expect(hasRole(reviewer, ['owner', 'surveyor'])).toBe(false);
+  });
+});
+
+describe('opening from the iPhone app (/auth/link)', () => {
+  const walkthrough = encodeURIComponent('/plans/p1/walkthrough');
+
+  it('signs the tab in and opens the page the app pointed at, in its account', async () => {
+    const fetch = withLink(fakeBackend());
+    vi.stubGlobal('fetch', fetch);
+    renderAt(`/auth/link#token=link-token&next=${walkthrough}&account=acc_kh`);
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/plans/p1/walkthrough'));
+    expect(await screen.findByText('Plans page')).toBeInTheDocument();
+
+    // The token is swapped once, like any refresh token, and is gone from the address bar.
+    const swaps = fetch.calls.filter((c) => c.path === '/v1/auth/refresh');
+    expect(swaps.map((c) => c.body)).toEqual([{ refreshToken: 'link-token' }]);
+    expect(screen.getByTestId('where').dataset.hash).toBe('');
+    // A tab-only session (B-06), working in the account the phone was in.
+    expect(sessionStorage.getItem('gymplan.refresh')).toBe('r2');
+    expect(client.currentAccountId()).toBe('acc_kh');
+    expect(fetch.calls.filter((c) => c.path === '/v1/me').at(-1).headers['X-Account-Id']).toBe('acc_kh');
+    // Nobody was sent to the Hub.
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('a used or lapsed link offers sign-in, which comes back to the same page', async () => {
+    vi.stubGlobal('fetch', withLink(fakeBackend()));
+    renderAt(`/auth/link#token=spent&next=${walkthrough}&account=acc_kh`);
+    expect(await screen.findByRole('heading', { name: 'This link has expired' })).toBeInTheDocument();
+    expect(screen.getByTestId('where').dataset.hash).toBe('');
+    expect(sessionStorage.getItem('gymplan.refresh')).toBeNull();
+
+    const url = await startSignIn();
+    expect(url.origin + url.pathname).toBe('https://hub.test/oauth/authorize');
+    expect(JSON.parse(sessionStorage.getItem('gymplan.hubSignIn')).from).toBe('/plans/p1/walkthrough');
+  });
+
+  it('offers sign-in when the link has no token', async () => {
+    const fetch = withLink(fakeBackend());
+    vi.stubGlobal('fetch', fetch);
+    renderAt(`/auth/link#next=${walkthrough}`);
+    expect(await screen.findByRole('heading', { name: 'This link has expired' })).toBeInTheDocument();
+    expect(fetch.calls.some((c) => c.path === '/v1/auth/refresh')).toBe(false);
+  });
+
+  it('never leaves the site: a page elsewhere, or none, goes home', async () => {
+    for (const next of ['//evil.example/x', 'https://evil.example/', '']) {
+      vi.stubGlobal('fetch', withLink(fakeBackend()));
+      renderAt(`/auth/link#token=link-token&next=${encodeURIComponent(next)}`);
+      await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(/^\/plans$/));
+      cleanup();
+      client.resetForTests();
+    }
   });
 });

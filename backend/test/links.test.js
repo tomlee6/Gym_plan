@@ -1,33 +1,23 @@
 /**
- * Signed links to stored 3D models (M-07): CloudFront signed URLs on AWS,
- * the store's own signed link without a CDN. No database.
+ * Links to stored 3D models (M-07): presigned links straight to the models
+ * bucket, from the models store. No database.
  */
 import assert from 'node:assert/strict';
-import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
+import { S3Client } from '@aws-sdk/client-s3';
+
 import { config, productionProblems } from '../src/config.js';
-import { modelLink } from '../src/generator/links.js';
+import { linkFields, modelLink } from '../src/generator/links.js';
 import { LocalStorage } from '../src/storage/local.js';
+import { S3Storage } from '../src/storage/s3.js';
 
 const KEY = 'models/accounts/acct-1/levels/abc123/build3d-1.glb';
-const NOW = Date.parse('2026-10-12T09:07:00Z');
-const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
-const cdn = {
-  cdnDomain: 'd111111abcdef8.cloudfront.net',
-  signingKeyId: 'K2JCJMDEHXQW5F',
-  // As it arrives from Secrets Manager through an environment variable.
-  signingPrivateKey: privateKey.export({ type: 'pkcs1', format: 'pem' }).replace(/\n/g, '\\n'),
-  urlTtlSeconds: 3600,
-};
 
-/** CloudFront's URL-safe base64, back to bytes. */
-const unsafe = (s) => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '=').replace(/~/g, '/'), 'base64');
-
-describe('signed model links (M-07)', () => {
+describe('model links (M-07)', () => {
   let dir;
   let store;
   before(async () => {
@@ -36,35 +26,26 @@ describe('signed model links (M-07)', () => {
   });
   after(() => rm(dir, { recursive: true, force: true }));
 
-  it('signs a CloudFront URL for the one file, that CloudFront can check with the public key', async () => {
-    const { url, expiresAt } = await modelLink(KEY, { now: NOW, models: cdn });
-    const u = new URL(url);
-    assert.equal(u.origin, `https://${cdn.cdnDomain}`);
-    assert.equal(u.pathname, `/${KEY}`);
-    assert.equal(u.searchParams.get('Key-Pair-Id'), cdn.signingKeyId);
-    const expires = Number(u.searchParams.get('Expires'));
-    assert.equal(new Date(expires * 1000).toISOString(), expiresAt);
-    // The canned policy CloudFront rebuilds from the URL, verified as it does (RSA-SHA1).
-    const policy = JSON.stringify({
-      Statement: [{ Resource: `https://${cdn.cdnDomain}/${KEY}`, Condition: { DateLessThan: { 'AWS:EpochTime': expires } } }],
+  it('on AWS, a presigned GET for the one file in the models bucket in Sydney, good for an hour', async () => {
+    const client = new S3Client({
+      region: 'ap-southeast-2',
+      credentials: { accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 'secret', sessionToken: 'token' },
     });
-    const verify = createVerify('RSA-SHA1').update(policy);
-    assert.ok(verify.verify(publicKey, unsafe(u.searchParams.get('Signature'))), 'signature checks out');
+    const s3 = new S3Storage({ bucket: 'flexgym-dev-models', region: 'ap-southeast-2', client });
+    const now = Date.now();
+    const { url, expiresAt } = await modelLink(KEY, { now, store: s3, ttlSeconds: 3600 });
+    const u = new URL(url);
+    assert.equal(u.hostname, 'flexgym-dev-models.s3.ap-southeast-2.amazonaws.com');
+    assert.equal(u.pathname, `/${KEY}`);
+    assert.equal(u.searchParams.get('X-Amz-Algorithm'), 'AWS4-HMAC-SHA256');
+    assert.equal(u.searchParams.get('X-Amz-Expires'), '3600');
+    assert.equal(u.searchParams.get('x-id'), 'GetObject');
+    assert.equal(Date.parse(expiresAt), now + 3600 * 1000);
   });
 
-  it('is good for an hour at least, and the same URL for every request in the same quarter hour', async () => {
-    const a = await modelLink(KEY, { now: NOW, models: cdn });
-    const b = await modelLink(KEY, { now: NOW + 5 * 60 * 1000, models: cdn });
-    assert.equal(a.url, b.url, 'the browser can reuse its download');
-    const left = (Date.parse(a.expiresAt) - NOW) / 1000;
-    assert.ok(left >= 3600 && left <= 3600 + 15 * 60, `${left} s`);
-    const later = await modelLink(KEY, { now: NOW + 20 * 60 * 1000, models: cdn });
-    assert.notEqual(later.url, a.url);
-  });
-
-  it('falls back to the store’s own signed link without a CDN', async () => {
+  it('in local work, the local store’s own signed link', async () => {
     await store.write(KEY, Buffer.from('glTF'));
-    const { url, expiresAt } = await modelLink(KEY, { now: Date.now(), store, models: { ...cdn, cdnDomain: '' } });
+    const { url, expiresAt } = await modelLink(KEY, { now: Date.now(), store, ttlSeconds: 3600 });
     const u = new URL(url);
     assert.equal(u.origin, 'http://localhost:4000');
     const encoded = u.pathname.split('/').pop();
@@ -73,17 +54,27 @@ describe('signed model links (M-07)', () => {
     assert.ok(Math.abs(Number(u.searchParams.get('expires')) - Date.parse(expiresAt) / 1000) <= 1);
   });
 
-  it('will not start in production with the generator on and no way to sign model links', () => {
-    const rule = /MODELS_CDN_DOMAIN, MODELS_SIGNING_KEY_ID and MODELS_SIGNING_PRIVATE_KEY must be set/;
-    const prod = (models) => ({
+  it('no link when one cannot be made, so the viewer draws the plan', async () => {
+    const broken = { presignDownload: async () => { throw new Error('no credentials'); } };
+    const logged = console.error;
+    console.error = () => {};
+    try {
+      assert.deepEqual(await linkFields(KEY, { store: broken }), { url: null, urlExpiresAt: null });
+    } finally {
+      console.error = logged;
+    }
+  });
+
+  it('needs only the models bucket in production, no CDN or signing key', () => {
+    const prod = (modelsBucket) => ({
       ...config,
       isProduction: true,
       generator: { ...config.generator, driver: 'glb' },
-      storage: { ...config.storage, modelsBucket: 'models' },
-      models,
+      storage: { ...config.storage, modelsBucket },
     });
-    assert.ok(productionProblems(prod({ ...cdn, signingPrivateKey: '' })).some((p) => rule.test(p)));
-    assert.ok(!productionProblems(prod(cdn)).some((p) => rule.test(p)));
+    const about = (problems) => problems.filter((p) => /MODELS_/.test(p));
+    assert.deepEqual(about(productionProblems(prod('flexgym-prod-models'))), []);
+    assert.deepEqual(about(productionProblems(prod(''))), ['MODELS_BUCKET must be set when GENERATOR_DRIVER is glb']);
     assert.equal(config.models.urlTtlSeconds, 3600);
   });
 });

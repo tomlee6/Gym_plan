@@ -34,7 +34,6 @@ lib/stage.ts               one environment = these stacks:
   lib/dns-stack.ts           Dns         Route 53 zone for API + mail (M-08)
   lib/edge-cert-stack.ts     EdgeCerts   us-east-1 ACM cert for CloudFront (M-06, M-08)
   lib/data-stack.ts          Data        KMS, RDS MySQL 8.4, S3, SQS, secrets (M-03, M-04, M-10)
-  lib/models-distribution.ts             CloudFront + key group for models (M-07, 3D team)
   lib/mail-stack.ts          Mail        SES identity, DKIM, MAIL FROM, DMARC, events (M-09)
   lib/api-stack.ts           Api         ECS Fargate API + ALB, worker, autoscaling (M-05)
   lib/waf.ts                             WAF web ACL with rate limits (D-10)
@@ -95,7 +94,6 @@ owner confirm them. Change them in `cdk.json`.
 | `.logRetentionDays` | CloudWatch log retention |
 | `.alarmEmail` | Optional email subscribed to alarms and mail events |
 | `.slackWorkspaceId`, `.slackChannelId` | Optional AWS Chatbot Slack target (authorise the workspace in the Chatbot console first) |
-| `.modelsSigningPublicKeyPem` | Public key for signed model URLs. Empty = no models distribution (M-07, 3D team) |
 | `.hub.*` | GoalCert Hub OIDC endpoints, client id, org id, redirect URIs |
 | `pipeline.account`, `.repositoryName`, `.branch` | Tooling account and CodeCommit source |
 | `deployWebAssets` | `true` uploads `../web/dist` (build it first). Pass `-c deployWebAssets=true`. The pipeline always does |
@@ -116,6 +114,7 @@ owner confirm them. Change them in `cdk.json`.
   `JobsDead` in namespace `FlexGym/Jobs` (embedded metric format, dimension
   `Kind`). The `jobs-dead` alarm uses a Metrics Insights query that sums
   over all kinds.
-- **GPU worker (3D team).** The `gpu-jobs` queue and its DLQ alarm exist; the
-  GPU service, its image and the models distribution's custom domain are left
-  as TODOs for the 3D team (`pipeline-stack.ts`, `data-stack.ts`).
+- **GPU worker (3D team).** The `gpu-jobs` queue and its DLQ alarm, the GPU
+  environment (`gpu-stack.ts`) and its image pipeline (`trellis2-image.ts`).
+  3D models are downloaded straight from the models bucket with presigned
+  links, so there is no models CDN.

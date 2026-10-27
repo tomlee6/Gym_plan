@@ -68,6 +68,26 @@ Errors: `401 {code:'hub_rejected'}` (bad code / token), `403 {code:'no_access'}`
 * A Hub `user.disabled` / `user.deleted` event revokes every session at once;
   the next refresh answers 401 and the client signs out.
 
+### Opening the web app from the iPhone, signed in
+
+* `POST /v1/auth/web-link {refreshToken, path, accountId?}` (no bearer token:
+  the phone's refresh token is the proof, and it is not rotated) →
+  `{url, expiresIn: 120}`. Only a live `ios` session; `path` is a page of the
+  web app (`/plans/<id>/walkthrough`), never another site or a query;
+  `accountId`, when sent, must be one of the person's accounts (403
+  `no_account`). 401 when the phone's session has ended.
+* It makes a web session for the same person (ending with the phone's on a
+  Hub sign-out) and returns
+  `https://<web>/auth/link#token=<its first refresh token>&next=<path>&account=<id>`.
+  The token is in the fragment, so no server or log ever sees it. The web app
+  takes it out of the address bar, swaps it with `POST /v1/auth/refresh` like
+  any refresh token, then opens `next` in that account.
+* Unused, it lapses after two minutes. Used, it rotates like any web session,
+  up to the web's 12 h. Used twice, it is a copied refresh token: every session
+  of that person ends, as above.
+* The app's "Open walkthrough in Safari" uses it, and opens the plain
+  walkthrough link when it cannot get one (the web then asks to sign in).
+
 ### Dev Hub (local development and tests only)
 
 With `HUB_DRIVER=dev` (refused when `NODE_ENV=production`) the backend serves

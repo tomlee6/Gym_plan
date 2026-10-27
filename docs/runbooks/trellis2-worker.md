@@ -93,7 +93,7 @@ The backend shows the reviewer the `input` reason as it is, and an `internal` on
 
 ## Following a build
 
-1. **Submitted.** When a machine's 360 video finishes uploading, the backend queues a build (`ASSET_AUTO_BUILD`); a reviewer can also build one, or build again, in the editor. The `asset.build` job submits one Batch job named `machine-model-<model id>-try-<n>` and stores its id on the model (`machine_models.gpu_job_id`). The model is `building`.
+1. **Submitted.** A reviewer builds a model, or builds again, in the editor's model dialog. Nothing else starts one: an upload does not (`ASSET_AUTO_BUILD` is off), so no GPU host runs unless a reviewer asked. The `asset.build` job submits one Batch job named `machine-model-<model id>-try-<n>` and stores its id on the model (`machine_models.gpu_job_id`). The model is `building`.
 2. **On the GPU.** Batch log group `/flexgym/<env>/trellis2`, stream prefix `trellis2`. The job's last line is either `{"done": ...}` or `{"failed": ...}`.
 3. **Back.** Batch's SUCCEEDED or FAILED event goes through EventBridge to the `gpu-jobs` queue. The backend worker reads it and moves the model to `awaiting_review` (or `failed`, with the reason). A message the worker cannot handle comes back after 15 minutes, and goes to the `gpu-jobs` dead-letter queue after repeated failures.
 4. **Stuck.** Every 15 minutes the worker asks Batch about any model still `building` six hours after its job was submitted. A finished job is settled as if its event had arrived; a job Batch no longer knows of fails the model with "The GPU job was lost. Build again."

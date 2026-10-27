@@ -183,7 +183,7 @@ Today's figures:
 
 | | Reference gym | 2,400 m² test gym, 400 machines of 20 models |
 |---|---|---|
-| JavaScript before the first frame | 298 KB gzipped | same |
+| JavaScript before the first frame | 324 KB gzipped | same |
 | Level and machine models to download | 0.15 MB | 1.0 MB |
 | First view, worked out | 2.7 s | 3.0 s |
 | Triangles at the busiest spot | 41,000 | 1.22 million (17 machines near, 86 middle, 297 far) |
@@ -277,7 +277,7 @@ The machine alone on a transparent background, from the best candidate frame (`g
 
 Each try is one AWS Batch job on the GPU worker (`backend/src/assets/trellis2.js` submits it; `gpu/trellis2/worker.py` runs it):
 
-- **When.** As soon as a machine's 360 video finishes uploading (`ASSET_AUTO_BUILD`, on wherever the GPU environment exists), and whenever a reviewer builds one.
+- **When.** Only when a reviewer asks: **Build the model**, **Build another** or **Build from the depth scan** in the editor's model dialog (L-08), on any version they can open, approved ones included. An upload starts nothing, so the GPU runs only for machines someone wants a model of, and with no hosts at all in between (Batch scales to none). `ASSET_AUTO_BUILD` would build on upload; it is off in every AWS environment.
 - **In.** The video and, when the app sent them, the ARKit frames, from the captures bucket. The seed and the scanned box go in the job's parameters.
 - **Out.** In the try's folder: `model.glb` and `metadata.json`, plus `frames.json`, `cutout.json` and `cutout.png` (L-02, L-03). On failure, `error.json` beside whatever it got as far as.
 - **Back.** Batch's SUCCEEDED or FAILED event reaches the backend's worker through the `gpu-jobs` queue.
@@ -516,7 +516,7 @@ The `gpu-jobs` dead-letter queue already had its alarm (`gpu-jobs-dlq-not-empty`
 5. A stair void does not say where the stair is entered, so the rail runs all the way round it. An "entry edge" on the void would let the generator leave that edge open.
 6. Deleting a machine (`DELETE /v1/captures/:captureId/equipment/:ref`) deletes its `machine_models` rows but leaves their files in the models store. Before deleting the rows, read their ids. Once the transaction commits, call `modelStorage().deleteFolder(modelFolder(model))` for each (`src/assets`), the way the video's objects are discarded. Account removal already clears the whole account folder.
 7. For I-05, record the walk-around's frames as described under "ARKit frames upload" and send them as the video's `frames` file. iOS has no built-in zip writer; ZIPFoundation (MIT) writes one. Until then, models are made from the video alone.
-8. The video-complete route (`POST /v1/captures/:captureId/equipment/:ref/video/complete`) now calls `buildOnArrival(machineId)` once the video is `ready` (one line, `src/modules/equipment.js`). It does nothing unless `ASSET_AUTO_BUILD` is on, and never fails the upload.
+8. The video-complete route (`POST /v1/captures/:captureId/equipment/:ref/video/complete`) calls `buildOnArrival(machineId)` once the video is `ready` (one line, `src/modules/equipment.js`). It does nothing unless `ASSET_AUTO_BUILD` is on, which no AWS environment sets: the GPU runs only when a reviewer asks for a build. It never fails the upload.
 9. The `jobs-dead` alarm counts every job that dies, including those that end on purpose because the work cannot be done as things stand. Two examples: a plan whose walls do not meet (J-09 `too_few_walls`, `open_outline`), and a 360 video retaken while its build was queued. Both are already in front of the reviewer, so the alarm calls someone for nothing. One way out: a handler marks such an error as expected, for example with a flag on `PermanentJobError`, and the jobs framework counts it as something other than `JobsDead`. The 3D alarms already tell the two apart (N-03).
 10. Monitoring (N-03) touches two shared files, a line or two each:
     - `infra/lib/monitoring-stack.ts` creates `ModelsMonitoring` (`infra/lib/models-monitoring.ts`) on the stack's alarm topic and dashboard.
@@ -525,3 +525,5 @@ The `gpu-jobs` dead-letter queue already had its alarm (`gpu-jobs-dlq-not-empty`
     - `pipeline-stack.ts` passes it the staging account (`goldenAccount`), whose GPU stack keeps the role the golden test runs as.
     - Once a person approves an image, the pipeline commits its digest into `infra/cdk.json` on the release branch, as "TRELLIS.2 image pipeline", and that commit starts a release. If the branch ever gets approval rules, that commit needs to be allowed through, or sent as a pull request instead.
 12. KTX2 textures (N-01) need the Basis Universal transcoder in `web/vendor/basis/`, built without eval, because the app's script policy refuses three.js's own copy. `web/vite.config.js` gains `basisTranscoder()`, which points three's KTX2 loader at it. If a three.js upgrade moves that reference, the web build stops until the folder is rebuilt for the new version; its README and `build.sh` say how.
+13. Opening the walkthrough from the iPhone signed in (N-07) changed some of your files: `POST /v1/auth/web-link` in `src/modules/auth.js` (backend), the `/auth/link` page and `signInWithLink` in `web/src/lib/`, and the app's "Open walkthrough in Safari" (`plan_ready_screen.dart`, `AuthService.signedInWebLink`). It needs no new table or setting: the link is a web session in `sessions` whose first refresh token travels in the URL fragment. The details are in `backend/docs/api-contract-v2.md`, "Opening the web app from the iPhone, signed in". If you would rather the WAF's sign-in rate limit covered `/v1/auth/web-link` too, it is one more path in `infra/lib/waf.ts`; the refresh token it takes cannot be guessed, so it is not needed.
+14. The sign-in pages are in the app's colours now (N-08), which also touches your files: `web/src/lib/LoginPage.jsx` (a `SignInFrame` the callback and app-link pages share, beside a sketch of a plan), the sign-in part of `web/src/lib/app.css`, the development sign-in page in `backend/src/hub/dev.js` (and a `role` on its seeded people), and `infra/lib/auth-stack.ts`, which gives Cognito's own page its CSS from `infra/lib/sign-in-style.ts`. That last one is an infrastructure change: it reaches each environment with the Auth stack's next deploy. Cognito's page still has no logo; the deployment guide says why and what it would take.

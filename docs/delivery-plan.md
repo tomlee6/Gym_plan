@@ -99,7 +99,7 @@ The original 21:
  │    ├─ SQS ─► workers: read scan · read drawing · generate 3D  │
  │    │         · build equipment model (GPU) · remove account   │
  │    ├─ S3: scans, mesh, frames, photos, drawings, models       │
- │    ├─ CloudFront: 3D files to the viewer (signed, short-lived)│
+ │    ├─ S3 presigned links: 3D files straight to the viewer     │
  │    └─ SES email · Secrets Manager · CloudWatch alarms         │
  └─────────────────────────────────────────────────────────────┘
  The Flex API exchanges Hub sign-in codes for identities, server to server.
@@ -431,7 +431,7 @@ Phase 0 tests five machines that cover these cases, through both routes.
 
   Alongside it goes a placement list for equipment models.
 - **Same input, same file (GEN-01).** Files are stored under a key built from the approved plan's hash and the generator version. A generator upgrade writes a new file.
-- **Viewer.** It loads the level file and the equipment models through CloudFront, using signed, short-lived links, and caches equipment models across levels. Collision is still computed from the plan data.
+- **Viewer.** It loads the level file and the equipment models straight from the models bucket, using presigned, short-lived links, and caches equipment models across levels. Collision is still computed from the plan data.
 - **Budget (VIEW-09).**
   - Files: 25 MB or less per level, equipment included.
   - First load: under 8 s at 25 Mbps.
@@ -486,7 +486,7 @@ Phase 0 tests five machines that cover these cases, through both routes.
 | Database | RDS for MySQL **8.4 LTS**, Multi-AZ in prod | MySQL 8.0 is out of support in 2026. Move local Docker and tests to 8.4. |
 | Queues | SQS, each with a dead-letter queue | |
 | Files | S3 | §10.4 |
-| 3D delivery | CloudFront with Origin Access Control and signed URLs | |
+| 3D delivery | Presigned S3 links, straight from the models bucket in Sydney | |
 | Email | SES | §10.7 |
 | Secrets | Secrets Manager and KMS | §10.5 |
 | Edge | Route 53, ACM certificates, AWS WAF | |
@@ -508,7 +508,7 @@ Phase 0 tests five machines that cover these cases, through both routes.
 **S3 buckets:**
 
 - `captures`: scans, mesh, frames, photos and drawings. Private, SSE-KMS, versioned. A deny-overwrite policy protects source drawings (UPL-04).
-- `models`: generated level files and equipment models. Private, served only through CloudFront.
+- `models`: generated level files and equipment models. Private; browsers download from it with presigned links.
 - `logs`.
 
 **Lifecycle rules:**
@@ -519,7 +519,7 @@ Phase 0 tests five machines that cover these cases, through both routes.
 **CORS:**
 
 - The `captures` bucket accepts `PUT` from the web origin (drawing uploads) and exposes `ETag`.
-- The CloudFront model distribution allows `GET` from the web origin.
+- The `models` bucket allows `GET` from the web origin.
 
 ### 10.5 Security
 
@@ -561,7 +561,7 @@ The web build is static files with no data. There are two ways to serve it (O1):
 **Either way:**
 
 - **Routing:** every path falls back to `index.html`.
-- **Content Security Policy:** allows only the Flex API, the CloudFront model domain and the Hub.
+- **Content Security Policy:** allows only the Flex API, the S3 bucket domains and the Hub.
 - **Build-time config:** the API URL, the Hub client id and the authorize URL.
 - **Caching:** long cache for hashed assets, no cache for `index.html`.
 

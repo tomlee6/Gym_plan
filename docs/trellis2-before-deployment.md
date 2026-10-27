@@ -14,6 +14,15 @@ The detailed commands for each step are in `docs/deployment-guide.md` (Part 5) a
 
 **What is built.** The worker and its image (`gpu/trellis2/`), the GPU environment (`infra/lib/gpu-stack.ts`), the backend's side, the reviewer's screens, the alarms and the image pipeline. **What has not happened yet:** none of it has run on a real GPU or in a real AWS account, and the image has never been compiled. Every GPU timing is therefore an estimate until the first golden test and the first real builds are measured.
 
+**Checked without a GPU.** The path from the phone to the walkthrough is wired end to end, and each step has tests that run without a GPU or AWS:
+- **The 360 video** goes from the iPhone app to the captures bucket in signed parts, under the machine's own folder, which is the folder the GPU job is allowed to read.
+- **A build starts only when a reviewer asks** in the editor (Build the model, Build another). An upload starts nothing, and with nothing to do there are no GPU hosts at all.
+- **The job** is submitted to Batch with the video's S3 path, the try's own output folder and the scanned size. The backend's role may submit it and look it up, and a try is never sent twice.
+- **The outcome** comes back through EventBridge to the encrypted `gpu-jobs` queue, whose queue policy and key policy both let EventBridge in. The worker then makes the model ready (levels of detail, KTX2), puts it in front of the reviewer, and settles any job whose event went missing.
+- **Approved models** reach every walkthrough as presigned links to the models bucket, which the browser may read (CORS, CSP).
+
+What only a real GPU can show: the image compiling, TRELLIS.2 running on the A10G, its timings, and how real recordings come out. Those are items 6 to 8 below, after items 2 to 5.
+
 ---
 
 ## 1. Where each item stands
