@@ -31,11 +31,11 @@ What only a real GPU can show: the image compiling, TRELLIS.2 running on the A10
 |---|---|---|---|---|
 | 1 | **The GPU type:** `g5.2xlarge` (A10G), in place of `g6e.xlarge`, which Sydney does not offer (section 4) | Done, in the code | Tejesh | — |
 | 2 | **nvdiffrast licence (O-07):** non-commercial use only (section 2) | Open | Legal, management | Models for customers (prod) |
-| 3 | **DINOv3 access** on Hugging Face (section 3) | Not requested | Someone who can bind the company | Copying the weights |
+| 3 | **DINOv3 access** on Hugging Face (section 3) | Done: approved, and its checksums locked | Someone who can bind the company | — |
 | 4 | **GPU quota** in dev, staging and prod (section 5) | Not requested | Flex's AWS team | Any GPU job |
 | 5 | **Real AWS account numbers** in `infra/cdk.json` | Placeholders | Thomas, Flex's AWS team | Any deployment |
 | 6 | **The first image build**, never compiled yet | Not started | Tejesh | The first GPU job |
-| 7 | **Weights copied** into each environment's bucket | Not started | Tejesh | The first GPU job |
+| 7 | **Weights copied** into each environment's bucket | Done in `flexgym-models`, complete (`READY`); any other environment's bucket still to do | Tejesh | The first GPU job |
 | 8 | **The golden reference** recorded from the first image | Not started | Tejesh | Testing new images automatically |
 
 Items 2 to 4 wait on decisions, people or AWS, so start them first, side by side.
@@ -93,7 +93,7 @@ TRELLIS.2's GLB export uses nvdiffrast to bake textures. Its licence allows use 
 
 ## 3. Access to the weights
 
-The weights (32 files, about 18 GB) come from Hugging Face. They are locked by revision and SHA-256 in `gpu/trellis2/weights.lock.json`. Today 29 files are locked; DINOv3's three are under `pending`, because they cannot be read without access.
+The weights (32 files, about 18 GB) come from Hugging Face. They are locked by revision and SHA-256 in `gpu/trellis2/weights.lock.json`. All 32 are locked, DINOv3's three included, now that access is approved.
 
 **The Hugging Face token never goes into AWS.** It is used twice, on a machine you control:
 - once to lock DINOv3's checksums;
@@ -159,10 +159,10 @@ Each step names its owner, and where the guide (`docs/deployment-guide.md`) has 
 |---|---|---|---|
 | 1 | **Done:** the GPU type is `g5.2xlarge` (section 4), in the GPU stack | Tejesh | — |
 | 2 | Ask Legal about nvdiffrast (section 2) | Tejesh, Legal | 5.1 |
-| 3 | Request DINOv3 access (section 3) | The company | 5.2 |
+| 3 | **Done:** request DINOv3 access (section 3) | The company | 5.2 |
 | 4 | Request the GPU quota, "Running On-Demand G and VT instances" (`L-DB2E81BA`), in each environment account. Hosts have 8 vCPUs: ask for at least 16 in dev and staging and 32 in prod, to leave room. | Flex's AWS team | 5.3 |
 | 5 | Put the real account numbers in `cdk.json`; bootstrap the accounts; deploy the pipelines and the environments, without a GPU yet | Thomas | 2.1 to 2.6 |
-| 6 | Lock DINOv3's weights and push | Tejesh | 5.4 |
+| 6 | **Done:** lock DINOv3's weights and push | Tejesh | 5.4 |
 | 7 | Copy the weights into each environment's bucket | Tejesh | 5.5 |
 | 8 | Build the first image through the image pipeline, and fix the build if the first compile fails | Tejesh | 5.6 |
 | 9 | Turn on the GPU environment in dev with that image | Tejesh | 5.7 |

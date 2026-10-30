@@ -211,7 +211,7 @@
       "revision": "ea8dc2863c51be0a264bab82070e3e8836b02d51",
       "source": "config.json",
       "size": 745,
-      "sha256": null
+      "sha256": "135ecd23e34a70b6fbed8b083fdecb319b7e3a54e3d849258bbe4ddcf1783bb5"
     },
     {
       "path": "dinov3/model.safetensors",
@@ -219,7 +219,7 @@
       "revision": "ea8dc2863c51be0a264bab82070e3e8836b02d51",
       "source": "model.safetensors",
       "size": 1212559808,
-      "sha256": null
+      "sha256": "dcb2e45127cccbf1601e5f42fef165eea275c8e5213197e8dcf3f48822718179"
     },
     {
       "path": "dinov3/preprocessor_config.json",
@@ -227,7 +227,7 @@
       "revision": "ea8dc2863c51be0a264bab82070e3e8836b02d51",
       "source": "preprocessor_config.json",
       "size": 585,
-      "sha256": null
+      "sha256": "960c41d1f3a7778b936365769a2d90550b318a6c0a53a0296957adacfe5e0dd7"
     },
     {
       "path": "birefnet/BiRefNet_config.py",
@@ -262,9 +262,5 @@
       "sha256": "9ab37426bf4de0567af6b5d21b16151357149139362e6e8992021b8ce356a154"
     }
   ],
-  "pending": [
-    "facebook/dinov3-vitl16-pretrain-lvd1689m/config.json",
-    "facebook/dinov3-vitl16-pretrain-lvd1689m/model.safetensors",
-    "facebook/dinov3-vitl16-pretrain-lvd1689m/preprocessor_config.json"
-  ]
+  "pending": []
 }
