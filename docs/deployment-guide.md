@@ -431,7 +431,9 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $HF_TOKEN" \
 
 ### 5.4 Lock DINOv3's weights (after 5.2)
 
-**Why.** `gpu/trellis2/weights.lock.json` pins every weight file by revision and SHA-256. 29 files are locked; DINOv3's three are under `pending`, with no checksums. The weight copy (5.5) refuses to start until they are filled in.
+**Done.** All 32 files are locked, DINOv3's three included, and `pending` is empty. The lock names the folder `347527bc…55da` in `flexgym-models`. Run these steps again only when a pin changes.
+
+**Why.** `gpu/trellis2/weights.lock.json` pins every weight file by revision and SHA-256. The weight copy (5.5) refuses to start while any file has no checksum.
 
 **Who.** Tejesh, on any machine with Python 3.11 and internet access. No AWS access is needed.
 
