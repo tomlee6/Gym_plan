@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -9,58 +8,81 @@ import 'package:mobile/screens/scanning_screen.dart';
 import 'package:mobile/services/capture_service.dart';
 import 'package:mobile/services/offline_cache.dart';
 import 'package:mobile/theme/app_theme.dart';
-import 'package:mobile/widgets/capture_fields.dart';
-import 'package:mobile/widgets/primary_button.dart';
 
 import 'support/fake_backend.dart';
 
-Widget _wrap({String? facility}) => MaterialApp(
-  theme: AppTheme.dark,
-  home: NewCaptureScreen(initialFacility: facility),
-);
+Widget _wrap({String? facility, String level = '2', CaptureService? service}) =>
+    MaterialApp(
+      theme: AppTheme.dark,
+      home: NewCaptureScreen(
+        initialFacility: facility,
+        initialLevel: level,
+        captureService: service,
+      ),
+    );
 
-/// Lets the fake backend's answers arrive and the screen settle.
+/// Lets the fake backend's answers arrive and the hand-off to the scan run.
+/// The scan ticks forever, so time is stepped rather than settled.
 Future<void> _settle(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
-  await tester.pumpAndSettle();
+  await tester.pump(const Duration(milliseconds: 500));
 }
 
-Finder _fieldFor(String label) => find.ancestor(
-  of: find.text(label.toUpperCase()),
-  matching: find.byType(LabelledField),
-);
+ScanningScreen _scan(WidgetTester tester) =>
+    tester.widget<ScanningScreen>(find.byType(ScanningScreen));
+
+/// Removes the tree so the scan's timer is cancelled.
+Future<void> _tearDown(WidgetTester tester) =>
+    tester.pumpWidget(const SizedBox());
 
 void main() {
   late ({FakeBackend backend, FakeUploadQueue uploads}) fakes;
   setUp(() => fakes = useFakeBackend());
 
-  testWidgets('renders every section of the capture form', (
+  testWidgets('goes straight to the camera and starts scanning', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(_wrap());
+    expect(find.text('Starting camera…'), findsOneWidget);
+
     await _settle(tester);
 
-    expect(find.text('New capture'), findsOneWidget);
-    expect(find.text('FACILITY'), findsOneWidget);
-    expect(find.text('LEVEL'), findsOneWidget);
-    expect(find.text('FLOOR TO FLOOR'), findsOneWidget);
-    expect(find.text('DEVICE'), findsOneWidget);
+    expect(find.byType(ScanningScreen), findsOneWidget);
+    // Replaced, so leaving the scan returns home rather than to a spinner.
+    expect(find.byType(NewCaptureScreen), findsNothing);
 
-    // Tests do not run on iOS, so debug builds fall back to the demo walk.
-    expect(find.text('Simulated scan'), findsOneWidget);
-    expect(find.text('No LiDAR here · runs a demo walk'), findsOneWidget);
+    await _tearDown(tester);
+  });
 
-    expect(find.byType(ChecklistCard), findsOneWidget);
-    expect(find.text('Before you start'), findsOneWidget);
-    expect(
-      find.text('Walk the full perimeter without lifting the phone.'),
-      findsOneWidget,
-    );
+  testWidgets('the scan starts with the facility, level and default height', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(_wrap(facility: 'Riverside Gym', level: '3'));
+    await _settle(tester);
 
-    expect(find.text('Start scan'), findsOneWidget);
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Cancel'), findsOneWidget);
+    final ScanningScreen scan = _scan(tester);
+    expect(scan.config.facilityId, 'fac_riverside');
+    expect(scan.config.facility, 'Riverside Gym');
+    expect(scan.config.level, 3);
+    expect(scan.config.heightM, NewCaptureScreen.defaultHeightM);
+    // The capture remembers its account, for the upload.
+    expect(scan.config.accountId, 'acc_northgate');
+    // The list travels on, for the picker on the review screen.
+    expect(scan.facilities!.facilities, hasLength(greaterThan(1)));
+
+    await _tearDown(tester);
+  });
+
+  testWidgets('falls back to the first facility when handed an unknown one', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(_wrap(facility: 'A gym that closed'));
+    await _settle(tester);
+
+    expect(_scan(tester).config.facility, 'Northgate Fitness');
+
+    await _tearDown(tester);
   });
 
   testWidgets('says so when the account has no gyms, instead of spinning', (
@@ -72,176 +94,27 @@ void main() {
 
     expect(find.text('No facility available'), findsOneWidget);
     expect(find.textContaining('Ask your account admin'), findsOneWidget);
-    expect(find.byType(CupertinoActivityIndicator), findsNothing);
-    expect(find.text('Start scan'), findsNothing);
+    expect(find.byType(ScanningScreen), findsNothing);
 
-    // Once the admin adds a gym, Try again shows the form.
+    // Once the admin adds a gym, Try again starts the scan.
     fakes.backend.noFacilities = false;
     await tester.tap(find.text('Try again'));
     await _settle(tester);
-    expect(find.text('No facility available'), findsNothing);
-    expect(find.text('Start scan'), findsOneWidget);
-  });
-
-  testWidgets('defaults to the facility it was opened with', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(_wrap(facility: 'Riverside Gym'));
-    await _settle(tester);
-
-    expect(find.text('Riverside Gym'), findsOneWidget);
-  });
-
-  testWidgets('falls back to the first facility when handed an unknown one', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(_wrap(facility: 'A gym that closed'));
-    await _settle(tester);
-
-    expect(find.text('Northgate Fitness'), findsOneWidget);
-    expect(find.text('A gym that closed'), findsNothing);
-  });
-
-  testWidgets('picker sheet changes the selected facility', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(_wrap(facility: 'Northgate Fitness'));
-    await _settle(tester);
-
-    await tester.tap(find.byType(PickerField));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(CupertinoPicker), findsOneWidget);
-
-    await tester.drag(find.byType(CupertinoPicker), const Offset(0, -40));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Done'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Riverside Gym'), findsOneWidget);
-  });
-
-  testWidgets('cancelling the picker keeps the original facility', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(_wrap(facility: 'Northgate Fitness'));
-    await _settle(tester);
-
-    await tester.tap(find.byType(PickerField));
-    await tester.pumpAndSettle();
-    await tester.drag(find.byType(CupertinoPicker), const Offset(0, -40));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancel').last);
-    await tester.pumpAndSettle();
-
-    expect(find.text('Northgate Fitness'), findsOneWidget);
-  });
-
-  testWidgets('rejects an empty level', (WidgetTester tester) async {
-    await tester.pumpWidget(_wrap());
-    await _settle(tester);
-
-    await tester.enterText(
-      find.descendant(of: _fieldFor('Level'), matching: find.byType(TextField)),
-      '',
-    );
-    await tester.tap(find.text('Start scan'));
-    await tester.pump();
-
-    expect(find.text('Enter the level.'), findsOneWidget);
-  });
-
-  testWidgets('rejects an implausible floor-to-floor height', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(_wrap());
-    await _settle(tester);
-
-    await tester.enterText(
-      find.descendant(
-        of: _fieldFor('Floor to floor'),
-        matching: find.byType(TextField),
-      ),
-      '0.5',
-    );
-    await tester.tap(find.text('Start scan'));
-    await tester.pump();
-
-    expect(find.text('Height must be between 2.0 and 12.0 m.'), findsOneWidget);
-  });
-
-  testWidgets('height field only accepts digits and a decimal point', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(_wrap());
-    await _settle(tester);
-
-    final Finder heightField = find.descendant(
-      of: _fieldFor('Floor to floor'),
-      matching: find.byType(TextField),
-    );
-    await tester.enterText(heightField, '3.2abc-');
-    await tester.pump();
-
-    expect(tester.widget<TextField>(heightField).controller!.text, '3.2');
-  });
-
-  testWidgets('valid input starts the scan', (WidgetTester tester) async {
-    await tester.pumpWidget(_wrap());
-    await _settle(tester);
-
-    await tester.tap(find.text('Start scan'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
     expect(find.byType(ScanningScreen), findsOneWidget);
-    expect(find.text('Northgate · Level 2'), findsOneWidget);
 
-    // The scan ticks forever; tear it down so its timer is cancelled.
-    await tester.pumpWidget(const SizedBox());
+    await _tearDown(tester);
   });
 
-  testWidgets('opens on the level it was handed', (WidgetTester tester) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.dark,
-        home: const NewCaptureScreen(initialLevel: '3'),
-      ),
-    );
-    await _settle(tester);
-
-    final Finder level = find.descendant(
-      of: _fieldFor('Level'),
-      matching: find.byType(TextField),
-    );
-    expect(tester.widget<TextField>(level).controller!.text, '3');
-  });
-
-  testWidgets('start is live on a LiDAR-capable phone', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(_wrap());
-    await _settle(tester);
-
-    final PrimaryButton button = tester.widget<PrimaryButton>(
-      find.byType(PrimaryButton),
-    );
-    expect(button.onPressed, isNotNull);
-  });
-
-  testWidgets('start is blocked when the phone has no LiDAR', (
+  testWidgets('a phone without LiDAR is told so and never scans', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.dark,
-        home: NewCaptureScreen(
-          captureService: CaptureService(
-            deviceOverride: const DeviceCapability(
-              supported: false,
-              headline: 'No LiDAR sensor',
-              detail: 'iPhone 11 · iOS 18.2',
-            ),
+      _wrap(
+        service: CaptureService(
+          deviceOverride: const DeviceCapability(
+            supported: false,
+            headline: 'No LiDAR sensor',
+            detail: 'iPhone 11 · iOS 18.2',
           ),
         ),
       ),
@@ -249,41 +122,11 @@ void main() {
     await _settle(tester);
 
     expect(find.text('No LiDAR sensor'), findsOneWidget);
-
-    final PrimaryButton button = tester.widget<PrimaryButton>(
-      find.byType(PrimaryButton),
-    );
-    expect(button.onPressed, isNull);
-
-    // Tapping it must not start anything.
-    await tester.tap(find.text('Start scan'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('iPhone 11 · iOS 18.2'), findsOneWidget);
     expect(find.byType(ScanningScreen), findsNothing);
   });
 
-  testWidgets('the scan gets the facility id the backend gave', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(_wrap(facility: 'Riverside Gym'));
-    await _settle(tester);
-
-    await tester.tap(find.text('Start scan'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
-    final ScanningScreen scan = tester.widget<ScanningScreen>(
-      find.byType(ScanningScreen),
-    );
-    expect(scan.config.facilityId, 'fac_riverside');
-    expect(scan.config.facility, 'Riverside Gym');
-    // The capture remembers its account, for the upload.
-    expect(scan.config.accountId, 'acc_northgate');
-
-    await tester.pumpWidget(const SizedBox());
-  });
-
-  testWidgets('offline: says so, and loads on retry', (
+  testWidgets('offline: says so, and starts on retry', (
     WidgetTester tester,
   ) async {
     fakes.backend.offline = true;
@@ -291,12 +134,14 @@ void main() {
     await _settle(tester);
 
     expect(find.text('No connection. Check your signal.'), findsOneWidget);
-    expect(find.text('Start scan'), findsNothing);
+    expect(find.byType(ScanningScreen), findsNothing);
 
     fakes.backend.offline = false;
     await tester.tap(find.text('Try again'));
     await _settle(tester);
-    expect(find.text('Start scan'), findsOneWidget);
+    expect(find.byType(ScanningScreen), findsOneWidget);
+
+    await _tearDown(tester);
   });
 
   testWidgets('offline after an online visit: starts from the saved list', (
@@ -305,19 +150,18 @@ void main() {
     // Online once: the list is saved for this account.
     await tester.pumpWidget(_wrap());
     await _settle(tester);
-    expect(find.textContaining('saved facility list'), findsNothing);
-    await tester.pumpWidget(const SizedBox());
+    expect(_scan(tester).facilities!.offline, isFalse);
+    await _tearDown(tester);
 
     fakes.backend.offline = true;
     await tester.pumpWidget(_wrap());
     await _settle(tester);
 
-    expect(find.text('Offline · saved facility list'), findsOneWidget);
-    expect(find.text('Northgate Fitness'), findsOneWidget);
-    final PrimaryButton start = tester.widget<PrimaryButton>(
-      find.widgetWithText(PrimaryButton, 'Start scan'),
-    );
-    expect(start.onPressed, isNotNull);
+    final ScanningScreen scan = _scan(tester);
+    expect(scan.facilities!.offline, isTrue);
+    expect(scan.config.facility, 'Northgate Fitness');
+
+    await _tearDown(tester);
   });
 
   test('the facility list survives on disk, per account', () async {

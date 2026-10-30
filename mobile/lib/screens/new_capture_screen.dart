@@ -6,15 +6,16 @@ import '../services/api_client.dart';
 import '../services/auth_session.dart';
 import '../services/capture_service.dart';
 import '../theme/app_theme.dart';
-import '../utils/formatting.dart';
-import '../widgets/capture_fields.dart';
 import '../widgets/detail_widgets.dart';
 import '../widgets/nav_bar.dart';
-import '../widgets/primary_button.dart';
 import 'scanning_screen.dart';
 
-/// Capture setup: pick the facility, level and floor-to-floor height, confirm
-/// the device can scan, then start.
+/// Opens the camera and starts scanning straight away, Polycam style.
+///
+/// All it waits for is the account's facilities and the device check. The
+/// facility, level and floor-to-floor height are confirmed on the review
+/// screen after the walk; the scan starts with the gym the user was looking
+/// at, [initialLevel] and [defaultHeightM] filled in.
 class NewCaptureScreen extends StatefulWidget {
   const NewCaptureScreen({
     super.key,
@@ -32,59 +33,33 @@ class NewCaptureScreen extends StatefulWidget {
   /// Injectable so tests can drive the unsupported-device path.
   final CaptureService? captureService;
 
+  /// The floor-to-floor height a scan starts with, until the surveyor sets
+  /// it on the review screen.
+  static const double defaultHeightM = 3.20;
+
   @override
   State<NewCaptureScreen> createState() => _NewCaptureScreenState();
 }
 
 class _NewCaptureScreenState extends State<NewCaptureScreen> {
-  /// The 3D model extrudes walls to this height, so keep it plausible for a
-  /// gym floor rather than accepting any number.
-  static const double _minHeightM = 2.0;
-  static const double _maxHeightM = 12.0;
-
-  late final TextEditingController _levelController = TextEditingController(
-    text: widget.initialLevel,
-  );
-  final TextEditingController _heightController = TextEditingController(
-    text: '3.20',
-  );
-  final FocusNode _levelFocus = FocusNode();
-  final FocusNode _heightFocus = FocusNode();
-
   late final CaptureService _service =
       widget.captureService ?? CaptureService();
 
-  List<Facility> _facilities = const <Facility>[];
-
-  /// When the list came from the phone's offline copy, when it was saved.
-  DateTime? _cachedAt;
-  Facility? _facility;
-  DeviceCapability? _device;
+  DeviceCapability? _unsupported;
   String? _loadError;
   bool _noFacilities = false;
-
-  String? _levelError;
-  String? _heightError;
 
   @override
   void initState() {
     super.initState();
-    _loadSetup();
+    _loadAndStart();
   }
 
-  @override
-  void dispose() {
-    _levelController.dispose();
-    _heightController.dispose();
-    _levelFocus.dispose();
-    _heightFocus.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadSetup() async {
+  Future<void> _loadAndStart() async {
     setState(() {
       _loadError = null;
       _noFacilities = false;
+      _unsupported = null;
     });
     final FacilityList list;
     final DeviceCapability device;
@@ -97,7 +72,7 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
     } catch (_) {
       // Anything unexpected still ends the spinner with a way to retry.
       if (mounted) {
-        setState(() => _loadError = 'The capture setup could not be loaded.');
+        setState(() => _loadError = 'The capture could not be started.');
       }
       return;
     }
@@ -110,241 +85,101 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
       return;
     }
 
+    // A phone without LiDAR cannot produce a usable scan, so the sign-in
+    // screen's warning is enforced here.
+    if (!device.supported) {
+      setState(() => _unsupported = device);
+      return;
+    }
+
     Facility? named(String? name) =>
         list.facilities.where((Facility f) => f.name == name).firstOrNull;
     Facility? byId(String? id) =>
         list.facilities.where((Facility f) => f.id == id).firstOrNull;
 
-    setState(() {
-      _facilities = list.facilities;
-      _cachedAt = list.cachedAt;
-      _device = device;
-      // The gym passed in if the user can pick it, else their default.
-      _facility =
-          named(widget.initialFacility) ??
-          byId(list.defaultId) ??
-          list.facilities.firstOrNull;
-    });
-  }
+    // The gym passed in if the user can pick it, else their default.
+    final Facility facility =
+        named(widget.initialFacility) ??
+        byId(list.defaultId) ??
+        list.facilities.first;
 
-  bool get _ready => _device != null && _facility != null;
-
-  void _startScan() {
-    FocusScope.of(context).unfocus();
-
-    final String level = _levelController.text.trim();
-    final double? height = double.tryParse(_heightController.text.trim());
-
-    setState(() {
-      _levelError = level.isEmpty ? 'Enter the level.' : null;
-      if (height == null) {
-        _heightError = 'Enter the floor-to-floor height.';
-      } else if (height < _minHeightM || height > _maxHeightM) {
-        _heightError =
-            'Height must be between ${_minHeightM.toStringAsFixed(1)} and '
-            '${_maxHeightM.toStringAsFixed(1)} m.';
-      } else {
-        _heightError = null;
-      }
-    });
-
-    if (_levelError != null || _heightError != null) return;
-
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ScanningScreen(
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder<void>(
+        transitionDuration: const Duration(milliseconds: 250),
+        pageBuilder: (_, _, _) => ScanningScreen(
           config: ScanConfig(
             // The account the capture belongs to, kept with it so the
             // upload goes to the right account even after a switch.
             accountId: AuthSession.instance.currentAccountId,
-            facilityId: _facility!.id,
-            facility: _facility!.name,
-            level: int.parse(level),
-            heightM: height!,
+            facilityId: facility.id,
+            facility: facility.name,
+            level: int.tryParse(widget.initialLevel) ?? 1,
+            heightM: NewCaptureScreen.defaultHeightM,
           ),
+          facilities: list,
         ),
+        transitionsBuilder: (_, Animation<double> animation, _, Widget child) =>
+            FadeTransition(opacity: animation, child: child),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final bool waiting =
+        _loadError == null && !_noFacilities && _unsupported == null;
+
     return Scaffold(
-      backgroundColor: AppColors.background,
-      // Let the body shrink for the keyboard so the focused field scrolls
-      // into view and "Start scan" stays reachable above it.
-      body: GestureDetector(
-        // The numeric keyboards have no return key, so tapping away is the
-        // only way to dismiss them.
-        onTap: () => FocusScope.of(context).unfocus(),
-        behavior: HitTestBehavior.opaque,
-        child: SafeArea(
-          child: Column(
-            children: <Widget>[
-              Padding(
-                padding: const EdgeInsets.only(left: 8, right: 12),
-                child: NavBar(
-                  backLabel: 'Home',
-                  onBack: () => Navigator.of(context).maybePop(),
-                  trailingLabel: 'Cancel',
-                  onTrailing: () => Navigator.of(context).maybePop(),
-                ),
+      // Black while the camera spins up, so the hand-off to the scan is
+      // seamless.
+      backgroundColor: waiting ? Colors.black : AppColors.background,
+      body: SafeArea(
+        child: Column(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.only(left: 8, right: 12),
+              child: NavBar(
+                backLabel: 'Home',
+                onBack: () => Navigator.of(context).maybePop(),
               ),
-              Expanded(
-                child: _loadError != null
-                    ? ErrorView(message: _loadError!, onRetry: _loadSetup)
-                    : _noFacilities
-                    ? ErrorView(
-                        icon: Icons.store_mall_directory_outlined,
-                        title: 'No facility available',
-                        message:
-                            'Your account has no gyms to capture yet. Ask '
-                            'your account admin to add one, then try again.',
-                        onRetry: _loadSetup,
-                      )
-                    : _ready
-                    ? _buildForm()
-                    : _buildLoading(),
-              ),
-            ],
-          ),
+            ),
+            Expanded(
+              child: _loadError != null
+                  ? ErrorView(message: _loadError!, onRetry: _loadAndStart)
+                  : _noFacilities
+                  ? ErrorView(
+                      icon: Icons.store_mall_directory_outlined,
+                      title: 'No facility available',
+                      message:
+                          'Your account has no gyms to capture yet. Ask '
+                          'your account admin to add one, then try again.',
+                      onRetry: _loadAndStart,
+                    )
+                  : _unsupported != null
+                  ? ErrorView(
+                      icon: Icons.sensors_off_rounded,
+                      title: _unsupported!.headline,
+                      message: _unsupported!.detail,
+                      onRetry: _loadAndStart,
+                    )
+                  : _buildStarting(),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildLoading() {
+  Widget _buildStarting() {
     return const Center(
-      child: CupertinoActivityIndicator(color: AppColors.textMuted, radius: 12),
-    );
-  }
-
-  Widget _buildForm() {
-    final DeviceCapability device = _device!;
-
-    return Column(
-      children: <Widget>[
-        Expanded(
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const Text('New capture', style: AppTheme.largeTitle),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'One level per capture. Set the height before you start — '
-                    'the 3D model raises the walls to it.',
-                    style: AppTheme.body,
-                  ),
-                  const SizedBox(height: 26),
-
-                  if (_cachedAt != null) ...<Widget>[
-                    StatusCallout(
-                      color: AppColors.warning,
-                      icon: Icons.cloud_off_rounded,
-                      title: 'Offline · saved facility list',
-                      subtitle:
-                          'No signal, so this is the list saved on this '
-                          'iPhone on ${Formatting.stamp(_cachedAt!)}. The scan '
-                          'uploads once you are back online.',
-                    ),
-                    const SizedBox(height: 18),
-                  ],
-
-                  LabelledField(
-                    label: 'Facility',
-                    child: PickerField(
-                      icon: Icons.home_work_outlined,
-                      value: _facility!.name,
-                      options: <String>[
-                        for (final Facility f in _facilities) f.name,
-                      ],
-                      onChanged: (String name) => setState(
-                        () => _facility = _facilities.firstWhere(
-                          (Facility f) => f.name == name,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Expanded(
-                        child: LabelledField(
-                          label: 'Level',
-                          errorText: _levelError,
-                          child: NumericField(
-                            controller: _levelController,
-                            focusNode: _levelFocus,
-                            hasError: _levelError != null,
-                            semanticLabel: 'Level',
-                            onSubmitted: (_) => _heightFocus.requestFocus(),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: LabelledField(
-                          label: 'Floor to floor',
-                          errorText: _heightError,
-                          child: NumericField(
-                            controller: _heightController,
-                            focusNode: _heightFocus,
-                            unit: 'm',
-                            decimal: true,
-                            hasError: _heightError != null,
-                            semanticLabel: 'Floor to floor height in metres',
-                            onSubmitted: (_) => _startScan(),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-
-                  LabelledField(
-                    label: 'Device',
-                    child: DeviceStatusRow(
-                      supported: device.supported,
-                      headline: device.headline,
-                      detail: device.detail,
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-
-                  const ChecklistCard(
-                    title: 'Before you start',
-                    steps: <String>[
-                      'Walk the full perimeter without lifting the phone.',
-                      'Tag fire exits, mirror walls and ceiling height as you '
-                          'pass them.',
-                      'Do not leave until the coverage check is clear.',
-                    ],
-                  ),
-                  const SizedBox(height: 22),
-                ],
-              ),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 34),
-          child: PrimaryButton(
-            label: 'Start scan',
-            icon: Icons.crop_free_rounded,
-            // A phone without LiDAR cannot produce a usable scan, so the
-            // sign-in screen's warning is enforced here.
-            onPressed: device.supported ? _startScan : null,
-          ),
-        ),
-      ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          CupertinoActivityIndicator(color: Colors.white70, radius: 12),
+          SizedBox(height: 14),
+          Text('Starting camera…', style: AppTheme.caption),
+        ],
+      ),
     );
   }
 }

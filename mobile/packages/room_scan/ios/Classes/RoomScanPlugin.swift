@@ -1,3 +1,4 @@
+import AVFoundation
 import Flutter
 import UIKit
 
@@ -18,6 +19,10 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   /// A `RoomScanner` while a scan exists. Typed loosely because the class
   /// is only compiled where RoomPlan can be imported.
   private var scanner: AnyObject?
+
+  /// The active container showing the live camera preview.
+  private weak var captureContainer: RoomCaptureContainerView?
+  private var fallbackCamera: FallbackCameraView?
 
   /// The 360 degree equipment recorder, made on first use.
   private lazy var videoRecorder = EquipmentVideoRecorder()
@@ -40,6 +45,33 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     registrar.register(
       EquipmentVideoPreviewFactory(recorder: { instance.recorder() }),
       withId: "flex/equipment_video_preview")
+
+    registrar.register(
+      RoomCaptureViewFactory(plugin: instance),
+      withId: "flex/room_capture_view")
+  }
+
+  func attachCaptureContainer(_ container: RoomCaptureContainerView) {
+    self.captureContainer = container
+    updateCaptureView()
+  }
+
+  func updateCaptureView() {
+    guard let container = captureContainer else { return }
+
+    #if canImport(RoomPlan)
+    if RoomCaptureSession.isSupported, let scanner = scanner as? RoomScanner, let rcv = scanner.roomCaptureView {
+      fallbackCamera?.stop()
+      fallbackCamera = nil
+      container.activeView = rcv
+      return
+    }
+    #endif
+
+    if fallbackCamera == nil {
+      fallbackCamera = FallbackCameraView(frame: container.bounds)
+    }
+    container.activeView = fallbackCamera
   }
 
   private func recorder() -> EquipmentVideoRecorder {
@@ -62,6 +94,19 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     // handled before the RoomPlan availability check below.
     if call.method.hasPrefix("video.") {
       handleVideo(call, result: result)
+      return
+    }
+
+    // Machine type suggestions (F-07), on the phone. They need no LiDAR,
+    // and no model or a failure simply means no suggestions.
+    if call.method == "suggestTypes" {
+      guard let path = (call.arguments as? [String: Any])?["path"] as? String else {
+        result([Any]())
+        return
+      }
+      MachineClassifier.shared.suggest(imagePath: path) { suggestions in
+        result(suggestions)
+      }
       return
     }
 
@@ -112,6 +157,7 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         let next = try RoomScanner(emit: { [weak self] event in self?.eventSink?(event) })
         scanner = next
         next.start()
+        updateCaptureView()
         result(nil)
       } catch {
         result(FlutterError(code: "start_failed", message: error.localizedDescription, details: nil))
@@ -128,7 +174,22 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     case "stop":
       active?.stop()
       scanner = nil
+      updateCaptureView()
       result(nil)
+
+    case "nextSection":
+      guard let active = active else {
+        result(noScan())
+        return
+      }
+      Task { @MainActor in
+        do {
+          try await active.nextSection()
+          result(nil)
+        } catch {
+          result(FlutterError(code: "section_failed", message: error.localizedDescription, details: nil))
+        }
+      }
 
     case "capturePhoto":
       guard let active = active else {
@@ -150,6 +211,7 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         do {
           let export = try await active.finish()
           self.scanner = nil
+          self.updateCaptureView()
           result(export)
         } catch {
           result(FlutterError(code: "export_failed", message: error.localizedDescription, details: nil))
@@ -267,5 +329,111 @@ final class VideoEventStream: NSObject, FlutterStreamHandler {
   func onCancel(withArguments arguments: Any?) -> FlutterError? {
     sink = nil
     return nil
+  }
+}
+
+// MARK: - Platform View (Live Camera & RoomCaptureView)
+
+final class RoomCapturePlatformView: NSObject, FlutterPlatformView {
+  private let container = RoomCaptureContainerView()
+
+  init(frame: CGRect, plugin: RoomScanPlugin) {
+    container.frame = frame
+    super.init()
+    plugin.attachCaptureContainer(container)
+  }
+
+  func view() -> UIView { container }
+}
+
+final class RoomCaptureViewFactory: NSObject, FlutterPlatformViewFactory {
+  private let plugin: RoomScanPlugin
+
+  init(plugin: RoomScanPlugin) {
+    self.plugin = plugin
+    super.init()
+  }
+
+  func create(withFrame frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?)
+    -> FlutterPlatformView
+  {
+    RoomCapturePlatformView(frame: frame, plugin: plugin)
+  }
+}
+
+final class RoomCaptureContainerView: UIView {
+  var activeView: UIView? {
+    didSet {
+      oldValue?.removeFromSuperview()
+      if let active = activeView {
+        active.frame = bounds
+        active.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(active)
+      }
+    }
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    activeView?.frame = bounds
+  }
+}
+
+final class FallbackCameraView: UIView {
+  private let session = AVCaptureSession()
+  private var previewLayer: AVCaptureVideoPreviewLayer?
+  private var isRunning = false
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    backgroundColor = .black
+    setupCamera()
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  private func setupCamera() {
+    session.beginConfiguration()
+    session.sessionPreset = .high
+
+    if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+       let input = try? AVCaptureDeviceInput(device: device),
+       session.canAddInput(input) {
+      session.addInput(input)
+    }
+    session.commitConfiguration()
+
+    let layer = AVCaptureVideoPreviewLayer(session: session)
+    layer.videoGravity = .resizeAspectFill
+    layer.frame = bounds
+    self.layer.addSublayer(layer)
+    self.previewLayer = layer
+
+    start()
+  }
+
+  func start() {
+    guard !isRunning else { return }
+    isRunning = true
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      self?.session.startRunning()
+    }
+  }
+
+  func stop() {
+    guard isRunning else { return }
+    isRunning = false
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      self?.session.stopRunning()
+    }
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    previewLayer?.frame = bounds
+  }
+
+  deinit {
+    stop()
   }
 }

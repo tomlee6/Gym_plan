@@ -1,8 +1,11 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:room_scan/room_scan.dart';
 
 import '../models/scan.dart';
 import '../services/app_config.dart';
+import '../services/capture_service.dart';
+import '../services/lidar_scan_session.dart';
 import '../services/profile_service.dart';
 import '../services/scan_backend.dart';
 import '../services/scan_session.dart';
@@ -12,21 +15,29 @@ import '../widgets/detail_widgets.dart';
 import '../widgets/floor_plan.dart';
 import '../widgets/hairline_container.dart';
 import '../widgets/pressable.dart';
-import '../widgets/primary_button.dart';
 import '../widgets/tag_sheet.dart';
 import 'review_submit_screen.dart';
 
-/// Live scan: the outline fills in as the surveyor walks, with coverage, the
-/// closure check, and actions to tag features and take reference photos.
+/// Live scan, Polycam style: the camera fills the screen and, on a LiDAR
+/// device, Apple's RoomCaptureView outlines each wall, edge and opening in
+/// white as it is found, with a small 3D model of the room so far. Over it
+/// sit only the clock, the closure check, coverage, and the tag, finish and
+/// photo buttons.
 class ScanningScreen extends StatefulWidget {
   const ScanningScreen({
     super.key,
     required this.config,
+    this.facilities,
     this.session,
     this.maxExtentM,
   });
 
+  /// The scan's starting details. The surveyor confirms the facility, level
+  /// and height on the review screen.
   final ScanConfig config;
+
+  /// The account's facilities, for the picker on the review screen.
+  final FacilityList? facilities;
 
   /// The largest floor one scan may cover, in metres along either side
   /// (F-04). Defaults to [AppConfig.maxScanExtentM].
@@ -47,15 +58,25 @@ class _ScanningScreenState extends State<ScanningScreen> {
 
   late final double _maxExtentM = widget.maxExtentM ?? AppConfig.maxScanExtentM;
 
-  /// The scanned walls already span more than one scan may hold.
+  /// Apple's view draws the walls and the 3D model itself. Without it (the
+  /// simulated walk) a small 2D outline stands in.
+  bool get _nativeOverlay => _session is LidarScanSession;
+
+  /// The walls of the current section already span more than one scan may
+  /// hold (F-04). With sections (F-01) the limit is per section, so a big
+  /// floor is finished by starting a new one rather than discarded.
   bool get _tooLarge {
-    final Size? extent = _session.scannedExtentM;
+    final Size? extent = _session.sectionExtentM;
     return extent != null &&
         (extent.width > _maxExtentM || extent.height > _maxExtentM);
   }
 
   /// The photo privacy warning is shown once per scan, not once per photo.
   bool _photoWarningAccepted = false;
+
+  /// A new section is being started; RoomPlan takes a moment to close the
+  /// last one.
+  bool _startingSection = false;
 
   @override
   void initState() {
@@ -128,6 +149,53 @@ class _ScanningScreenState extends State<ScanningScreen> {
     );
   }
 
+  /// Closes the section scanned so far and starts the next (F-01).
+  Future<void> _newSection() async {
+    final bool? go = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => CupertinoAlertDialog(
+        title: const Text('Start a new section?'),
+        content: const Text(
+          'What you have scanned is kept. Walk on to the next area, and '
+          'start where you can still see a couple of metres of this '
+          'section, so the two join up.',
+        ),
+        actions: <Widget>[
+          CupertinoDialogAction(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('New section'),
+          ),
+        ],
+      ),
+    );
+    if (go != true || !mounted) return;
+
+    setState(() => _startingSection = true);
+    try {
+      await _session.nextSection();
+    } catch (_) {
+      if (mounted) {
+        showAppToast(
+          context,
+          'A new section could not be started. Keep scanning this one.',
+        );
+      }
+      return;
+    } finally {
+      if (mounted) setState(() => _startingSection = false);
+    }
+    if (!mounted) return;
+    showAppToast(
+      context,
+      'Section ${_session.section} started. Overlap the last one a little.',
+    );
+  }
+
   Future<void> _finish() async {
     String? reason;
     if (!_session.closed) {
@@ -148,8 +216,11 @@ class _ScanningScreenState extends State<ScanningScreen> {
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            ReviewSubmitScreen(result: result, exportModel: _session.export),
+        builder: (_) => ReviewSubmitScreen(
+          result: result,
+          facilities: widget.facilities,
+          exportModel: _session.export,
+        ),
       ),
     );
 
@@ -196,100 +267,52 @@ class _ScanningScreenState extends State<ScanningScreen> {
         if (!didPop) _confirmDiscard();
       },
       child: Scaffold(
-        backgroundColor: AppColors.background,
-        body: SafeArea(
-          child: ListenableBuilder(
-            listenable: _session,
-            builder: (BuildContext context, Widget? _) => Column(
-              children: <Widget>[
-                _buildTopBar(),
-                Expanded(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        _buildPlan(),
-                        if (_session.instruction != null &&
-                            _session.error == null) ...<Widget>[
-                          const SizedBox(height: 10),
-                          _Coaching(text: _session.instruction!),
-                        ],
-                        const SizedBox(height: 14),
-                        _CoverageBar(coverage: _session.coverage),
-                        const SizedBox(height: 10),
-                        _ExtentRow(
-                          extent: _session.scannedExtentM,
-                          maxM: _maxExtentM,
-                        ),
-                        const SizedBox(height: 12),
-                        if (_tooLarge) ...<Widget>[
-                          _TooLargeCallout(maxM: _maxExtentM),
-                          const SizedBox(height: 12),
-                        ],
-                        _buildClosureCallout(),
-                        const SizedBox(height: 14),
-                        _TagChips(tags: _session.tags),
-                      ],
-                    ),
-                  ),
-                ),
-                _buildActions(),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar() {
-    final Duration t = _session.elapsed;
-    final String clock =
-        '${t.inMinutes.toString().padLeft(2, '0')}:'
-        '${(t.inSeconds % 60).toString().padLeft(2, '0')}';
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 20, 0),
-      child: SizedBox(
-        height: 44,
-        child: Row(
+        backgroundColor: Colors.black,
+        body: Stack(
           children: <Widget>[
-            Pressable(
-              onTap: _confirmDiscard,
-              haptic: HapticImpact.selection,
-              semanticLabel: 'Discard scan',
-              child: const SizedBox(
-                width: 36,
-                height: 44,
-                child: Icon(
-                  CupertinoIcons.xmark,
-                  size: 18,
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Flexible(
-              child: _Chip(
-                height: 30,
-                dot: AppColors.danger,
-                label: widget.config.shortTitle,
-                fontSize: 12.5,
-                weight: FontWeight.w600,
-              ),
-            ),
-            const Spacer(),
-            Semantics(
-              label: 'Elapsed $clock',
-              child: Text(
-                clock,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
-                  color: AppColors.textPrimary,
+            // The camera, with RoomPlan's white wall outlines and 3D model
+            // drawn natively on a LiDAR device.
+            const Positioned.fill(child: RoomCapturePreview()),
+
+            SafeArea(
+              child: ListenableBuilder(
+                listenable: _session,
+                builder: (BuildContext context, Widget? _) => Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      _buildTopBar(),
+                      const SizedBox(height: 12),
+                      _buildClosureCallout(),
+                      if (_tooLarge) ...<Widget>[
+                        const SizedBox(height: 8),
+                        _TooLargeCallout(
+                          maxM: _maxExtentM,
+                          canSection: _session.supportsSections,
+                        ),
+                      ],
+                      const Spacer(),
+                      if (!_nativeOverlay) ...<Widget>[
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: _buildMiniMap(),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      if (_session.tags.isNotEmpty) ...<Widget>[
+                        _TagChips(tags: _session.tags),
+                        const SizedBox(height: 10),
+                      ],
+                      _buildProgress(),
+                      if (_canStartSection) ...<Widget>[
+                        const SizedBox(height: 10),
+                        Center(child: _buildSectionButton()),
+                      ],
+                      const SizedBox(height: 16),
+                      _buildActions(),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -299,26 +322,162 @@ class _ScanningScreenState extends State<ScanningScreen> {
     );
   }
 
-  Widget _buildPlan() {
-    return HairlineContainer(
-      radius: 21,
-      fillColor: AppColors.planCanvas,
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          FloorPlanView(
-            geometry: _session.geometry,
-            walls: _session.walls,
-            wallProgress: _session.wallProgress,
-            tags: _session.tags,
-            walker: _session.walker,
-            showGrid: true,
-            semanticLabel: 'Live top-down outline of the level being scanned',
+  /// The recording clock on the left, close on the right.
+  Widget _buildTopBar() {
+    final Duration t = _session.elapsed;
+    final String clock =
+        '${t.inMinutes.toString().padLeft(2, '0')}:'
+        '${(t.inSeconds % 60).toString().padLeft(2, '0')}';
+    final bool recording = _session.running && _session.error == null;
+
+    return Row(
+      children: <Widget>[
+        _Glass(
+          radius: 18,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          child: Semantics(
+            label: 'Elapsed $clock',
+            excludeSemantics: true,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                StatusDot(
+                  color: recording ? AppColors.danger : AppColors.textMuted,
+                  size: 8,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  clock,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 6),
-          const FloorPlanLegend(),
+        ),
+        if (_session.section > 1) ...<Widget>[
+          const SizedBox(width: 8),
+          _Glass(
+            radius: 18,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            child: Text(
+              'Section ${_session.section}',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
         ],
+        const Spacer(),
+        Pressable(
+          onTap: _confirmDiscard,
+          haptic: HapticImpact.selection,
+          semanticLabel: 'Discard scan',
+          child: const _Glass(
+            radius: 18,
+            child: SizedBox(
+              width: 36,
+              height: 36,
+              child: Icon(
+                CupertinoIcons.xmark,
+                size: 16,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Coverage and scanned extent, kept to one slim card.
+  Widget _buildProgress() {
+    return _Glass(
+      radius: 16,
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          _CoverageBar(coverage: _session.coverage),
+          const SizedBox(height: 8),
+          _ExtentRow(
+            label: _session.section > 1 ? 'Section extent' : 'Scanned extent',
+            extent: _session.sectionExtentM,
+            maxM: _maxExtentM,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A section can be closed once something has been scanned in it, while
+  /// the scan is live.
+  bool get _canStartSection =>
+      _session.supportsSections &&
+      _session.error == null &&
+      _session.geometry.walls.isNotEmpty &&
+      _session.sectionExtentM != null;
+
+  Widget _buildSectionButton() {
+    return Pressable(
+      onTap: _startingSection ? null : _newSection,
+      haptic: HapticImpact.selection,
+      child: _Glass(
+        radius: 18,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            if (_startingSection)
+              const CupertinoActivityIndicator(radius: 7, color: Colors.white)
+            else
+              const Icon(
+                Icons.add_rounded,
+                size: 16,
+                color: AppColors.textPrimary,
+              ),
+            const SizedBox(width: 6),
+            Text(
+              _startingSection ? 'Starting section…' : 'New section',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniMap() {
+    return Container(
+      width: 120,
+      height: 120,
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: AppColors.planCanvas.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: FloorPlanView(
+          geometry: _session.geometry,
+          walls: _session.walls,
+          wallProgress: _session.wallProgress,
+          tags: _session.tags,
+          walker: _session.walker,
+          showGrid: false,
+          semanticLabel: 'Live top-down outline of the level being scanned',
+        ),
       ),
     );
   }
@@ -389,9 +548,9 @@ class _ScanningScreenState extends State<ScanningScreen> {
       ),
     };
 
-    return HairlineContainer(
+    return _Glass(
       radius: 15,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
@@ -413,7 +572,10 @@ class _ScanningScreenState extends State<ScanningScreen> {
                   ),
                 ),
                 const SizedBox(height: 3),
-                Text(body, style: AppTheme.caption),
+                Text(
+                  body,
+                  style: AppTheme.caption.copyWith(color: Colors.white70),
+                ),
               ],
             ),
           ),
@@ -427,41 +589,106 @@ class _ScanningScreenState extends State<ScanningScreen> {
     // (the × in the top bar) makes sense.
     final bool live = _session.error == null;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-      child: Row(
-        children: <Widget>[
-          _RoundAction(
-            icon: Icons.sell_outlined,
-            semanticLabel: 'Add a tag',
-            onTap: live ? _addTag : null,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: PrimaryButton(
-              label: 'Finish scan',
-              // Past the size limit the scan cannot be finished: one scan
-              // of a floor that size would not be reliable. The callout
-              // above says why.
-              onPressed: live && !_tooLarge ? _finish : null,
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: <Widget>[
+        _RoundAction(
+          icon: Icons.sell_outlined,
+          semanticLabel: 'Add a tag',
+          onTap: live ? _addTag : null,
+        ),
+        _RecordButton(
+          // Past the size limit the scan cannot be finished: one scan of a
+          // floor that size would not be reliable. The callout says why.
+          onTap: live && !_tooLarge ? _finish : null,
+        ),
+        _RoundAction(
+          icon: Icons.photo_camera_outlined,
+          semanticLabel: 'Take a reference photo',
+          onTap: live ? _takePhoto : null,
+        ),
+      ],
+    );
+  }
+}
+
+/// A dark, see-through panel that stays readable over the camera.
+class _Glass extends StatelessWidget {
+  const _Glass({
+    required this.child,
+    required this.radius,
+    this.padding = EdgeInsets.zero,
+  });
+
+  final Widget child;
+  final double radius;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.14),
+          width: 0.8,
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// The big finish button: a white ring round a red square, as on a camera.
+class _RecordButton extends StatelessWidget {
+  const _RecordButton({required this.onTap});
+
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Pressable(
+      key: const ValueKey<String>('finish-scan'),
+      onTap: onTap,
+      semanticLabel: 'Finish scan',
+      haptic: HapticImpact.medium,
+      pressedScale: 0.92,
+      disabledOpacity: 0.4,
+      child: Container(
+        width: 78,
+        height: 78,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 4),
+          color: Colors.black.withValues(alpha: 0.25),
+        ),
+        child: Center(
+          child: Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: AppColors.danger,
+              borderRadius: BorderRadius.circular(8),
             ),
           ),
-          const SizedBox(width: 12),
-          _RoundAction(
-            icon: Icons.photo_camera_outlined,
-            semanticLabel: 'Take a reference photo',
-            onTap: live ? _takePhoto : null,
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// "Scanned extent 24.4 × 19.0 m", live as the outline grows (F-04).
+/// "Scanned extent 24.4 × 19.0 m", live as the outline grows (F-04). In a
+/// sectioned scan, the current section's.
 class _ExtentRow extends StatelessWidget {
-  const _ExtentRow({required this.extent, required this.maxM});
+  const _ExtentRow({
+    required this.label,
+    required this.extent,
+    required this.maxM,
+  });
 
+  final String label;
   final Size? extent;
   final double maxM;
 
@@ -473,23 +700,27 @@ class _ExtentRow extends StatelessWidget {
         ? '—'
         : '${e.width.toStringAsFixed(1)} × ${e.height.toStringAsFixed(1)} m';
     return Semantics(
-      label: 'Scanned extent $value, limit ${maxM.round()} metres',
+      label: '$label $value, limit ${maxM.round()} metres',
       excludeSemantics: true,
       child: Row(
         children: <Widget>[
           const Icon(
             Icons.straighten_rounded,
-            size: 16,
+            size: 14,
             color: AppColors.textMuted,
           ),
           const SizedBox(width: 8),
-          const Expanded(
-            child: Text('Scanned extent', style: AppTheme.caption),
+          Expanded(
+            child: Text(
+              label,
+              style: AppTheme.caption,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
           Text(
             value,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: FontWeight.w600,
               fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
               color: over ? AppColors.warning : AppColors.textPrimary,
@@ -502,18 +733,23 @@ class _ExtentRow extends StatelessWidget {
   }
 }
 
-/// Stays on screen while the scanned walls are past the limit, and
-/// explains why Finish is off.
+/// Stays on screen while the current section is past the limit, and
+/// explains why Finish is off and what to do instead.
 class _TooLargeCallout extends StatelessWidget {
-  const _TooLargeCallout({required this.maxM});
+  const _TooLargeCallout({required this.maxM, required this.canSection});
 
   final double maxM;
+
+  /// A new section can be started (F-01), so the floor is finished that
+  /// way rather than discarded.
+  final bool canSection;
 
   @override
   Widget build(BuildContext context) {
     return HairlineContainer(
       radius: 15,
       borderColors: AppColors.edgeInto(AppColors.warning),
+      fillColor: Colors.black.withValues(alpha: 0.7),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -541,57 +777,22 @@ class _TooLargeCallout extends StatelessWidget {
                 ),
                 const SizedBox(height: 3),
                 Text(
-                  'This floor is over ${maxM.round()} m across, more than one '
-                  'scan can hold accurately. It must be scanned in sections, '
-                  'so Finish is off for this scan. Discard it and scan the '
-                  'floor one section at a time.',
+                  canSection
+                      ? 'This section is over ${maxM.round()} m across, more '
+                            'than one scan can hold accurately. The floor must '
+                            'be scanned in sections: tap New section and carry '
+                            'on. Finish is off until you do.'
+                      : 'This floor is over ${maxM.round()} m across, more '
+                            'than one scan can hold accurately. It must be '
+                            'scanned in sections, so Finish is off for this '
+                            'scan. Discard it and scan the floor one section '
+                            'at a time.',
                   style: AppTheme.caption,
                 ),
               ],
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// RoomPlan's live coaching, e.g. "Slow down".
-class _Coaching extends StatelessWidget {
-  const _Coaching({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      liveRegion: true,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-        decoration: BoxDecoration(
-          color: AppColors.info.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: <Widget>[
-            const Icon(
-              Icons.info_outline_rounded,
-              size: 16,
-              color: AppColors.info,
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                text,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -608,59 +809,55 @@ class _CoverageBar extends StatelessWidget {
 
     return Semantics(
       label: 'Coverage $percent percent',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
         children: <Widget>[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: <Widget>[
-              const Expanded(
-                child: Text(
-                  'Coverage',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-              ),
-              Text(
-                '$percent%',
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
-                  color: AppColors.accent,
-                ),
-              ),
-            ],
+          const Text(
+            'Coverage',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
           ),
-          const SizedBox(height: 9),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: SizedBox(
-              height: 7,
-              child: Stack(
-                children: <Widget>[
-                  const Positioned.fill(
-                    child: ColoredBox(color: AppColors.track),
-                  ),
-                  AnimatedFractionallySizedBox(
-                    duration: const Duration(milliseconds: 200),
-                    widthFactor: coverage.clamp(0, 1),
-                    heightFactor: 1,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(4),
-                        gradient: const LinearGradient(
-                          colors: <Color>[AppColors.deepTeal, AppColors.accent],
+          const SizedBox(width: 10),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: SizedBox(
+                height: 5,
+                child: Stack(
+                  children: <Widget>[
+                    const Positioned.fill(
+                      child: ColoredBox(color: AppColors.track),
+                    ),
+                    AnimatedFractionallySizedBox(
+                      duration: const Duration(milliseconds: 200),
+                      widthFactor: coverage.clamp(0, 1),
+                      heightFactor: 1,
+                      child: const DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: <Color>[
+                              AppColors.deepTeal,
+                              AppColors.accent,
+                            ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            '$percent%',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
+              color: AppColors.accent,
             ),
           ),
         ],
@@ -679,14 +876,6 @@ class _TagChips extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (tags.isEmpty) {
-      return const Text(
-        'No tags yet. Tag fire exits, mirror walls and ceiling height as you '
-        'pass them.',
-        style: AppTheme.caption,
-      );
-    }
-
     final Map<TagType, int> counts = <TagType, int>{};
     for (final ScanTag tag in tags.reversed) {
       counts[tag.type] = (counts[tag.type] ?? 0) + 1;
@@ -695,7 +884,7 @@ class _TagChips extends StatelessWidget {
     final int overflow = entries.length - _maxChips;
 
     return Wrap(
-      spacing: 10,
+      spacing: 8,
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: <Widget>[
@@ -707,17 +896,9 @@ class _TagChips extends StatelessWidget {
                 : e.key.shortLabel,
           ),
         if (overflow > 0)
-          SizedBox(
-            height: 30,
-            child: Center(
-              child: Text(
-                '+$overflow',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ),
+          Text(
+            '+$overflow',
+            style: const TextStyle(fontSize: 12, color: Colors.white70),
           ),
       ],
     );
@@ -725,45 +906,33 @@ class _TagChips extends StatelessWidget {
 }
 
 class _Chip extends StatelessWidget {
-  const _Chip({
-    required this.dot,
-    required this.label,
-    this.height = 30,
-    this.fontSize = 12,
-    this.weight = FontWeight.w500,
-  });
+  const _Chip({required this.dot, required this.label});
 
   final Color dot;
   final String label;
-  final double height;
-  final double fontSize;
-  final FontWeight weight;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: height,
+      height: 28,
       padding: const EdgeInsets.symmetric(horizontal: 11),
       decoration: BoxDecoration(
-        color: AppColors.chipFill,
-        borderRadius: BorderRadius.circular(height / 2),
-        border: Border.all(color: AppColors.chipEdge),
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           StatusDot(color: dot, size: 6.5),
           const SizedBox(width: 7),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: fontSize,
-                fontWeight: weight,
-                color: AppColors.textPrimary,
-              ),
+          Text(
+            label,
+            maxLines: 1,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textPrimary,
             ),
           ),
         ],
@@ -793,11 +962,11 @@ class _RoundAction extends StatelessWidget {
         width: 52,
         height: 52,
         decoration: BoxDecoration(
-          color: AppColors.chipFill,
+          color: Colors.black.withValues(alpha: 0.55),
           shape: BoxShape.circle,
-          border: Border.all(color: AppColors.chipEdge),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
         ),
-        child: Icon(icon, size: 23, color: AppColors.accent),
+        child: Icon(icon, size: 22, color: AppColors.textPrimary),
       ),
     );
   }

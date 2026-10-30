@@ -6,8 +6,17 @@ import RoomPlan
 import UIKit
 import simd
 
-/// One RoomPlan capture, run without Apple's scanning view so the Flutter
-/// screen can draw its own top-down outline.
+/// One RoomPlan capture, run through Apple's RoomCaptureView so the camera
+/// shows the white wall outlines as they are found, while the Flutter
+/// screen gets the room as a top-down outline.
+///
+/// A floor too big for one RoomPlan room is scanned in sections (F-01):
+/// every section runs in the same ARSession, so they share one world frame
+/// and line up on the live outline as they are. Finishing merges them into
+/// one CapturedStructure with StructureBuilder (iOS 17); `scan.json` then
+/// holds that structure, which the server's scan reader takes as it is
+/// (shared/plan/reading.js). A scan of one section exports exactly as a
+/// single room always has.
 ///
 /// Everything here runs on the main thread: the Flutter channels require it,
 /// and the update timer is scheduled on the main run loop.
@@ -16,12 +25,16 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
     case noFrame
     case encodeFailed
     case alreadyFinished
+    case busy
+    case nothingScanned
 
     var errorDescription: String? {
       switch self {
       case .noFrame: return "The camera has not produced a frame yet."
       case .encodeFailed: return "The photo could not be saved."
       case .alreadyFinished: return "This scan has already finished."
+      case .busy: return "A new section is already being started."
+      case .nothingScanned: return "Nothing was scanned."
       }
     }
   }
@@ -29,7 +42,34 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
   /// Wall ends closer than this count as joined, in metres.
   private static let joinTolerance: Float = 0.3
 
-  private let session = RoomCaptureSession()
+  private let session: RoomCaptureSession
+
+  /// The one AR session every section runs in (F-01), so all of them share
+  /// a world frame.
+  private let arSession = ARSession()
+
+  /// Apple's scanning view: the camera with each wall, edge and opening
+  /// outlined in white, and a small 3D model of the room so far. Nil on a
+  /// device without LiDAR.
+  let roomCaptureView: RoomCaptureView?
+
+  /// Keeps RoomCaptureView from showing its finished-room preview when a
+  /// section closes; scanning carries straight on into the next one.
+  private let presentation = SkipPresentation()
+
+  /// Sections already closed, in the order they were scanned.
+  private var completedRooms: [CapturedRoom] = []
+
+  /// A section is being closed and the next one started.
+  private var switchingSection = false
+
+  /// The section being scanned now, counting from 1.
+  private var sectionNumber: Int { completedRooms.count + 1 }
+
+  /// Whoever was the session's delegate before this scanner took over,
+  /// i.e. the RoomCaptureView. Every callback is passed on to it, or it
+  /// stops drawing the wall outlines.
+  private weak var forwardDelegate: RoomCaptureSessionDelegate?
   private let emit: ([String: Any]) -> Void
   private let ciContext = CIContext()
 
@@ -58,7 +98,20 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
       .appendingPathComponent("Scans", isDirectory: true)
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+    if RoomCaptureSession.isSupported {
+      let rcv = RoomCaptureView(frame: .zero, arSession: arSession)
+      rcv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+      self.roomCaptureView = rcv
+      self.session = rcv.captureSession
+    } else {
+      self.roomCaptureView = nil
+      self.session = RoomCaptureSession()
+    }
+
     super.init()
+    roomCaptureView?.delegate = presentation
+    forwardDelegate = session.delegate
     session.delegate = self
   }
 
@@ -101,7 +154,48 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
   }
 
   private func tick() {
-    emit(snapshot(of: latestRoom))
+    emit(snapshot(of: liveRooms, section: sectionNumber))
+  }
+
+  /// Every closed section, then the one being scanned.
+  private var liveRooms: [CapturedRoom] {
+    completedRooms + (latestRoom.map { [$0] } ?? [])
+  }
+
+  // MARK: - Sections (F-01)
+
+  /// Closes the section being scanned and starts the next in the same AR
+  /// session. `stop(pauseARSession: false)` keeps tracking, so the next
+  /// section carries on in the same frame. RoomBuilder finalises the closed
+  /// section; if it fails, the last live room stands in for it.
+  func nextSection() async throws {
+    guard !finished else { throw ScanError.alreadyFinished }
+    guard !switchingSection else { throw ScanError.busy }
+    switchingSection = true
+    defer { switchingSection = false }
+
+    let data: CapturedRoomData
+    do {
+      data = try await withCheckedThrowingContinuation { continuation in
+        endContinuation = continuation
+        session.stop(pauseARSession: false)
+      }
+    } catch {
+      // Carry on scanning the same section rather than leave the camera idle.
+      session.run(configuration: RoomCaptureSession.Configuration())
+      throw error
+    }
+
+    let closed: CapturedRoom?
+    do {
+      closed = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
+    } catch {
+      closed = latestRoom
+    }
+    if let closed = closed { completedRooms.append(closed) }
+    latestRoom = nil
+    instruction = nil
+    session.run(configuration: RoomCaptureSession.Configuration())
   }
 
   // MARK: - Photos
@@ -138,26 +232,61 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
 
     // RoomBuilder straightens walls and snaps objects. If it fails, the last
     // live room is still a usable, if rougher, result.
-    let room: CapturedRoom
+    var current: CapturedRoom?
     do {
-      room = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
+      current = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
     } catch {
-      guard let live = latestRoom else { throw error }
-      room = live
+      // With no earlier section to fall back on, the failure is the result.
+      if latestRoom == nil && completedRooms.isEmpty { throw error }
+      current = latestRoom
     }
+    let rooms = completedRooms + (current.map { [$0] } ?? [])
+    guard let first = rooms.first else { throw ScanError.nothingScanned }
 
     let usdz = folder.appendingPathComponent("scan.usdz")
     let json = folder.appendingPathComponent("scan.json")
     try? FileManager.default.removeItem(at: usdz)
-    try room.export(to: usdz)
-    try JSONEncoder().encode(room).write(to: json)
+
+    if rooms.count == 1 {
+      try first.export(to: usdz)
+      try JSONEncoder().encode(first).write(to: json)
+    } else {
+      try await exportSections(rooms, usdz: usdz, json: json)
+    }
 
     return [
       "usdzPath": usdz.path,
       "jsonPath": json.path,
       "bytes": fileSize(usdz) + fileSize(json),
-      "room": snapshot(of: room),
+      "room": snapshot(of: rooms, section: rooms.count),
     ]
+  }
+
+  /**
+   Writes a sectioned scan: the sections merged into one CapturedStructure
+   by StructureBuilder, as the 3D model and as `scan.json`.
+
+   If the merge fails (the sections did not overlap enough to join), the
+   sections are still kept: `scan.json` holds them as a structure with only
+   its `rooms`, which the server reader merges surface by surface, and the
+   3D model is the section with the most walls. Nothing scanned is lost; the
+   reviewer sees the joins.
+   */
+  private func exportSections(_ rooms: [CapturedRoom], usdz: URL, json: URL) async throws {
+    do {
+      let structure = try await StructureBuilder(options: [.beautifyObjects])
+        .capturedStructure(from: rooms)
+      try structure.export(to: usdz)
+      try JSONEncoder().encode(structure).write(to: json)
+    } catch {
+      let encoded = try rooms.map { room -> Any in
+        try JSONSerialization.jsonObject(with: JSONEncoder().encode(room))
+      }
+      try JSONSerialization.data(withJSONObject: ["rooms": encoded]).write(to: json)
+      let largest = rooms.max { $0.walls.count < $1.walls.count } ?? rooms[0]
+      try? FileManager.default.removeItem(at: usdz)
+      try largest.export(to: usdz)
+    }
   }
 
   private func fileSize(_ url: URL) -> Int {
@@ -167,19 +296,40 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
 
   // MARK: - RoomCaptureSessionDelegate
 
+  func captureSession(
+    _ session: RoomCaptureSession, didStartWith configuration: RoomCaptureSession.Configuration
+  ) {
+    forwardDelegate?.captureSession(session, didStartWith: configuration)
+  }
+
+  func captureSession(_ session: RoomCaptureSession, didAdd room: CapturedRoom) {
+    forwardDelegate?.captureSession(session, didAdd: room)
+  }
+
+  func captureSession(_ session: RoomCaptureSession, didChange room: CapturedRoom) {
+    forwardDelegate?.captureSession(session, didChange: room)
+  }
+
+  func captureSession(_ session: RoomCaptureSession, didRemove room: CapturedRoom) {
+    forwardDelegate?.captureSession(session, didRemove: room)
+  }
+
   func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
+    forwardDelegate?.captureSession(session, didUpdate: room)
     DispatchQueue.main.async { self.latestRoom = room }
   }
 
   func captureSession(
     _ session: RoomCaptureSession, didProvide instruction: RoomCaptureSession.Instruction
   ) {
+    forwardDelegate?.captureSession(session, didProvide: instruction)
     DispatchQueue.main.async { self.instruction = Self.describe(instruction) }
   }
 
   func captureSession(
     _ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?
   ) {
+    forwardDelegate?.captureSession(session, didEndWith: data, error: error)
     DispatchQueue.main.async {
       if let continuation = self.endContinuation {
         self.endContinuation = nil
@@ -221,11 +371,15 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
 
   // MARK: - Snapshot
 
-  /// The room projected onto the floor plane, as sent to Flutter.
-  private func snapshot(of room: CapturedRoom?) -> [String: Any] {
+  /// The scanned sections projected onto the floor plane, as sent to
+  /// Flutter: `rooms[i]` is section `i + 1`, and each wall says which
+  /// section it is in. All sections share the AR session's frame, so their
+  /// walls are put together as they are.
+  private func snapshot(of rooms: [CapturedRoom], section: Int) -> [String: Any] {
     var event: [String: Any] = [
       "type": "update",
       "elapsedMs": Int(currentElapsed() * 1000),
+      "section": section,
     ]
     if let instruction = instruction { event["instruction"] = instruction }
 
@@ -237,7 +391,7 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
       event["heading"] = Double(atan2(forward.z, forward.x))
     }
 
-    guard let room = room else {
+    guard !rooms.isEmpty else {
       event["walls"] = [Any]()
       event["objects"] = [Any]()
       event["coverage"] = 0.0
@@ -245,15 +399,26 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
       return event
     }
 
-    let walls = room.walls.map { Self.segment(of: $0) }
-    event["walls"] = zip(walls, room.walls).map { segment, surface in
+    var surfaces: [CapturedRoom.Surface] = []
+    var sections: [Int] = []
+    for (i, room) in rooms.enumerated() {
+      surfaces += room.walls
+      sections += Array(repeating: i + 1, count: room.walls.count)
+    }
+    // Earlier sections first, so an object's index stays put as later
+    // sections are scanned.
+    let objects = rooms.flatMap { $0.objects }
+
+    let walls = surfaces.map { Self.segment(of: $0) }
+    event["walls"] = walls.indices.map { i in
       [
-        "a": [Double(segment.a.x), Double(segment.a.y)],
-        "b": [Double(segment.b.x), Double(segment.b.y)],
-        "confidence": Self.name(of: surface.confidence),
+        "a": [Double(walls[i].a.x), Double(walls[i].a.y)],
+        "b": [Double(walls[i].b.x), Double(walls[i].b.y)],
+        "confidence": Self.name(of: surfaces[i].confidence),
+        "section": sections[i],
       ] as [String: Any]
     }
-    event["objects"] = room.objects.map { object in
+    event["objects"] = objects.map { object in
       Self.footprint(transform: object.transform, dimensions: object.dimensions)
         .map { [Double($0.x), Double($0.y)] }
     }
@@ -266,7 +431,7 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
      * — so `category` is only a hint. What makes an object a treadmill is
      * the surveyor naming it, which is what these let them do.
      */
-    event["detected"] = room.objects.enumerated().map { index, object in
+    event["detected"] = objects.enumerated().map { index, object in
       let t = object.transform
       let centre = simd_make_float3(t.columns.3)
       let x = simd_make_float3(t.columns.0)
@@ -286,10 +451,13 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
       ] as [String: Any]
     }
 
-    let (coverage, closed) = Self.coverage(walls: walls, surfaces: room.walls)
+    let (coverage, closed) = Self.coverage(walls: walls, surfaces: surfaces)
     event["coverage"] = coverage
     event["closed"] = closed
-    if let area = Self.floorArea(of: room) { event["areaM2"] = area }
+    // Each section's recognised floor. Overlap between sections is counted
+    // twice, so this is an estimate; the server measures the merged plan.
+    let areas = rooms.compactMap { Self.floorArea(of: $0) }
+    if !areas.isEmpty { event["areaM2"] = areas.reduce(0, +) }
     return event
   }
 
@@ -417,6 +585,22 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
       twice += p.x * q.y - q.x * p.y
     }
     return Double(abs(twice) / 2)
+  }
+}
+
+/// RoomCaptureView's delegate, only to stop it showing its finished-room
+/// preview when a section closes (F-01): the scan carries straight on, and
+/// the export is built by RoomScanner, not by the view. RoomCaptureView
+/// requires its delegate to support NSCoding; there is nothing to encode.
+final class SkipPresentation: NSObject, RoomCaptureViewDelegate {
+  override init() { super.init() }
+
+  required init?(coder: NSCoder) { super.init() }
+
+  func encode(with coder: NSCoder) {}
+
+  func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool {
+    false
   }
 }
 #endif

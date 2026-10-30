@@ -49,6 +49,23 @@ abstract class ScanSession extends ChangeNotifier {
   List<ScanTag> get tags => List<ScanTag>.unmodifiable(_tags);
   int get photos => _photos;
 
+  /// Whether a big floor can be scanned in sections (F-01).
+  bool get supportsSections => false;
+
+  /// The section being scanned now, counting from 1.
+  int get section => 1;
+
+  /// Closes the current section and starts the next, keeping everything
+  /// scanned so far on the one outline. Throws if it cannot.
+  Future<void> nextSection() async {
+    throw UnsupportedError('This scan cannot be split into sections.');
+  }
+
+  /// Width × length in metres of the walls scanned in the current section,
+  /// which is what the size limit applies to (F-04). The whole outline
+  /// when the scan has a single section.
+  Size? get sectionExtentM => scannedExtentM;
+
   void start();
   void pause();
 

@@ -52,11 +52,17 @@ class RoomScanWall {
     required this.start,
     required this.end,
     required this.confidence,
+    this.section = 1,
   });
 
   final Offset start;
   final Offset end;
   final RoomScanConfidence confidence;
+
+  /// Which section of a sectioned scan (F-01) the wall was found in,
+  /// counting from 1. Every section shares one frame, so walls from
+  /// different sections line up as they are.
+  final int section;
 }
 
 /// The live state of the scan, sent about ten times a second while it runs.
@@ -73,6 +79,7 @@ class RoomScanUpdate {
     this.heading,
     this.areaM2,
     this.instruction,
+    this.section = 1,
   });
 
   factory RoomScanUpdate.fromMap(Map<Object?, Object?> map) {
@@ -99,6 +106,7 @@ class RoomScanUpdate {
                 (RoomScanConfidence c) => c.name == w['confidence'],
                 orElse: () => RoomScanConfidence.low,
               ),
+              section: (w['section'] as num? ?? 1).toInt(),
             );
           }(),
       ],
@@ -117,6 +125,7 @@ class RoomScanUpdate {
       heading: (map['heading'] as num?)?.toDouble(),
       areaM2: (map['areaM2'] as num?)?.toDouble(),
       instruction: map['instruction'] as String?,
+      section: (map['section'] as num? ?? 1).toInt(),
     );
   }
 
@@ -154,6 +163,10 @@ class RoomScanUpdate {
 
   /// RoomPlan's coaching, e.g. "Slow down". Null when all is well.
   final String? instruction;
+
+  /// The section being scanned now, counting from 1 (F-01). [walls] holds
+  /// every section's walls; each says which section it came from.
+  final int section;
 }
 
 /// The files a finished scan leaves on the device.
@@ -273,8 +286,17 @@ class RoomScan {
     return path;
   }
 
-  /// Ends the scan, lets RoomPlan finalise the room, and exports it. Can
-  /// take a few seconds. The scan cannot be resumed afterwards.
+  /// Closes the section being scanned and starts the next one in the same
+  /// AR session (F-01), so a floor too big for one RoomPlan room is scanned
+  /// in parts that share one frame. The finished section is kept; the
+  /// sections are merged into one structure by [finish]. Takes a moment
+  /// while RoomPlan finalises the section.
+  static Future<void> nextSection() => _call<void>('nextSection');
+
+  /// Ends the scan, lets RoomPlan finalise the room, and exports it. With
+  /// several sections, they are merged into one structure first, and
+  /// `scan.json` holds that structure. Can take a few seconds. The scan
+  /// cannot be resumed afterwards.
   static Future<RoomScanExport> finish() async {
     final Map<Object?, Object?>? map = await _call<Map<Object?, Object?>>(
       'finish',
@@ -466,6 +488,76 @@ class EquipmentVideoPreview extends StatelessWidget {
     }
     return const UiKitView(
       viewType: 'flex/equipment_video_preview',
+      creationParamsCodec: StandardMessageCodec(),
+    );
+  }
+}
+
+/// One machine type the on-device classifier thinks a picture shows (F-07).
+@immutable
+class MachineTypeSuggestion {
+  const MachineTypeSuggestion({required this.label, required this.confidence});
+
+  factory MachineTypeSuggestion.fromMap(Map<Object?, Object?> map) =>
+      MachineTypeSuggestion(
+        label: map['label']! as String,
+        confidence: (map['confidence']! as num).toDouble(),
+      );
+
+  /// The model's class label, e.g. `treadmill`. Models are trained with the
+  /// app's machine type ids as labels.
+  final String label;
+
+  /// 0–1.
+  final double confidence;
+}
+
+/// Suggests a machine's type from a picture of it (F-07), with a Core ML
+/// image classifier run on the phone through Apple's Vision framework.
+/// Nothing leaves the device, so no outside service has to be hosted or
+/// kept in Australia.
+///
+/// The model is `MachineClassifier.mlmodel`, added to the Runner target in
+/// Xcode. Without it, or anywhere but iOS, there are simply no suggestions.
+class MachineClassifier {
+  const MachineClassifier._();
+
+  /// The likeliest types for the image at [imagePath], best first. Empty
+  /// when there is no model, the image cannot be read, or nothing is likely.
+  static Future<List<MachineTypeSuggestion>> suggest(String imagePath) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
+      return const <MachineTypeSuggestion>[];
+    }
+    try {
+      final List<Object?>? raw = await RoomScan._methods
+          .invokeMethod<List<Object?>>('suggestTypes', <String, Object?>{
+            'path': imagePath,
+          });
+      return <MachineTypeSuggestion>[
+        for (final Object? s in raw ?? const <Object?>[])
+          MachineTypeSuggestion.fromMap(s! as Map<Object?, Object?>),
+      ];
+    } catch (_) {
+      // A suggestion is only ever a help: no model, or a failure, means
+      // the surveyor names the machine as before.
+      return const <MachineTypeSuggestion>[];
+    }
+  }
+}
+
+/// The native RoomPlan / AR scanning viewfinder, as a Flutter platform view.
+/// Shows Apple's RoomCaptureView with live 3D wall wireframes and scanning lines
+/// on LiDAR devices, or a live camera feed on non-LiDAR devices.
+class RoomCapturePreview extends StatelessWidget {
+  const RoomCapturePreview({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
+      return const ColoredBox(color: Color(0xFF0D1518));
+    }
+    return const UiKitView(
+      viewType: 'flex/room_capture_view',
       creationParamsCodec: StandardMessageCodec(),
     );
   }

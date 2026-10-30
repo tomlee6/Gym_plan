@@ -26,6 +26,52 @@ class SimulatedScanSession extends ScanSession {
 
   double _walked = 0;
 
+  /// Sections (F-01), so the flow can be tried without a LiDAR device: a
+  /// new section carries on along the same outline, as a real one shares
+  /// the AR session's frame.
+  int _section = 1;
+  double _sectionStart = 0;
+
+  @override
+  bool get supportsSections => true;
+
+  @override
+  int get section => _section;
+
+  @override
+  Future<void> nextSection() async {
+    _section++;
+    _sectionStart = _walked;
+    notifyListeners();
+  }
+
+  /// The part of the outline walked since the current section began.
+  @override
+  Size? get sectionExtentM {
+    if (_section == 1) return scannedExtentM;
+    final List<WallSegment> walked = <WallSegment>[];
+    double start = 0;
+    for (final WallSegment w in FloorOutline.walls) {
+      final double from = ((_sectionStart - start) / w.length).clamp(0, 1);
+      final double to = ((_walked - start) / w.length).clamp(0, 1);
+      if (to > from) {
+        walked.add(
+          WallSegment(
+            Offset.lerp(w.start, w.end, from)!,
+            Offset.lerp(w.start, w.end, to)!,
+          ),
+        );
+      }
+      start += w.length;
+    }
+    if (walked.isEmpty) return null;
+    return PlanGeometry(
+      walls: walked,
+      frame: geometry.frame,
+      metresPerUnit: geometry.metresPerUnit,
+    ).wallExtentM;
+  }
+
   @override
   PlanGeometry get geometry => FloorOutline.geometry;
 

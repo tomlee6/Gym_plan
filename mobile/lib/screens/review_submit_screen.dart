@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../models/plan.dart';
 import '../models/scan.dart';
+import '../services/capture_service.dart';
 import '../services/upload_queue.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_toast.dart';
+import '../widgets/capture_fields.dart';
 import '../widgets/detail_widgets.dart';
 import '../widgets/floor_plan.dart';
 import '../widgets/hairline_container.dart';
@@ -15,12 +18,23 @@ import '../models/equipment.dart';
 import 'control_distance_screen.dart';
 import 'equipment_capture_screen.dart';
 
-/// Last look before the scan leaves the phone: the captured outline, any
-/// coverage warnings, and what was tagged and photographed.
+/// Last look before the scan leaves the phone: which facility and level it
+/// is, the captured outline, any coverage warnings, and what was tagged and
+/// photographed.
 class ReviewSubmitScreen extends StatefulWidget {
-  const ReviewSubmitScreen({super.key, required this.result, this.exportModel});
+  const ReviewSubmitScreen({
+    super.key,
+    required this.result,
+    this.facilities,
+    this.exportModel,
+  });
 
   final ScanResult result;
+
+  /// The account's facilities to pick from. The scan starts before they are
+  /// chosen, so this is where the surveyor confirms them. Omitted, only the
+  /// scan's own facility is offered.
+  final FacilityList? facilities;
 
   /// Ends the scan and writes the 3D model for upload. Omitted, or returning
   /// null, for a simulated scan.
@@ -31,16 +45,35 @@ class ReviewSubmitScreen extends StatefulWidget {
 }
 
 class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
+  /// The 3D model extrudes walls to this height, so keep it plausible for a
+  /// gym floor rather than accepting any number.
+  static const double _minHeightM = 2.0;
+  static const double _maxHeightM = 12.0;
+
   bool _submitting = false;
+
+  late Facility _facility = Facility(
+    id: widget.result.config.facilityId,
+    name: widget.result.config.facility,
+  );
+  late final TextEditingController _levelController = TextEditingController(
+    text: '${widget.result.config.level}',
+  );
+  late final TextEditingController _heightController = TextEditingController(
+    text: widget.result.config.heightM.toStringAsFixed(2),
+  );
+  final FocusNode _levelFocus = FocusNode();
+  final FocusNode _heightFocus = FocusNode();
+  String? _levelError;
+  String? _heightError;
 
   /// Machines marked and walkarounds recorded in the equipment step
   /// (CHANGE 3). They travel with the capture when it is submitted.
   List<Equipment> _equipment = const <Equipment>[];
   Map<String, EquipmentVideo> _videos = const <String, EquipmentVideo>{};
 
-  /// The equipment step has been finished. Submit stays disabled until it
-  /// is: a scan without equipment leaves the reviewer naming machines from
-  /// nothing but an unlabelled block on the plan.
+  /// The equipment step has been finished. It is optional: a scan can be
+  /// submitted without it, and the reviewer names the machines instead.
   bool _equipmentDone = false;
 
   /// Laser checks of the scan's scale (F-03). Optional, but two or more
@@ -48,6 +81,65 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
   List<ControlDistance> _controls = const <ControlDistance>[];
 
   ScanResult get _result => widget.result;
+
+  List<Facility> get _facilities {
+    final List<Facility> all =
+        widget.facilities?.facilities ?? const <Facility>[];
+    return all.contains(_facility) ? all : <Facility>[_facility, ...all];
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // The header names the level as it is typed.
+    _levelController.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _levelController.dispose();
+    _heightController.dispose();
+    _levelFocus.dispose();
+    _heightFocus.dispose();
+    super.dispose();
+  }
+
+  /// The details as entered, or null (with the errors shown) when they do
+  /// not check out.
+  ScanConfig? _validatedConfig() {
+    final int? level = int.tryParse(_levelController.text.trim());
+    final double? height = double.tryParse(_heightController.text.trim());
+
+    setState(() {
+      _levelError = level == null ? 'Enter the level.' : null;
+      if (height == null) {
+        _heightError = 'Enter the floor-to-floor height.';
+      } else if (height < _minHeightM || height > _maxHeightM) {
+        _heightError =
+            'Height must be between ${_minHeightM.toStringAsFixed(1)} and '
+            '${_maxHeightM.toStringAsFixed(1)} m.';
+      } else {
+        _heightError = null;
+      }
+    });
+    if (_levelError != null || _heightError != null) return null;
+
+    return ScanConfig(
+      accountId: _result.config.accountId,
+      facilityId: _facility.id,
+      facility: _facility.name,
+      level: level!,
+      heightM: height!,
+    );
+  }
+
+  /// The title as the details stand, e.g. "Northgate Fitness · Level 2".
+  String get _title {
+    final int? level = int.tryParse(_levelController.text.trim());
+    return level == null
+        ? _facility.name
+        : '${_facility.name} · ${levelLabel(level)}';
+  }
 
   /// (lead, detail) pairs, e.g. ("Inner east wall reads weak.", "3.4 m …").
   List<(String, String)> get _warnings {
@@ -74,6 +166,12 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
   }
 
   Future<void> _submit() async {
+    FocusScope.of(context).unfocus();
+    final ScanConfig? config = _validatedConfig();
+    if (config == null) {
+      showAppToast(context, 'Check the capture details.');
+      return;
+    }
     setState(() => _submitting = true);
 
     // A LiDAR scan is finalised and written to disk here, which can take a
@@ -97,7 +195,7 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
       // Writes the upload's manifest to disk before anything leaves the
       // phone, so the capture survives the app closing from here on.
       await UploadQueue.instance.enqueue(
-        _result.copyWith(controlDistances: _controls),
+        _result.copyWith(config: config, controlDistances: _controls),
         export: export,
         equipment: _equipment,
         videos: _videos,
@@ -182,11 +280,12 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
                       title: 'Review before submit',
                       // Area is only known once the floor is recognised.
                       subtitle: _result.areaM2 == null
-                          ? _result.config.title
-                          : '${_result.config.title} · '
-                                '${_result.areaM2!.round()} m²',
+                          ? _title
+                          : '$_title · ${_result.areaM2!.round()} m²',
                     ),
                     const SizedBox(height: 18),
+                    _buildDetails(),
+                    const SizedBox(height: 16),
                     HairlineContainer(
                       radius: 19,
                       fillColor: AppColors.planCanvas,
@@ -236,10 +335,7 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
                   PrimaryButton(
                     label: 'Submit scan',
                     busy: _submitting,
-                    // The equipment step comes before submitting: a scan
-                    // without it leaves the reviewer naming machines from
-                    // nothing but a block on the plan.
-                    onPressed: _equipmentDone ? _submit : null,
+                    onPressed: _submit,
                   ),
                   const SizedBox(height: 8),
                   SecondaryAction(
@@ -251,6 +347,84 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Facility, level and height: chosen here rather than before the scan,
+  /// so tapping New capture goes straight to the camera.
+  Widget _buildDetails() {
+    return HairlineContainer(
+      radius: 17,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text(
+            'Capture details',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          if (widget.facilities?.offline ?? false) ...<Widget>[
+            const SizedBox(height: 4),
+            const Text(
+              'Offline · facilities from the list saved on this iPhone. The '
+              'scan uploads once you are back online.',
+              style: AppTheme.footnote,
+            ),
+          ],
+          const SizedBox(height: 12),
+          LabelledField(
+            label: 'Facility',
+            child: PickerField(
+              icon: Icons.home_work_outlined,
+              value: _facility.name,
+              options: <String>[for (final Facility f in _facilities) f.name],
+              onChanged: (String name) => setState(
+                () => _facility = _facilities.firstWhere(
+                  (Facility f) => f.name == name,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Expanded(
+                child: LabelledField(
+                  label: 'Level',
+                  errorText: _levelError,
+                  child: NumericField(
+                    controller: _levelController,
+                    focusNode: _levelFocus,
+                    hasError: _levelError != null,
+                    semanticLabel: 'Level',
+                    onSubmitted: (_) => _heightFocus.requestFocus(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: LabelledField(
+                  label: 'Floor to floor',
+                  errorText: _heightError,
+                  child: NumericField(
+                    controller: _heightController,
+                    focusNode: _heightFocus,
+                    unit: 'm',
+                    decimal: true,
+                    hasError: _heightError != null,
+                    semanticLabel: 'Floor to floor height in metres',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -554,7 +728,7 @@ class _EquipmentStep extends StatelessWidget {
   final int marked;
   final int recorded;
 
-  /// The step has been finished, which is what unlocks Submit.
+  /// The step has been finished. Optional: Submit works either way.
   final bool done;
   final VoidCallback onOpen;
 
@@ -566,9 +740,9 @@ class _EquipmentStep extends StatelessWidget {
         '$marked machine${marked == 1 ? '' : 's'} · '
             '$recorded walkaround${recorded == 1 ? '' : 's'}',
       (false, 0) =>
-        'Required before submitting. Name each machine and walk once around it.',
-      (false, _) =>
-        '$marked marked, $recorded recorded · finish this step to submit',
+        'Optional. Name each machine and walk once around it, so the '
+            'reviewer does not have to.',
+      (false, _) => '$marked marked, $recorded recorded',
     };
     return HairlineContainer(
       radius: 12,
@@ -594,16 +768,11 @@ class _EquipmentStep extends StatelessWidget {
               const Icon(
                 Icons.circle_outlined,
                 size: 16,
-                color: AppColors.warning,
+                color: AppColors.textMuted,
               ),
           ],
         ),
-        subtitle: Text(
-          summary,
-          style: done
-              ? AppTheme.footnote
-              : AppTheme.footnote.copyWith(color: AppColors.warning),
-        ),
+        subtitle: Text(summary, style: AppTheme.footnote),
         trailing: const Icon(Icons.chevron_right, color: AppColors.textMuted),
         onTap: onOpen,
       ),

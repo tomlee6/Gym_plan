@@ -11,11 +11,23 @@ import 'package:mobile/services/simulated_scan_session.dart';
 import 'support/fake_backend.dart';
 import 'package:mobile/services/upload_queue.dart';
 import 'package:mobile/theme/app_theme.dart';
+import 'package:mobile/widgets/capture_fields.dart';
 import 'package:mobile/widgets/floor_plan.dart';
+import 'package:mobile/widgets/pressable.dart';
 import 'package:mobile/widgets/tag_sheet.dart';
+import 'package:room_scan/room_scan.dart';
 
 import 'phone_size.dart';
 import 'package:mobile/widgets/primary_button.dart';
+
+/// A labelled field on the review screen, e.g. "Level".
+Finder _fieldFor(String label) => find.ancestor(
+  of: find.text(label.toUpperCase()),
+  matching: find.byType(LabelledField),
+);
+
+/// The red record button that finishes the scan.
+final Finder _finishButton = find.byKey(const ValueKey<String>('finish-scan'));
 
 const ScanConfig _config = ScanConfig(
   facilityId: 'fac_northgate',
@@ -87,14 +99,14 @@ void main() {
     });
   });
 
-  testWidgets('shows the facility, a clock and rising coverage', (
+  testWidgets('shows the camera, a clock and rising coverage', (
     WidgetTester tester,
   ) async {
     final SimulatedScanSession session = SimulatedScanSession(config: _config);
     addTearDown(session.dispose);
     await _openScan(tester, session);
 
-    expect(find.text('Northgate · Level 2'), findsOneWidget);
+    expect(find.byType(RoomCapturePreview), findsOneWidget);
     expect(find.text('Coverage'), findsOneWidget);
     expect(find.text('Outline is not closed'), findsOneWidget);
 
@@ -219,7 +231,7 @@ void main() {
     addTearDown(session.dispose);
     await _openScan(tester, session);
 
-    await tester.tap(find.text('Finish scan'));
+    await tester.tap(_finishButton);
     await _advance(tester, const Duration(milliseconds: 400));
 
     expect(find.text('Finish without closing?'), findsOneWidget);
@@ -263,7 +275,7 @@ void main() {
     await _openScan(tester, session);
     await _advance(tester, const Duration(seconds: 2));
 
-    await tester.tap(find.text('Finish scan'));
+    await tester.tap(_finishButton);
     await _advance(tester, const Duration(milliseconds: 600));
     expect(find.byType(ReviewSubmitScreen), findsOneWidget);
     expect(session.running, isFalse);
@@ -276,7 +288,7 @@ void main() {
     await _tearDown(tester);
   });
 
-  testWidgets('the equipment step gates Submit, and says so', (
+  testWidgets('the equipment step is optional: submit works without it', (
     WidgetTester tester,
   ) async {
     final SimulatedScanSession session = SimulatedScanSession(
@@ -286,32 +298,43 @@ void main() {
     addTearDown(session.dispose);
     await _openScan(tester, session);
     await _advance(tester, const Duration(seconds: 2));
-    await tester.tap(find.text('Finish scan'));
+    await tester.tap(_finishButton);
     await _advance(tester, const Duration(milliseconds: 600));
 
-    PrimaryButton submit() => tester.widget<PrimaryButton>(
-      find.widgetWithText(PrimaryButton, 'Submit scan'),
-    );
-
-    // Before the step: Submit is dead, and the card says why.
-    expect(submit().onPressed, isNull);
-    expect(find.textContaining('Required before submitting'), findsOneWidget);
-
-    // Stepping back out of the equipment screen does not finish it.
-    await tester.tap(find.text('Capture Equipment 360°'));
-    await tester.pumpAndSettle();
-    // The app's own nav bar, which labels its back button.
-    await tester.tap(find.text('Review'));
-    await tester.pumpAndSettle();
+    // Offered, but not required.
+    expect(find.textContaining('Optional.'), findsOneWidget);
     expect(
-      submit().onPressed,
-      isNull,
-      reason: 'backing out does not finish the step',
+      tester
+          .widget<PrimaryButton>(
+            find.widgetWithText(PrimaryButton, 'Submit scan'),
+          )
+          .onPressed,
+      isNotNull,
     );
 
-    // Finishing it does.
+    await tester.tap(find.text('Submit scan'));
+    await _advance(tester, const Duration(seconds: 2));
+
+    expect(find.byType(UploadingScreen), findsOneWidget);
+    expect(fakes.uploads.enqueued, hasLength(1));
+
+    await _tearDown(tester);
+  });
+
+  testWidgets('finishing the equipment step shows what was recorded', (
+    WidgetTester tester,
+  ) async {
+    final SimulatedScanSession session = SimulatedScanSession(
+      config: _config,
+      unitsPerTick: 200,
+    );
+    addTearDown(session.dispose);
+    await _openScan(tester, session);
+    await _advance(tester, const Duration(seconds: 2));
+    await tester.tap(_finishButton);
+    await _advance(tester, const Duration(milliseconds: 600));
+
     await _finishEquipmentStep(tester);
-    expect(submit().onPressed, isNotNull);
     expect(find.text('No equipment on this level'), findsOneWidget);
 
     await _tearDown(tester);
@@ -328,22 +351,13 @@ void main() {
     await _openScan(tester, session);
     await _advance(tester, const Duration(seconds: 2));
 
-    await tester.tap(find.text('Finish scan'));
+    await tester.tap(_finishButton);
     await _advance(tester, const Duration(milliseconds: 600));
 
     // A closed lap with one weak wall: one warning, no override.
     expect(find.text('1 coverage warning'), findsOneWidget);
     expect(find.textContaining('Inner east wall reads weak.'), findsOneWidget);
 
-    // The equipment step comes first: Submit is dead until it is done.
-    expect(
-      tester
-          .widget<PrimaryButton>(
-            find.widgetWithText(PrimaryButton, 'Submit scan'),
-          )
-          .onPressed,
-      isNull,
-    );
     await _finishEquipmentStep(tester);
 
     await tester.tap(find.text('Submit scan'));
@@ -362,6 +376,51 @@ void main() {
     // A simulated scan has no model file to send.
     expect(fakes.uploads.exports.single, isNull);
     expect(UploadQueue.instance.active!.title, 'Northgate · Level 2');
+
+    await _tearDown(tester);
+  });
+
+  testWidgets('level and height are set on review and reach the upload', (
+    WidgetTester tester,
+  ) async {
+    final SimulatedScanSession session = SimulatedScanSession(
+      config: _config,
+      unitsPerTick: 200,
+    );
+    addTearDown(session.dispose);
+    await _openScan(tester, session);
+    await _advance(tester, const Duration(seconds: 2));
+    await tester.tap(_finishButton);
+    await _advance(tester, const Duration(milliseconds: 600));
+
+    expect(find.text('Capture details'), findsOneWidget);
+    final Finder level = _fieldFor('Level');
+    final Finder height = _fieldFor('Floor to floor');
+    expect(level, findsOneWidget);
+    expect(height, findsOneWidget);
+
+    Finder field(Finder labelled) =>
+        find.descendant(of: labelled, matching: find.byType(TextField));
+    await tester.enterText(field(level), '3');
+    await tester.enterText(field(height), '40');
+    await tester.pump();
+    expect(find.text('Northgate Fitness · Level 3 · 412 m²'), findsOneWidget);
+
+    // An implausible height stops the submit.
+    await _finishEquipmentStep(tester);
+    await tester.tap(find.text('Submit scan'));
+    await tester.pump();
+    expect(find.text('Height must be between 2.0 and 12.0 m.'), findsOneWidget);
+    expect(fakes.uploads.enqueued, isEmpty);
+
+    await tester.enterText(field(height), '4.5');
+    await tester.tap(find.text('Submit scan'));
+    await _advance(tester, const Duration(seconds: 2));
+
+    final ScanResult queued = fakes.uploads.enqueued.single;
+    expect(queued.config.level, 3);
+    expect(queued.config.heightM, 4.5);
+    expect(queued.config.facilityId, 'fac_northgate');
 
     await _tearDown(tester);
   });
@@ -403,14 +462,7 @@ void main() {
       expect(find.text('24.4 × 19.0 m'), findsOneWidget);
       expect(find.text(' / max 40 m'), findsOneWidget);
       expect(find.text('Too large for one scan'), findsNothing);
-      expect(
-        tester
-            .widget<PrimaryButton>(
-              find.widgetWithText(PrimaryButton, 'Finish scan'),
-            )
-            .onPressed,
-        isNotNull,
-      );
+      expect(tester.widget<Pressable>(_finishButton).onTap, isNotNull);
 
       await _tearDown(tester);
     });
@@ -428,14 +480,82 @@ void main() {
 
       expect(find.text('Too large for one scan'), findsOneWidget);
       expect(find.textContaining('scanned in sections'), findsOneWidget);
-      expect(
-        tester
-            .widget<PrimaryButton>(
-              find.widgetWithText(PrimaryButton, 'Finish scan'),
-            )
-            .onPressed,
-        isNull,
+      expect(tester.widget<Pressable>(_finishButton).onTap, isNull);
+
+      await _tearDown(tester);
+    });
+  });
+
+  group('sectioned scanning (F-01)', () {
+    testWidgets('a floor too big for one scan is finished in sections', (
+      WidgetTester tester,
+    ) async {
+      final SimulatedScanSession session = SimulatedScanSession(
+        config: _config,
+        unitsPerTick: 20,
       );
+      addTearDown(session.dispose);
+      await _openScan(tester, session, maxExtentM: 20);
+      // Far enough round that this section is past 20 m, not yet closed.
+      await _advance(tester, const Duration(seconds: 3));
+
+      expect(find.text('Too large for one scan'), findsOneWidget);
+      expect(find.textContaining('tap New section'), findsOneWidget);
+      expect(tester.widget<Pressable>(_finishButton).onTap, isNull);
+      expect(find.text('Section 2'), findsNothing);
+
+      await tester.tap(find.text('New section'));
+      await _advance(tester, const Duration(milliseconds: 400));
+      expect(find.text('Start a new section?'), findsOneWidget);
+      await tester.tap(find.text('New section').last);
+      await _advance(tester, const Duration(milliseconds: 400));
+
+      // The new section starts small: under the limit, so Finish is back.
+      expect(session.section, 2);
+      expect(find.text('Section 2'), findsOneWidget);
+      expect(find.text('Section extent'), findsOneWidget);
+      expect(find.text('Too large for one scan'), findsNothing);
+      expect(tester.widget<Pressable>(_finishButton).onTap, isNotNull);
+      // The outline is one walk: nothing scanned in section 1 was dropped.
+      expect(session.coverage, greaterThan(0));
+
+      await _tearDown(tester);
+    });
+
+    testWidgets('cancelling keeps scanning the same section', (
+      WidgetTester tester,
+    ) async {
+      final SimulatedScanSession session = SimulatedScanSession(
+        config: _config,
+        unitsPerTick: 20,
+      );
+      addTearDown(session.dispose);
+      await _openScan(tester, session);
+      await _advance(tester, const Duration(seconds: 1));
+
+      await tester.tap(find.text('New section'));
+      await _advance(tester, const Duration(milliseconds: 400));
+      await tester.tap(find.text('Cancel'));
+      await _advance(tester, const Duration(milliseconds: 400));
+
+      expect(session.section, 1);
+      expect(find.text('Scanned extent'), findsOneWidget);
+
+      await _tearDown(tester);
+    });
+
+    testWidgets('no section button before anything is scanned', (
+      WidgetTester tester,
+    ) async {
+      // A walk that has not taken a step yet.
+      final SimulatedScanSession session = SimulatedScanSession(
+        config: _config,
+        tickInterval: const Duration(hours: 1),
+      );
+      addTearDown(session.dispose);
+      await _openScan(tester, session);
+
+      expect(find.text('New section'), findsNothing);
 
       await _tearDown(tester);
     });
@@ -451,7 +571,7 @@ void main() {
     addTearDown(session.dispose);
     await _openScan(tester, session);
     await _advance(tester, const Duration(seconds: 2));
-    await tester.tap(find.text('Finish scan'));
+    await tester.tap(_finishButton);
     await _advance(tester, const Duration(milliseconds: 600));
 
     // None yet: encouraged, not required.

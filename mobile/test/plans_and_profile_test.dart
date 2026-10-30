@@ -9,11 +9,11 @@ import 'package:mobile/models/plan.dart';
 import 'package:mobile/screens/account_picker_screen.dart';
 import 'package:mobile/screens/home_screen.dart';
 import 'package:mobile/screens/login_screen.dart';
-import 'package:mobile/screens/new_capture_screen.dart';
 import 'package:mobile/screens/plan_ready_screen.dart';
 import 'package:mobile/screens/plan_rejected_screen.dart';
 import 'package:mobile/screens/plans_screen.dart';
 import 'package:mobile/screens/profile_screen.dart';
+import 'package:mobile/screens/scanning_screen.dart';
 import 'package:mobile/screens/uploading_screen.dart';
 import 'package:mobile/services/auth_session.dart';
 import 'package:mobile/services/profile_service.dart';
@@ -39,6 +39,14 @@ Future<void> _settle(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
   await tester.pumpAndSettle();
+}
+
+/// New capture goes straight into a scan, which ticks forever, so time is
+/// stepped rather than settled.
+Future<void> _startCapture(WidgetTester tester) async {
+  for (int i = 0; i < 20; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 const Plan _riverside = Plan(
@@ -184,21 +192,22 @@ void main() {
       expect(find.text('Recorded'), findsOneWidget);
     });
 
-    testWidgets('recapture opens setup on the same facility and level', (
+    testWidgets('recapture starts a scan on the same facility and level', (
       WidgetTester tester,
     ) async {
       await _pump(tester, const PlanRejectedScreen(plan: _riverside));
       await _settle(tester);
 
       await tester.tap(find.text('Start recapture'));
-      await _settle(tester);
+      await _startCapture(tester);
 
-      final NewCaptureScreen setup = tester.widget<NewCaptureScreen>(
-        find.byType(NewCaptureScreen),
+      final ScanningScreen scan = tester.widget<ScanningScreen>(
+        find.byType(ScanningScreen),
       );
-      expect(setup.initialFacility, 'Riverside Gym');
-      expect(setup.initialLevel, '0');
-      expect(find.text('Riverside Gym'), findsOneWidget);
+      expect(scan.config.facility, 'Riverside Gym');
+      expect(scan.config.level, 0);
+
+      await tester.pumpWidget(const SizedBox());
     });
 
     testWidgets('a plan that no longer exists says so', (
@@ -394,13 +403,15 @@ void main() {
       await tester.pump();
 
       await tester.tap(find.text('Start the next level'));
-      await _settle(tester);
+      await _startCapture(tester);
 
-      final NewCaptureScreen setup = tester.widget<NewCaptureScreen>(
-        find.byType(NewCaptureScreen),
+      final ScanningScreen scan = tester.widget<ScanningScreen>(
+        find.byType(ScanningScreen),
       );
-      expect(setup.initialFacility, 'Northgate Fitness');
-      expect(setup.initialLevel, '3');
+      expect(scan.config.facility, 'Northgate Fitness');
+      expect(scan.config.level, 3);
+
+      await tester.pumpWidget(const SizedBox());
     });
   });
 

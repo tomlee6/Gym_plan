@@ -61,10 +61,29 @@ Map<String, Object?> _wall(
   double x2,
   double y2, {
   String confidence = 'high',
+  int? section,
 }) => <String, Object?>{
   'a': <double>[x1, y1],
   'b': <double>[x2, y2],
   'confidence': confidence,
+  'section': ?section,
+};
+
+/// A long floor in two sections (F-01): section 1 from x = 0 to 20, section
+/// 2 (scanning now) from x = 20 to 30, in the one shared frame.
+Map<String, Object?> _sectioned() => <String, Object?>{
+  'type': 'update',
+  'elapsedMs': 120000,
+  'section': 2,
+  'walls': <Object?>[
+    _wall(0, 0, 20, 0, section: 1),
+    _wall(0, 6, 20, 6, section: 1),
+    _wall(20, 0, 30, 0, section: 2),
+    _wall(20, 6, 30, 6, section: 2),
+  ],
+  'objects': <Object?>[],
+  'coverage': 0.5,
+  'closed': false,
 };
 
 /// Stands in for the Swift plugin: records calls and lets a test push
@@ -148,6 +167,14 @@ void main() {
       expect(u.walls, isEmpty);
       expect(u.position, isNull);
       expect(u.closed, isFalse);
+      // An update from before sections existed is one section.
+      expect(u.section, 1);
+    });
+
+    test('says which section each wall is in (F-01)', () {
+      final RoomScanUpdate u = RoomScanUpdate.fromMap(_sectioned());
+      expect(u.section, 2);
+      expect(u.walls.map((RoomScanWall w) => w.section), <int>[1, 1, 2, 2]);
     });
   });
 
@@ -185,6 +212,34 @@ void main() {
       // The frame covers the room plus a margin.
       expect(session.geometry.frame.contains(Offset.zero), isTrue);
       expect(session.geometry.frame.contains(const Offset(10, 6)), isTrue);
+    });
+
+    test('a new section is asked of the native scan (F-01)', () async {
+      final LidarScanSession session = LidarScanSession(config: _config);
+      addTearDown(session.dispose);
+      session.start();
+      await pumpEventQueue();
+
+      expect(session.supportsSections, isTrue);
+      await session.nextSection();
+      expect(native.calls, contains('nextSection'));
+    });
+
+    test('the size limit measures only the current section', () async {
+      final LidarScanSession session = LidarScanSession(config: _config);
+      addTearDown(session.dispose);
+      session.start();
+      await pumpEventQueue();
+
+      native.send(_sectioned());
+      await pumpEventQueue();
+
+      expect(session.section, 2);
+      // Both sections are on the outline...
+      expect(session.geometry.walls, hasLength(4));
+      expect(session.scannedExtentM, const Size(30, 6));
+      // ...but only section 2, from x = 20 to 30, counts against the limit.
+      expect(session.sectionExtentM, const Size(10, 6));
     });
 
     test('pause and resume reach the native scan', () async {
@@ -346,7 +401,8 @@ void main() {
       native.send(_room(eastConfidence: 'low', instruction: 'Slow down'));
       await settle(tester);
 
-      expect(find.text('Slow down'), findsOneWidget);
+      // Apple's RoomCaptureView shows its own coaching over the camera.
+      expect(find.text('Slow down'), findsNothing);
       expect(find.text('93%'), findsOneWidget);
       expect(find.text('01:05'), findsOneWidget);
       expect(find.text('One wall reads weak'), findsOneWidget);
@@ -366,7 +422,7 @@ void main() {
 
       expect(find.text('Scanning stopped'), findsOneWidget);
       expect(find.text('Camera access is off.'), findsOneWidget);
-      await tester.tap(find.text('Finish scan'));
+      await tester.tap(find.byKey(const ValueKey<String>('finish-scan')));
       await settle(tester);
       expect(find.text('Finish without closing?'), findsNothing);
     });
@@ -378,7 +434,7 @@ void main() {
       native.send(_room());
       await settle(tester);
 
-      await tester.tap(find.text('Finish scan'));
+      await tester.tap(find.byKey(const ValueKey<String>('finish-scan')));
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
       expect(find.text('Review before submit'), findsOneWidget);

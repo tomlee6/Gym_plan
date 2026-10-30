@@ -52,6 +52,40 @@ class LidarScanSession extends ScanSession {
   String? get error => _error;
 
   @override
+  bool get supportsSections => true;
+
+  @override
+  int get section => _latest.section;
+
+  @override
+  Future<void> nextSection() async {
+    if (_ended || _error != null) {
+      throw StateError('The scan has ended.');
+    }
+    // A failure here leaves the current section scanning, so it is passed
+    // back to the screen to say so rather than ending the scan.
+    await RoomScan.nextSection();
+  }
+
+  @override
+  Size? get sectionExtentM {
+    final List<RoomScanWall> walls = _latest.walls;
+    if (walls.every((RoomScanWall w) => w.section == _latest.section)) {
+      return scannedExtentM;
+    }
+    final List<WallSegment> current = <WallSegment>[
+      for (int i = 0; i < walls.length && i < _geometry.walls.length; i++)
+        if (walls[i].section == _latest.section) _geometry.walls[i],
+    ];
+    if (current.isEmpty) return null;
+    return PlanGeometry(
+      walls: current,
+      frame: _geometry.frame,
+      metresPerUnit: _geometry.metresPerUnit,
+    ).wallExtentM;
+  }
+
+  @override
   void start() {
     if (_ended || _error != null) return;
     _running = true;

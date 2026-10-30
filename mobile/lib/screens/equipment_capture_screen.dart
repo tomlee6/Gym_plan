@@ -11,6 +11,7 @@ import '../widgets/hairline_container.dart';
 import '../widgets/nav_bar.dart';
 import '../widgets/primary_button.dart';
 import '../services/equipment_recording.dart';
+import '../services/machine_type_suggester.dart';
 import '../services/walk_coverage.dart';
 import '../widgets/coverage_ring.dart';
 
@@ -52,6 +53,65 @@ class _EquipmentCaptureScreenState extends State<EquipmentCaptureScreen> {
     widget.videos,
   );
 
+  /// Type suggestions from each machine's walkaround (F-07), by equipment
+  /// id. Shown for the surveyor to accept; never applied on their own.
+  Map<String, List<MachineTypeSuggestion>> _suggestions =
+      <String, List<MachineTypeSuggestion>>{};
+
+  @override
+  void initState() {
+    super.initState();
+    // Walkarounds recorded on an earlier visit to this screen.
+    for (final MapEntry<String, EquipmentVideo> v in _videos.entries) {
+      unawaited(_suggestFor(v.key, v.value));
+    }
+  }
+
+  /// The top suggestion for [equipment], when it differs from the type it
+  /// already has.
+  MachineTypeSuggestion? _suggestionFor(Equipment equipment) {
+    final MachineTypeSuggestion? top =
+        _suggestions[equipment.equipmentId]?.firstOrNull;
+    return top == null || top.label == equipment.type ? null : top;
+  }
+
+  /// Classifies the walkaround's poster frame on the phone. A simulated
+  /// take has no picture, so nothing is suggested for it.
+  Future<void> _suggestFor(String equipmentId, EquipmentVideo video) async {
+    final String? frame = video.thumbnailPath;
+    if (video.simulated || frame == null) return;
+    final List<MachineTypeSuggestion> found = await MachineTypeSuggester
+        .instance
+        .suggest(frame);
+    if (!mounted || found.isEmpty) return;
+    // A retake or removal since the request makes it stale.
+    if (_videos[equipmentId]?.path != video.path) return;
+    setState(() {
+      _suggestions = Map<String, List<MachineTypeSuggestion>>.of(_suggestions)
+        ..[equipmentId] = found;
+    });
+  }
+
+  /// The surveyor accepted a suggestion. The name follows the type unless
+  /// it has been typed over.
+  void _applyType(Equipment equipment, String type) {
+    final bool defaultName =
+        equipment.name.isEmpty ||
+        equipment.name == equipmentLabel(equipment.type);
+    setState(() {
+      _equipment = <Equipment>[
+        for (final Equipment e in _equipment)
+          if (e.equipmentId == equipment.equipmentId)
+            e.copyWith(
+              type: type,
+              name: defaultName ? equipmentLabel(type) : e.name,
+            )
+          else
+            e,
+      ];
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<RoomScanObject> unmarked = _unmarkedObjects();
@@ -87,6 +147,8 @@ class _EquipmentCaptureScreenState extends State<EquipmentCaptureScreen> {
                     _MachineCard(
                       equipment: e,
                       video: _videos[e.equipmentId],
+                      suggestion: _suggestionFor(e),
+                      onUseSuggestion: (String type) => _applyType(e, type),
                       onRecord: () => _record(e),
                       onRename: () => _rename(e),
                       onRemove: () => _remove(e),
@@ -244,6 +306,9 @@ class _EquipmentCaptureScreenState extends State<EquipmentCaptureScreen> {
     final _Named? named = await _askName(
       type: equipment.type,
       name: equipment.name,
+      suggestions:
+          _suggestions[equipment.equipmentId] ??
+          const <MachineTypeSuggestion>[],
     );
     if (named == null) return;
     setState(() {
@@ -266,16 +331,22 @@ class _EquipmentCaptureScreenState extends State<EquipmentCaptureScreen> {
           .toList();
       _videos = Map<String, EquipmentVideo>.of(_videos)
         ..remove(equipment.equipmentId);
+      _suggestions = Map<String, List<MachineTypeSuggestion>>.of(_suggestions)
+        ..remove(equipment.equipmentId);
     });
   }
 
-  Future<_Named?> _askName({String? type, String? name}) =>
-      showModalBottomSheet<_Named>(
-        context: context,
-        backgroundColor: AppColors.surface,
-        isScrollControlled: true,
-        builder: (_) => _NameSheet(type: type, name: name),
-      );
+  Future<_Named?> _askName({
+    String? type,
+    String? name,
+    List<MachineTypeSuggestion> suggestions = const <MachineTypeSuggestion>[],
+  }) => showModalBottomSheet<_Named>(
+    context: context,
+    backgroundColor: AppColors.surface,
+    isScrollControlled: true,
+    builder: (_) =>
+        _NameSheet(type: type, name: name, suggestions: suggestions),
+  );
 
   Future<void> _record(Equipment equipment) async {
     final EquipmentVideo? recorded = await Navigator.of(context)
@@ -291,7 +362,11 @@ class _EquipmentCaptureScreenState extends State<EquipmentCaptureScreen> {
     setState(() {
       _videos = Map<String, EquipmentVideo>.of(_videos)
         ..[equipment.equipmentId] = recorded;
+      // A retake gets fresh suggestions from its own picture.
+      _suggestions = Map<String, List<MachineTypeSuggestion>>.of(_suggestions)
+        ..remove(equipment.equipmentId);
     });
+    unawaited(_suggestFor(equipment.equipmentId, recorded));
   }
 }
 
@@ -365,10 +440,17 @@ class _MachineCard extends StatelessWidget {
     required this.onRecord,
     required this.onRename,
     required this.onRemove,
+    this.suggestion,
+    this.onUseSuggestion,
   });
 
   final Equipment equipment;
   final EquipmentVideo? video;
+
+  /// What the walkaround's picture looks like (F-07), when that differs
+  /// from the type given.
+  final MachineTypeSuggestion? suggestion;
+  final ValueChanged<String>? onUseSuggestion;
   final VoidCallback onRecord;
   final VoidCallback onRename;
   final VoidCallback onRemove;
@@ -462,6 +544,31 @@ class _MachineCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (suggestion case final MachineTypeSuggestion s?)
+                Row(
+                  children: <Widget>[
+                    const Icon(
+                      Icons.auto_awesome_outlined,
+                      size: 14,
+                      color: AppColors.textMuted,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Looks like: ${equipmentLabel(s.label)} '
+                        '(${(s.confidence * 100).round()}%)',
+                        style: const TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => onUseSuggestion?.call(s.label),
+                      child: const Text('Use'),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),
@@ -479,10 +586,18 @@ class _Named {
 /// Naming a machine. The type is a free text field with the catalogue as
 /// suggestions, so a gym may use a machine nothing else has heard of.
 class _NameSheet extends StatefulWidget {
-  const _NameSheet({this.type, this.name});
+  const _NameSheet({
+    this.type,
+    this.name,
+    this.suggestions = const <MachineTypeSuggestion>[],
+  });
 
   final String? type;
   final String? name;
+
+  /// What the walkaround's picture looks like (F-07), best first. Offered
+  /// above the catalogue; choosing one is the same as choosing a type.
+  final List<MachineTypeSuggestion> suggestions;
 
   @override
   State<_NameSheet> createState() => _NameSheetState();
@@ -515,7 +630,9 @@ class _NameSheetState extends State<_NameSheet> {
   }
 
   @override
-  Widget build(BuildContext context) => Padding(
+  // Scrolls, so the sheet still fits a small phone with the keyboard up and
+  // the walkaround's suggestions above the catalogue.
+  Widget build(BuildContext context) => SingleChildScrollView(
     padding: EdgeInsets.fromLTRB(
       16,
       16,
@@ -534,6 +651,30 @@ class _NameSheetState extends State<_NameSheet> {
             fontWeight: FontWeight.w600,
           ),
         ),
+        if (widget.suggestions.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 12),
+          const Text(
+            'Suggested from the walkaround',
+            style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              for (final MachineTypeSuggestion s in widget.suggestions)
+                ChoiceChip(
+                  avatar: const Icon(Icons.auto_awesome_outlined, size: 16),
+                  label: Text(
+                    '${equipmentLabel(s.label)} '
+                    '${(s.confidence * 100).round()}%',
+                  ),
+                  selected: _type.text == s.label,
+                  onSelected: (_) => _choose(s.label),
+                ),
+            ],
+          ),
+        ],
         const SizedBox(height: 12),
         Wrap(
           spacing: 8,

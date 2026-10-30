@@ -406,8 +406,11 @@ class ScanResult {
 
   double? get areaM2 => geometry.areaM2;
 
-  ScanResult copyWith({List<ControlDistance>? controlDistances}) => ScanResult(
-    config: config,
+  ScanResult copyWith({
+    ScanConfig? config,
+    List<ControlDistance>? controlDistances,
+  }) => ScanResult(
+    config: config ?? this.config,
     geometry: geometry,
     coverage: coverage,
     closed: closed,
