@@ -1,9 +1,11 @@
 /**
- * Cognito's sign-in pages in the Flex Gym Scan colours (sign-in-style.ts).
- * Cognito refuses CSS outside its list of classes and properties, and a
- * refusal fails the Auth stack's deployment, so the list is held here, as
- * docs.aws.amazon.com/cognito/latest/developerguide/hosted-ui-classic-branding.html
- * gives it.
+ * Cognito's sign-in pages in the Flex Gym Scan colours (sign-in-style.ts):
+ * managed login with a branding style.
+ *
+ * Cognito ignores keys outside its schema rather than refusing them, so a
+ * misspelt key would deploy cleanly and do nothing. Every key path is held
+ * here to those of the full example in
+ * docs.aws.amazon.com/cognito-user-identity-pools/latest/APIReference/API_CreateManagedLoginBranding.html.
  *
  * Run: npm test
  */
@@ -14,70 +16,153 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import { App } from 'aws-cdk-lib';
 import { buildApp } from '../lib/app';
-import { BRAND, SIGN_IN_CSS } from '../lib/sign-in-style';
+import { BRAND, MANAGED_LOGIN_SETTINGS, rgba } from '../lib/sign-in-style';
 
-/** Each class Cognito takes, and the properties it takes on it. */
-const ALLOWED: Record<string, string[]> = {
-  'background-customizable': ['background-color'],
-  'banner-customizable': ['padding', 'background-color'],
-  'errorMessage-customizable': ['margin', 'padding', 'font-size', 'width', 'background', 'border', 'color', 'box-sizing'],
-  'idpButton-customizable': ['height', 'width', 'text-align', 'margin-bottom', 'color', 'background-color', 'border-color'],
-  'idpButton-customizable:hover': ['color', 'background-color'],
-  'idpDescription-customizable': ['padding-top', 'padding-bottom', 'display', 'font-size', 'color'],
-  'inputField-customizable': ['width', 'height', 'color', 'background-color', 'border'],
-  'inputField-customizable:focus': ['border-color', 'outline'],
-  'label-customizable': ['font-weight', 'color'],
-  'legalText-customizable': ['color', 'font-size'],
-  'logo-customizable': ['max-width', 'max-height', 'background-color'],
-  'passwordCheck-notValid-customizable': ['color'],
-  'passwordCheck-valid-customizable': ['color'],
-  'socialButton-customizable': ['height', 'text-align', 'width', 'margin-bottom'],
-  'submitButton-customizable': ['font-size', 'font-weight', 'margin', 'width', 'height', 'color', 'background-color'],
-  'submitButton-customizable:hover': ['color', 'background-color'],
-  'textDescription-customizable': ['padding-top', 'padding-bottom', 'display', 'font-size', 'color'],
+/**
+ * The parent paths of AWS's example, each with the keys allowed under it.
+ * `*Mode` blocks and state blocks (defaults, hover, ...) are expanded from
+ * the example's own nesting.
+ */
+const MODES = ['darkMode', 'lightMode'];
+const KEYS: Record<string, string[]> = {
+  '': ['categories', 'componentClasses', 'components'],
+  categories: ['auth', 'form', 'global', 'signUp'],
+  'categories.auth': ['authMethodOrder', 'federation'],
+  'categories.auth.federation': ['interfaceStyle', 'order'],
+  'categories.form': ['displayGraphics', 'instructions', 'languageSelector', 'location', 'sessionTimerDisplay'],
+  'categories.form.instructions': ['enabled'],
+  'categories.form.languageSelector': ['enabled'],
+  'categories.form.location': ['horizontal', 'vertical'],
+  'categories.global': ['colorSchemeMode', 'pageFooter', 'pageHeader', 'spacingDensity'],
+  'categories.global.pageFooter': ['enabled'],
+  'categories.global.pageHeader': ['enabled'],
+  'categories.signUp': ['acceptanceElements'],
+  componentClasses: [
+    'buttons', 'divider', 'dropDown', 'focusState', 'idpButtons', 'input',
+    'inputDescription', 'inputLabel', 'link', 'optionControls', 'statusIndicator',
+  ],
+  'componentClasses.buttons': ['borderRadius'],
+  'componentClasses.divider': MODES,
+  'componentClasses.divider.*': ['borderColor'],
+  'componentClasses.dropDown': ['borderRadius', ...MODES],
+  'componentClasses.dropDown.*': ['defaults', 'hover', 'match'],
+  'componentClasses.dropDown.*.defaults': ['itemBackgroundColor'],
+  'componentClasses.dropDown.*.hover': ['itemBackgroundColor', 'itemBorderColor', 'itemTextColor'],
+  'componentClasses.dropDown.*.match': ['itemBackgroundColor', 'itemTextColor'],
+  'componentClasses.focusState': MODES,
+  'componentClasses.focusState.*': ['borderColor'],
+  'componentClasses.idpButtons': ['icons'],
+  'componentClasses.idpButtons.icons': ['enabled'],
+  'componentClasses.input': ['borderRadius', ...MODES],
+  'componentClasses.input.*': ['defaults', 'placeholderColor'],
+  'componentClasses.input.*.defaults': ['backgroundColor', 'borderColor'],
+  'componentClasses.inputDescription': MODES,
+  'componentClasses.inputDescription.*': ['textColor'],
+  'componentClasses.inputLabel': MODES,
+  'componentClasses.inputLabel.*': ['textColor'],
+  'componentClasses.link': MODES,
+  'componentClasses.link.*': ['defaults', 'hover'],
+  'componentClasses.link.*.defaults': ['textColor'],
+  'componentClasses.link.*.hover': ['textColor'],
+  'componentClasses.optionControls': MODES,
+  'componentClasses.optionControls.*': ['defaults', 'selected'],
+  'componentClasses.optionControls.*.defaults': ['backgroundColor', 'borderColor'],
+  'componentClasses.optionControls.*.selected': ['backgroundColor', 'foregroundColor'],
+  'componentClasses.statusIndicator': MODES,
+  'componentClasses.statusIndicator.*': ['error', 'pending', 'success', 'warning'],
+  'componentClasses.statusIndicator.*.error': ['backgroundColor', 'borderColor', 'indicatorColor'],
+  'componentClasses.statusIndicator.*.pending': ['indicatorColor'],
+  'componentClasses.statusIndicator.*.success': ['backgroundColor', 'borderColor', 'indicatorColor'],
+  'componentClasses.statusIndicator.*.warning': ['backgroundColor', 'borderColor', 'indicatorColor'],
+  components: [
+    'alert', 'favicon', 'form', 'idpButton', 'pageBackground', 'pageFooter', 'pageHeader',
+    'pageText', 'phoneNumberSelector', 'primaryButton', 'secondaryButton',
+  ],
+  'components.alert': ['borderRadius', ...MODES],
+  'components.alert.*': ['error'],
+  'components.alert.*.error': ['backgroundColor', 'borderColor'],
+  'components.favicon': ['enabledTypes'],
+  'components.form': ['backgroundImage', 'borderRadius', 'logo', ...MODES],
+  'components.form.backgroundImage': ['enabled'],
+  'components.form.*': ['backgroundColor', 'borderColor'],
+  'components.form.logo': ['enabled', 'formInclusion', 'location', 'position'],
+  'components.idpButton': ['custom', 'standard'],
+  'components.idpButton.custom': [],
+  'components.idpButton.standard': MODES,
+  'components.idpButton.standard.*': ['active', 'defaults', 'hover'],
+  'components.idpButton.standard.*.active': ['backgroundColor', 'borderColor', 'textColor'],
+  'components.idpButton.standard.*.defaults': ['backgroundColor', 'borderColor', 'textColor'],
+  'components.idpButton.standard.*.hover': ['backgroundColor', 'borderColor', 'textColor'],
+  'components.pageBackground': ['image', ...MODES],
+  'components.pageBackground.image': ['enabled'],
+  'components.pageBackground.*': ['color'],
+  'components.pageFooter': ['backgroundImage', 'logo', ...MODES],
+  'components.pageFooter.backgroundImage': ['enabled'],
+  'components.pageFooter.logo': ['enabled', 'location'],
+  'components.pageFooter.*': ['background', 'borderColor'],
+  'components.pageFooter.*.background': ['color'],
+  'components.pageHeader': ['backgroundImage', 'logo', ...MODES],
+  'components.pageHeader.backgroundImage': ['enabled'],
+  'components.pageHeader.logo': ['enabled', 'location'],
+  'components.pageHeader.*': ['background', 'borderColor'],
+  'components.pageHeader.*.background': ['color'],
+  'components.pageText': MODES,
+  'components.pageText.*': ['bodyColor', 'descriptionColor', 'headingColor'],
+  'components.phoneNumberSelector': ['displayType'],
+  'components.primaryButton': MODES,
+  'components.primaryButton.*': ['active', 'defaults', 'disabled', 'hover'],
+  'components.primaryButton.*.active': ['backgroundColor', 'textColor'],
+  'components.primaryButton.*.defaults': ['backgroundColor', 'textColor'],
+  'components.primaryButton.*.disabled': ['backgroundColor', 'borderColor'],
+  'components.primaryButton.*.hover': ['backgroundColor', 'textColor'],
+  'components.secondaryButton': MODES,
+  'components.secondaryButton.*': ['active', 'defaults', 'hover'],
+  'components.secondaryButton.*.active': ['backgroundColor', 'borderColor', 'textColor'],
+  'components.secondaryButton.*.defaults': ['backgroundColor', 'borderColor', 'textColor'],
+  'components.secondaryButton.*.hover': ['backgroundColor', 'borderColor', 'textColor'],
 };
 
-/** `.class { prop: value; ... }` lines as [class, [[prop, value]]]. */
-function parse(css: string): [string, [string, string][]][] {
-  return css.split('\n').map((line) => {
-    const m = line.match(/^\.([\w:-]+) \{ (.*) \}$/);
-    assert.ok(m, `not one rule: ${line}`);
-    const props = m[2]
-      .split(';')
-      .map((d) => d.trim())
-      .filter(Boolean)
-      .map((d) => d.split(':').map((s) => s.trim()) as [string, string]);
-    return [m[1], props];
-  });
+/** Every [path, value] pair under plain objects; arrays are leaves. */
+function walk(node: unknown, at: string[] = []): [string[], unknown][] {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return [[at, node]];
+  const out: [string[], unknown][] = [[at, node]];
+  for (const [k, v] of Object.entries(node)) out.push(...walk(v, [...at, k]));
+  return out;
 }
 
-test('uses only the classes and properties Cognito takes, within its limits', () => {
-  assert.ok(Buffer.byteLength(SIGN_IN_CSS) <= 3 * 1024, 'at most 3 KB');
-  assert.doesNotMatch(SIGN_IN_CSS, /@(import|supports|page|media)|javascript|<|url\(/i);
-  for (const [cls, props] of parse(SIGN_IN_CSS)) {
-    assert.ok(ALLOWED[cls], `Cognito does not take .${cls}`);
-    for (const [prop, value] of props) {
-      assert.ok(ALLOWED[cls].includes(prop), `Cognito does not take ${prop} on .${cls}`);
-      if (prop === 'height') assert.match(value, /^\d+px$/, `.${cls} height in px`);
-      if (prop === 'width') assert.match(value, /^\d+%$/, `.${cls} width in percent`);
-      if (prop === 'border') assert.match(value, /^\d+px (solid|none) #[0-9a-f]{6}$/, `.${cls} border`);
-      if ((cls === 'banner-customizable' && prop === 'padding') || (cls === 'submitButton-customizable' && prop === 'margin')) {
-        assert.match(value, /^(\d+px ){3}\d+px$/, `.${cls} ${prop} takes four values`);
-      }
-      if (cls === 'submitButton-customizable' && prop === 'font-weight') assert.match(value, /^(bold|italic|normal)$/);
-      if (cls === 'label-customizable' && prop === 'font-weight') assert.match(value, /^[1-9]00$/);
+/** 'components.form.darkMode' → 'components.form.*'. */
+const pattern = (at: string[]) => at.map((k) => (MODES.includes(k) ? '*' : k)).join('.');
+
+test('every key is one Cognito knows, in the place it expects it', () => {
+  for (const [at, value] of walk(MANAGED_LOGIN_SETTINGS)) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const allowed = KEYS[pattern(at)];
+    assert.ok(allowed, `no such block in Cognito's schema: ${at.join('.') || '(top)'}`);
+    for (const key of Object.keys(value)) {
+      assert.ok(allowed.includes(key), `Cognito does not take ${key} under ${at.join('.') || '(top)'}`);
     }
   }
 });
 
-test('in the brand colours: the dark strip and the teal button', () => {
-  const rules = new Map(parse(SIGN_IN_CSS).map(([cls, props]) => [cls, new Map(props)]));
-  assert.equal(rules.get('banner-customizable')!.get('background-color'), BRAND.ink);
-  assert.equal(rules.get('submitButton-customizable')!.get('background-color'), BRAND.accent);
-  assert.equal(rules.get('inputField-customizable:focus')!.get('border-color'), BRAND.accent);
+test('colours are RRGGBBAA hex without a #', () => {
+  for (const [at, value] of walk(MANAGED_LOGIN_SETTINGS)) {
+    const key = at[at.length - 1] ?? '';
+    if (/colou?r$/i.test(key)) assert.match(String(value), /^[0-9a-f]{8}$/, at.join('.'));
+  }
+  assert.equal(rgba('#00CAB2'), '00cab2ff');
 });
 
-test('the Auth stack gives it to every app client, once the domain exists', () => {
+test('a dark page in the brand colours, with the teal button', () => {
+  const s = MANAGED_LOGIN_SETTINGS;
+  assert.equal(s.categories.global.colorSchemeMode, 'DARK');
+  assert.equal(s.components.pageBackground.darkMode.color, rgba(BRAND.ink));
+  assert.equal(s.components.primaryButton.darkMode.defaults.backgroundColor, rgba(BRAND.accent));
+  assert.equal(s.componentClasses.focusState.darkMode.borderColor, rgba(BRAND.accent));
+  // Sign-in is email and password only: no social buttons.
+  assert.deepEqual(s.categories.auth.authMethodOrder, [[{ display: 'INPUT', type: 'USERNAME_PASSWORD' }]]);
+});
+
+test('the Auth stack turns on managed login and styles the app client', () => {
   const cdkJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'cdk.json'), 'utf8'));
   const outdir = fs.mkdtempSync(path.join(os.tmpdir(), 'flexgym-auth-'));
   const app = new App({ context: { ...cdkJson.context, deployWebAssets: false }, outdir });
@@ -85,9 +170,21 @@ test('the Auth stack gives it to every app client, once the domain exists', () =
     .synth()
     .stacksRecursively.find((s) => s.hierarchicalId === 'FlexGym-Dev/Auth')!;
   const resources = Object.entries<any>(auth.template.Resources);
-  const [, style] = resources.find(([, r]) => r.Type === 'AWS::Cognito::UserPoolUICustomizationAttachment')!;
-  const [domainId] = resources.find(([, r]) => r.Type === 'AWS::Cognito::UserPoolDomain')!;
-  assert.equal(style.Properties.ClientId, 'ALL');
-  assert.equal(style.Properties.CSS, SIGN_IN_CSS);
+  const find = (type: string) => resources.find(([, r]) => r.Type === type)!;
+
+  const [, pool] = find('AWS::Cognito::UserPool');
+  assert.equal(pool.Properties.UserPoolTier, 'ESSENTIALS');
+
+  const [domainId, domain] = find('AWS::Cognito::UserPoolDomain');
+  assert.equal(domain.Properties.ManagedLoginVersion, 2);
+
+  const [clientId] = find('AWS::Cognito::UserPoolClient');
+  const [, style] = find('AWS::Cognito::ManagedLoginBranding');
+  assert.deepEqual(style.Properties.ClientId, { Ref: clientId });
+  assert.equal(style.Properties.UseCognitoProvidedValues, false);
+  assert.deepEqual(style.Properties.Settings, MANAGED_LOGIN_SETTINGS);
   assert.ok([style.DependsOn].flat().includes(domainId), 'after the domain');
+
+  // The classic hosted UI's CSS does not apply to managed login.
+  assert.equal(resources.filter(([, r]) => r.Type === 'AWS::Cognito::UserPoolUICustomizationAttachment').length, 0);
 });

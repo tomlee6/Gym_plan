@@ -107,7 +107,7 @@ Everything about the users stays in Flex's AWS. GoalCert holds nothing about the
    - give them the admin role with a one-off database update, run like the migrations.
 
    Add this to `docs/runbooks/deploy.md`.
-4. **Cognito's sign-in page has no logo.** CloudFormation sets its CSS only. A logo (PNG or JPG, at most 100 KB) needs Cognito's `SetUICustomization` call with the image and the same CSS, through a small Lambda-backed custom resource: CDK's `AwsCustomResource` cannot pass a binary image. Setting it by hand in the console would be undone by the next change to the CSS.
+4. **Cognito's sign-in page has no logo yet.** The page is Cognito's managed login, branded in the app's dark colours by `infra/lib/sign-in-style.ts`. This needs the user pool on the **Essentials** feature plan, which Cognito bills per monthly active user. To add a logo, add a `FORM_LOGO` asset (PNG, SVG or JPEG, base64) to the `ManagedLoginBranding` resource in `auth-stack.ts`, and set `components.form.logo.enabled` to `true`. Do not restyle the page in the console's branding editor: the next deploy overwrites those changes.
 
 **To know before the first deploy:**
 - **The domain prefix must be unused in the region.** Cognito's sign-in domain prefix (`flexgym-<env>`) must be unique in `ap-southeast-2`. If another AWS customer already uses it, the `Auth` stack fails to deploy; change the prefix.

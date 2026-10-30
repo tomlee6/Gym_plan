@@ -16,7 +16,7 @@ import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Construct } from 'constructs';
 import { EnvConfig, HOME_REGION, resourcePrefix } from './config';
 import { MailStack } from './mail-stack';
-import { SIGN_IN_CSS } from './sign-in-style';
+import { MANAGED_LOGIN_SETTINGS } from './sign-in-style';
 
 export interface AuthStackProps extends StackProps {
   config: EnvConfig;
@@ -38,6 +38,8 @@ export class AuthStack extends Stack {
 
     this.userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: prefix,
+      // Managed login, the branded sign-in page, needs Essentials or Plus.
+      featurePlan: cognito.FeaturePlan.ESSENTIALS,
       selfSignUpEnabled: false,
       signInAliases: { email: true },
       signInCaseSensitive: false,
@@ -81,17 +83,11 @@ export class AuthStack extends Stack {
 
     const domain = this.userPool.addDomain('Domain', {
       cognitoDomain: { domainPrefix: prefix },
+      // Managed login rather than the classic hosted UI, so the sign-in
+      // page can be branded (sign-in-style.ts).
+      managedLoginVersion: cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
     });
     this.domainUrl = domain.baseUrl();
-
-    // Cognito's sign-in pages in the Flex Gym Scan colours, for every app
-    // client (sign-in-style.ts). Cognito needs the domain first.
-    const style = new cognito.CfnUserPoolUICustomizationAttachment(this, 'SignInStyle', {
-      userPoolId: this.userPool.userPoolId,
-      clientId: 'ALL',
-      css: SIGN_IN_CSS,
-    });
-    style.node.addDependency(domain);
 
     this.client = this.userPool.addClient('AppClient', {
       userPoolClientName: `${prefix}-backend`,
@@ -113,6 +109,16 @@ export class AuthStack extends Stack {
       refreshTokenValidity: Duration.hours(1),
       enableTokenRevocation: true,
     });
+
+    // Cognito's sign-in pages in the Flex Gym Scan colours. A managed login
+    // style belongs to one app client, and Cognito needs the domain first.
+    const style = new cognito.CfnManagedLoginBranding(this, 'SignInStyle', {
+      userPoolId: this.userPool.userPoolId,
+      clientId: this.client.userPoolClientId,
+      useCognitoProvidedValues: false,
+      settings: MANAGED_LOGIN_SETTINGS,
+    });
+    style.node.addDependency(domain);
 
     this.clientSecret = new secretsmanager.Secret(this, 'ClientSecret', {
       secretName: `${prefix}/COGNITO_CLIENT_SECRET`,
