@@ -244,7 +244,9 @@ final class EquipmentVideoRecorder: NSObject, AVCaptureFileOutputRecordingDelega
     from connections: [AVCaptureConnection],
     error: Error?
   ) {
-    UIApplication.shared.isIdleTimerDisabled = false
+    // AVFoundation does not promise this callback on the main thread, and
+    // UIKit must only be touched there: off it, iOS ends the app.
+    DispatchQueue.main.async { UIApplication.shared.isIdleTimerDisabled = false }
     stopMotion()
     let callback = finish
     finish = nil

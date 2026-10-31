@@ -168,6 +168,12 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
   /// session. `stop(pauseARSession: false)` keeps tracking, so the next
   /// section carries on in the same frame. RoomBuilder finalises the closed
   /// section; if it fails, the last live room stands in for it.
+  ///
+  /// On the main actor, so that after each `await` it carries on on the
+  /// main thread: it restarts the capture session, and everything else in
+  /// this class runs there too. Without it the code after the first
+  /// `await` resumes on a background thread.
+  @MainActor
   func nextSection() async throws {
     guard !finished else { throw ScanError.alreadyFinished }
     guard !switchingSection else { throw ScanError.busy }
@@ -218,6 +224,12 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
 
   // MARK: - Finish and export
 
+  /// On the main actor, so that after each `await` it carries on on the
+  /// main thread. It touches UIKit (the idle timer) and the AR session;
+  /// resuming on a background thread, as an unisolated async method does,
+  /// made iOS end the app as soon as a scan was finished. RoomBuilder and
+  /// StructureBuilder still do their work off the main thread.
+  @MainActor
   func finish() async throws -> [String: Any] {
     guard !finished else { throw ScanError.alreadyFinished }
     pause()
