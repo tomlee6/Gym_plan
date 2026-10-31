@@ -46,14 +46,21 @@ void main() {
     expect(find.text('SO'), findsOneWidget);
   });
 
-  testWidgets('renders the capture card and every plan row', (
+  testWidgets('renders the create panel and every plan row', (
     WidgetTester tester,
   ) async {
     await tester.pumpWidget(_wrap());
     await _settle(tester);
 
-    expect(find.byType(CaptureCard), findsOneWidget);
-    expect(find.text('New capture'), findsOneWidget);
+    expect(find.byType(CreatePanel), findsOneWidget);
+    expect(find.text('What do you want to create?'), findsOneWidget);
+    for (final String option in <String>[
+      'Floorplan',
+      '3D Space',
+      'Next level',
+    ]) {
+      expect(find.text(option), findsOneWidget);
+    }
 
     // The three most recently changed plans, as the API orders them.
     expect(find.byType(PlanRow), findsNWidgets(3));
@@ -113,7 +120,7 @@ void main() {
     expect(find.byType(PlanRow), findsNothing);
     // Signed in from the phone's copy of the session, so a capture can
     // still be started (I-04).
-    expect(find.byType(CaptureCard), findsOneWidget);
+    expect(find.byType(CreatePanel), findsOneWidget);
     expect(find.text('Northgate Group'), findsOneWidget);
 
     fakes.backend.offline = false;
@@ -151,6 +158,8 @@ void main() {
     await tester.pumpWidget(_wrap());
     await _settle(tester);
 
+    await tester.ensureVisible(find.text('Northgate Fitness · Level 2'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Northgate Fitness · Level 2'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
@@ -169,6 +178,8 @@ void main() {
     await tester.pumpWidget(_wrap());
     await _settle(tester);
 
+    await tester.ensureVisible(find.text('Northgate Fitness · Level 3'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Northgate Fitness · Level 3'));
     await _settle(tester);
 

@@ -15,6 +15,7 @@ import '../widgets/hairline_container.dart';
 import '../widgets/pressable.dart';
 import '../widgets/tag_sheet.dart';
 import 'review_submit_screen.dart';
+import 'scan_viewer_screen.dart';
 
 /// Live scan, Polycam style. The camera is live as soon as the screen
 /// opens; the capture button starts the scan, and from then Apple's
@@ -29,6 +30,7 @@ class ScanningScreen extends StatefulWidget {
     this.facilities,
     this.session,
     this.maxExtentM,
+    this.opensIn = ScanView.model,
   });
 
   /// The scan's starting details. The surveyor confirms the facility, level
@@ -46,6 +48,9 @@ class ScanningScreen extends StatefulWidget {
   /// the LiDAR scanner if this device has one (see [ScanBackend]), and
   /// disposes of it afterwards.
   final ScanSession? session;
+
+  /// Whether review opens on the 3D model or the floor plan.
+  final ScanView opensIn;
 
   @override
   State<ScanningScreen> createState() => _ScanningScreenState();
@@ -244,6 +249,7 @@ class _ScanningScreenState extends State<ScanningScreen> {
           result: result,
           facilities: widget.facilities,
           export: export,
+          initialView: widget.opensIn,
         ),
       ),
     );

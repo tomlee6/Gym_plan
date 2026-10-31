@@ -2,8 +2,10 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models/plan.dart';
+import '../models/room_measurements.dart';
 import '../models/scan.dart';
 import '../services/capture_service.dart';
+import '../services/scan_library.dart';
 import '../services/upload_queue.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_toast.dart';
@@ -19,6 +21,7 @@ import '../models/equipment.dart';
 import 'control_distance_screen.dart';
 import 'equipment_capture_screen.dart';
 import 'new_capture_screen.dart';
+import 'scan_viewer_screen.dart';
 
 /// Last look before the scan leaves the phone, Polycam style: the finished
 /// room in 3D, then which facility and level it is, the captured outline,
@@ -32,9 +35,14 @@ class ReviewSubmitScreen extends StatefulWidget {
     required this.result,
     this.facilities,
     this.export,
+    this.initialView = ScanView.model,
   });
 
   final ScanResult result;
+
+  /// Whether the preview opens on the 3D model or the floor plan, as chosen
+  /// on the dashboard ("3D Space" or "Floorplan").
+  final ScanView initialView;
 
   /// The account's facilities to pick from. The scan starts before they are
   /// chosen, so this is where the surveyor confirms them. Omitted, only the
@@ -180,12 +188,22 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
     }
     setState(() => _submitting = true);
 
+    final ScanResult submitted = _result.copyWith(
+      config: config,
+      controlDistances: _controls,
+    );
+    // Kept on the phone for the dashboard before the upload, which deletes
+    // its own copy of the files once the platform has them. Only a help:
+    // it never stops the submit.
+    await ScanLibrary.instance.save(submitted, widget.export);
+    if (!mounted) return;
+
     try {
       // Writes the upload's manifest to disk before anything leaves the
       // phone, so the capture survives the app closing from here on. The
       // model was built when the scan finished, so nothing waits for it.
       await UploadQueue.instance.enqueue(
-        _result.copyWith(config: config, controlDistances: _controls),
+        submitted,
         export: widget.export,
         equipment: _equipment,
         videos: _videos,
@@ -287,6 +305,7 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
       MaterialPageRoute<void>(
         builder: (_) => NewCaptureScreen(
           initialFacility: _facility.name,
+          opensIn: widget.initialView,
           initialLevel: _levelController.text.trim().isEmpty
               ? '${_result.config.level}'
               : _levelController.text.trim(),
@@ -332,11 +351,13 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
                           : '$_title · ${_result.areaM2!.round()} m²',
                     ),
                     const SizedBox(height: 18),
-                    if (widget.export
-                        case final ScanExport export?) ...<Widget>[
-                      _ModelPreview(modelPath: export.modelPath),
-                      const SizedBox(height: 16),
-                    ],
+                    _ScanPreviewCard(
+                      title: _title,
+                      result: _result,
+                      export: widget.export,
+                      initialView: widget.initialView,
+                    ),
+                    const SizedBox(height: 16),
                     _buildDetails(),
                     const SizedBox(height: 16),
                     HairlineContainer(
@@ -614,16 +635,74 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
   }
 }
 
-/// The finished room in 3D (Polycam style), to turn and zoom before
-/// submitting: RoomPlan's own model of the walls, doors, windows and
-/// objects it found.
-class _ModelPreview extends StatelessWidget {
-  const _ModelPreview({required this.modelPath});
+/// The finished room, Polycam style: in 3D to turn and zoom, or as a
+/// measured floor plan, with the room's measurements under it. The expand
+/// button opens it full screen.
+class _ScanPreviewCard extends StatefulWidget {
+  const _ScanPreviewCard({
+    required this.title,
+    required this.result,
+    required this.export,
+    required this.initialView,
+  });
 
-  final String modelPath;
+  final String title;
+  final ScanResult result;
+  final ScanExport? export;
+  final ScanView initialView;
+
+  @override
+  State<_ScanPreviewCard> createState() => _ScanPreviewCardState();
+}
+
+class _ScanPreviewCardState extends State<_ScanPreviewCard> {
+  late ScanView _view = widget.export == null
+      ? ScanView.floorPlan
+      : widget.initialView;
+  late RoomMeasurements _measurements = RoomMeasurements.of(
+    widget.result.geometry,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHeight();
+  }
+
+  /// The wall height is only in RoomPlan's room data.
+  Future<void> _loadHeight() async {
+    final String? data = widget.export?.dataPath;
+    if (data == null) return;
+    final double? height = await RoomMeasurements.wallHeightFromScanJson(data);
+    if (!mounted || height == null) return;
+    setState(
+      () => _measurements = RoomMeasurements.of(
+        widget.result.geometry,
+        heightM: height,
+      ),
+    );
+  }
+
+  void _openFullScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ScanViewerScreen(
+          title: widget.title,
+          subtitle: 'Not submitted yet',
+          geometry: widget.result.geometry,
+          walls: widget.result.walls,
+          measurements: _measurements,
+          modelPath: widget.export?.modelPath,
+          dataPath: widget.export?.dataPath,
+          initialView: _view,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final ScanExport? export = widget.export;
     return HairlineContainer(
       radius: 19,
       fillColor: AppColors.planCanvas,
@@ -631,30 +710,102 @@ class _ModelPreview extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 2, 2, 8),
+            child: Row(
+              children: <Widget>[
+                if (export != null)
+                  Expanded(
+                    child: CupertinoSlidingSegmentedControl<ScanView>(
+                      groupValue: _view,
+                      backgroundColor: AppColors.chipFill,
+                      thumbColor: AppColors.deepTeal,
+                      children: const <ScanView, Widget>{
+                        ScanView.model: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 6),
+                          child: Text(
+                            '3D',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                        ScanView.floorPlan: Text(
+                          'Floor plan',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      },
+                      onValueChanged: (ScanView? v) {
+                        if (v != null) setState(() => _view = v);
+                      },
+                    ),
+                  )
+                else
+                  const Expanded(
+                    child: Text(
+                      'Floor plan',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: 6),
+                IconButton(
+                  onPressed: _openFullScreen,
+                  tooltip: 'Open full screen',
+                  icon: const Icon(
+                    Icons.open_in_full_rounded,
+                    size: 19,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
           ClipRRect(
             borderRadius: BorderRadius.circular(14),
             child: SizedBox(
               height: 300,
-              child: ScanModelPreview(modelPath: modelPath),
+              child: _view == ScanView.model && export != null
+                  ? ScanModelPreview(
+                      modelPath: export.modelPath,
+                      dataPath: export.dataPath,
+                    )
+                  : ColoredBox(
+                      color: AppColors.background,
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: FloorPlanView(
+                          geometry: widget.result.geometry,
+                          walls: widget.result.walls,
+                          tags: widget.result.tags,
+                          showDimensions: true,
+                          fit: true,
+                          semanticLabel: 'Measured floor plan of the room',
+                        ),
+                      ),
+                    ),
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(8, 9, 8, 4),
-            child: Row(
-              children: <Widget>[
-                Icon(
-                  Icons.view_in_ar_rounded,
-                  size: 15,
-                  color: AppColors.accent,
-                ),
-                SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    '3D model · drag to turn, pinch to zoom',
-                    style: AppTheme.caption,
-                  ),
-                ),
-              ],
+          Padding(
+            padding: const EdgeInsets.fromLTRB(6, 10, 6, 6),
+            child: MeasurementChips(measurements: _measurements),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
+            child: Text(
+              _view == ScanView.model
+                  ? 'Drag to turn, pinch to zoom · wall lengths are labelled'
+                  : 'Each wall is labelled with its measured length',
+              style: AppTheme.caption,
             ),
           ),
         ],

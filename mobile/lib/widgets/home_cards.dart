@@ -225,3 +225,233 @@ class PendingUploadBanner extends StatelessWidget {
     );
   }
 }
+
+/// One choice in the dashboard's "What do you want to create?" panel.
+@immutable
+class CreateOption {
+  const CreateOption({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+}
+
+/// "What do you want to create?", Polycam style: a tile per thing to make,
+/// three to a row, with a close button that hides the panel.
+class CreatePanel extends StatelessWidget {
+  const CreatePanel({super.key, required this.options, this.onClose});
+
+  final List<CreateOption> options;
+  final VoidCallback? onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 14, 10, 16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[Color(0xFF053A44), Color(0xFF02222B)],
+        ),
+        border: Border.all(color: AppColors.accent.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Expanded(
+                child: Text(
+                  'What do you want to create?',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              if (onClose != null)
+                Pressable(
+                  onTap: onClose,
+                  haptic: HapticImpact.selection,
+                  semanticLabel: 'Hide',
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: Icon(
+                      CupertinoIcons.xmark,
+                      size: 18,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: LayoutBuilder(
+              builder: (BuildContext context, BoxConstraints box) {
+                const double gap = 10;
+                final double tile = (box.maxWidth - gap * 2) / 3;
+                return Wrap(
+                  spacing: gap,
+                  runSpacing: gap,
+                  children: <Widget>[
+                    for (final CreateOption o in options)
+                      SizedBox(
+                        width: tile,
+                        child: _CreateTile(option: o),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CreateTile extends StatelessWidget {
+  const _CreateTile({required this.option});
+
+  final CreateOption option;
+
+  @override
+  Widget build(BuildContext context) {
+    return Pressable(
+      onTap: option.onTap,
+      semanticLabel: option.label,
+      child: Container(
+        height: 92,
+        decoration: BoxDecoration(
+          color: AppColors.background.withValues(alpha: 0.75),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Icon(option.icon, size: 26, color: AppColors.accent),
+            const SizedBox(height: 10),
+            Text(
+              option.label,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One kept scan on the dashboard: a still of its 3D model, its level and
+/// the day it was scanned. Tapping it opens it in 3D.
+class ScanTile extends StatelessWidget {
+  const ScanTile({
+    super.key,
+    required this.title,
+    required this.date,
+    required this.onTap,
+    this.thumbnail,
+    this.onLongPress,
+  });
+
+  final String title;
+
+  /// e.g. "31 Oct".
+  final String date;
+
+  /// The still of the model, when one could be made.
+  final ImageProvider? thumbnail;
+  final VoidCallback onTap;
+  final VoidCallback? onLongPress;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onLongPress: onLongPress,
+      child: Pressable(
+        onTap: onTap,
+        semanticLabel: '$title, $date',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            AspectRatio(
+              aspectRatio: 1.1,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(color: AppColors.planCanvas),
+                  child: thumbnail != null
+                      ? Image(image: thumbnail!, fit: BoxFit.cover)
+                      : const Center(
+                          child: Icon(
+                            Icons.view_in_ar_rounded,
+                            size: 40,
+                            color: AppColors.chipEdge,
+                          ),
+                        ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: <Widget>[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.chipFill,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: AppColors.chipEdge),
+                  ),
+                  child: const Text(
+                    '3D',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.accent,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  date,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 2),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTheme.caption,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

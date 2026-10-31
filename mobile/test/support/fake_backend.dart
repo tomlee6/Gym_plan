@@ -8,6 +8,7 @@ import 'package:mobile/services/api_client.dart';
 import 'package:mobile/services/auth_session.dart';
 import 'package:mobile/services/capture_service.dart';
 import 'package:mobile/services/scan_backend.dart';
+import 'package:mobile/services/scan_library.dart';
 import 'package:mobile/services/hub_auth.dart';
 import 'package:mobile/services/offline_cache.dart';
 import 'package:mobile/services/profile_service.dart';
@@ -564,6 +565,8 @@ class FakeWebAuthenticator implements WebAuthenticator {
   // Tests run as a LiDAR iPhone unless they say otherwise. The app itself
   // has no stand-in: off a LiDAR device it refuses to scan.
   ScanBackend.debugOverride = lidarIPhone;
+  // Scans are kept in memory, not on disk.
+  ScanLibrary.instance = MemoryScanLibrary();
   return (backend: backend, uploads: uploads);
 }
 

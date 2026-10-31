@@ -51,7 +51,8 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       withId: "flex/room_capture_view")
 
     // The finished room in 3D, shown before it is submitted.
-    registrar.register(ScanModelViewFactory(), withId: "flex/scan_model_view")
+    registrar.register(
+      ScanModelViewFactory(messenger: registrar.messenger()), withId: "flex/scan_model_view")
   }
 
   func attachCaptureContainer(_ container: RoomCaptureContainerView) {
@@ -115,6 +116,21 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     // handled before the RoomPlan availability check below.
     if call.method.hasPrefix("video.") {
       handleVideo(call, result: result)
+      return
+    }
+
+    // A still of a finished scan's 3D model, for the dashboard's thumbnails.
+    // Rendered off screen, off the main thread; null if it cannot be.
+    if call.method == "modelThumbnail" {
+      let args = call.arguments as? [String: Any] ?? [:]
+      guard let path = args["path"] as? String, let out = args["out"] as? String else {
+        result(nil)
+        return
+      }
+      DispatchQueue.global(qos: .utility).async {
+        let rendered = ModelThumbnail.render(modelPath: path, to: out)
+        DispatchQueue.main.async { result(rendered ? out : nil) }
+      }
       return
     }
 

@@ -264,7 +264,7 @@ void main() {
 
       expect(find.byType(HomeScreen), findsOneWidget);
       expect(find.text('Offline'), findsOneWidget);
-      expect(find.byType(CaptureCard), findsOneWidget);
+      expect(find.byType(CreatePanel), findsOneWidget);
       // The header comes from the cached session.
       expect(find.text('Northgate Group'), findsOneWidget);
       expect(find.text('SO'), findsOneWidget);

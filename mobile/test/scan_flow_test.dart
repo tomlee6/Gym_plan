@@ -9,6 +9,7 @@ import 'package:mobile/screens/scanning_screen.dart';
 import 'package:mobile/screens/uploading_screen.dart';
 import 'support/simulated_scan_session.dart';
 import 'support/fake_backend.dart';
+import 'package:mobile/services/scan_library.dart';
 import 'package:mobile/services/upload_queue.dart';
 import 'package:mobile/theme/app_theme.dart';
 import 'package:mobile/widgets/capture_fields.dart';
@@ -345,7 +346,7 @@ void main() {
         find.byType(ScanModelPreview),
       );
       expect(preview.modelPath, '/scans/abc/scan.usdz');
-      expect(find.textContaining('drag to turn'), findsOneWidget);
+      expect(find.textContaining('Drag to turn'), findsOneWidget);
       // The scan is finalised, so it cannot be carried on: review replaces
       // the scan screen, and offers to scan again instead.
       expect(find.byType(ScanningScreen), findsNothing);
@@ -356,6 +357,9 @@ void main() {
       await tester.tap(find.text('Submit scan'));
       await _advance(tester, const Duration(seconds: 2));
       expect(fakes.uploads.exports.single, same(model));
+      // And kept on the phone for the dashboard, with its model.
+      final SavedScan kept = (await ScanLibrary.instance.scans()).single;
+      expect(kept.modelPath, '/scans/abc/scan.usdz');
 
       await _tearDown(tester);
     });

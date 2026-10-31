@@ -22,11 +22,21 @@ class FloorPlanView extends StatelessWidget {
     this.showGrid = false,
     this.semanticLabel,
     this.measurements = const <(Offset, Offset?)>[],
+    this.showDimensions = false,
+    this.fit = false,
   });
 
   /// Control distances drawn over the plan (F-03): each a line from its
   /// first end to its second, or a lone end while the second is picked.
   final List<(Offset, Offset?)> measurements;
+
+  /// Labels each captured wall with its length, e.g. "4.20 m", as a
+  /// measured floor plan.
+  final bool showDimensions;
+
+  /// Fills whatever space it is given, rather than keeping the design's
+  /// fixed shape. For a full-screen plan.
+  final bool fit;
 
   /// The plan point under [local], for a widget of [size] drawing
   /// [geometry]. The inverse of what the painter does, so a tap can mark a
@@ -68,24 +78,31 @@ class FloorPlanView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Widget paint = CustomPaint(
+      painter: _FloorPlanPainter(
+        geometry: geometry,
+        walls: walls,
+        wallProgress: wallProgress,
+        tags: tags,
+        walker: walker,
+        showGrid: showGrid,
+        measurements: measurements,
+        showDimensions: showDimensions,
+        // The painter has no context: labels take the app's font from here.
+        fontFamily: DefaultTextStyle.of(context).style.fontFamily,
+      ),
+      child: fit ? const SizedBox.expand() : null,
+    );
     return Semantics(
       image: true,
       label: semanticLabel,
       // A fixed shape, so the card does not jump as a live scan grows.
-      child: AspectRatio(
-        aspectRatio: FloorOutline.canvas.aspectRatio,
-        child: CustomPaint(
-          painter: _FloorPlanPainter(
-            geometry: geometry,
-            walls: walls,
-            wallProgress: wallProgress,
-            tags: tags,
-            walker: walker,
-            showGrid: showGrid,
-            measurements: measurements,
-          ),
-        ),
-      ),
+      child: fit
+          ? paint
+          : AspectRatio(
+              aspectRatio: FloorOutline.canvas.aspectRatio,
+              child: paint,
+            ),
     );
   }
 }
@@ -99,10 +116,18 @@ class _FloorPlanPainter extends CustomPainter {
     required this.walker,
     required this.showGrid,
     required this.measurements,
+    required this.showDimensions,
+    this.fontFamily,
   });
+
+  final String? fontFamily;
 
   /// Grid spacing on the floor.
   static const double _gridM = 2.5;
+
+  /// Walls shorter than this are left unlabelled: the label would cover
+  /// them.
+  static const double _minLabelledM = 0.5;
 
   final PlanGeometry geometry;
   final List<WallQuality> walls;
@@ -111,6 +136,7 @@ class _FloorPlanPainter extends CustomPainter {
   final (Offset, double)? walker;
   final bool showGrid;
   final List<(Offset, Offset?)> measurements;
+  final bool showDimensions;
 
   late double _scale;
   late Offset _origin;
@@ -137,6 +163,7 @@ class _FloorPlanPainter extends CustomPainter {
     _paintFloor(canvas);
     _paintObjects(canvas);
     _paintWalls(canvas);
+    if (showDimensions) _paintDimensions(canvas);
     for (final ScanTag tag in tags) {
       _paintMarker(canvas, _map(tag.position), tag.type.color);
     }
@@ -223,6 +250,65 @@ class _FloorPlanPainter extends CustomPainter {
       if (progress < 1) {
         _stroke(canvas, split, b, WallQuality.missing);
       }
+    }
+  }
+
+  /// Each captured wall's length, in a small label just outside the wall
+  /// (on the side away from the middle of the plan), turned to run along it.
+  void _paintDimensions(Canvas canvas) {
+    final Offset middle = _map(geometry.frame.center);
+    final int count = math.min(geometry.walls.length, walls.length);
+    for (int i = 0; i < count; i++) {
+      if (walls[i] == WallQuality.missing) continue;
+      final WallSegment w = geometry.walls[i];
+      final double metres = w.length * geometry.metresPerUnit;
+      if (metres < _minLabelledM) continue;
+
+      final Offset a = _map(w.start);
+      final Offset b = _map(w.end);
+      final Offset along = b - a;
+      if (along.distance < 34) continue;
+
+      // Outward: the normal pointing away from the plan's middle.
+      Offset normal = Offset(-along.dy, along.dx) / along.distance;
+      final Offset mid = (a + b) / 2;
+      if ((mid + normal - middle).distance < (mid - middle).distance) {
+        normal = -normal;
+      }
+
+      final TextPainter text = TextPainter(
+        text: TextSpan(
+          text: '${metres.toStringAsFixed(2)} m',
+          style: TextStyle(
+            fontFamily: fontFamily,
+            fontSize: math.max(9, 9.5 * _px),
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      // Kept upright: a wall drawn right to left reads the same way round.
+      double angle = math.atan2(along.dy, along.dx);
+      if (angle > math.pi / 2 || angle < -math.pi / 2) angle += math.pi;
+
+      final Offset at = mid + normal * (text.height / 2 + 7 * _px);
+      final Rect pill = Rect.fromCenter(
+        center: Offset.zero,
+        width: text.width + 8,
+        height: text.height + 3,
+      );
+      canvas
+        ..save()
+        ..translate(at.dx, at.dy)
+        ..rotate(angle)
+        ..drawRRect(
+          RRect.fromRectAndRadius(pill, const Radius.circular(4)),
+          Paint()..color = AppColors.background.withValues(alpha: 0.85),
+        );
+      text.paint(canvas, Offset(-text.width / 2, -text.height / 2));
+      canvas.restore();
     }
   }
 
@@ -324,7 +410,9 @@ class _FloorPlanPainter extends CustomPainter {
       old.tags != tags ||
       old.walker != walker ||
       old.showGrid != showGrid ||
-      old.measurements != measurements;
+      old.measurements != measurements ||
+      old.showDimensions != showDimensions ||
+      old.fontFamily != fontFamily;
 }
 
 /// "Captured / Weak / Not captured" key under the live plan.

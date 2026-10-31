@@ -552,10 +552,26 @@ class MachineClassifier {
 ///
 /// iOS only; elsewhere it says the preview is shown on the iPhone.
 class ScanModelPreview extends StatelessWidget {
-  const ScanModelPreview({super.key, required this.modelPath});
+  const ScanModelPreview({
+    super.key,
+    required this.modelPath,
+    this.dataPath,
+    this.showMeasurements = true,
+    this.controller,
+  });
 
   /// Where the finished scan's `scan.usdz` is on the device.
   final String modelPath;
+
+  /// RoomPlan's `scan.json` for the same scan. With it, each wall is
+  /// labelled with its length in the 3D view.
+  final String? dataPath;
+
+  /// Whether the wall lengths show when the view opens.
+  final bool showMeasurements;
+
+  /// Turns the model from outside: reset, top view, labels on or off.
+  final ScanModelController? controller;
 
   @override
   Widget build(BuildContext context) {
@@ -572,14 +588,87 @@ class ScanModelPreview extends StatelessWidget {
     }
     return UiKitView(
       viewType: 'flex/scan_model_view',
-      creationParams: <String, Object?>{'path': modelPath},
+      creationParams: <String, Object?>{
+        'path': modelPath,
+        'dataPath': ?dataPath,
+        'labels': showMeasurements,
+      },
       creationParamsCodec: const StandardMessageCodec(),
+      onPlatformViewCreated: (int id) => controller?._attach(id),
       // The view takes every touch, so turning the model never scrolls
       // the page instead.
       gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
         Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
       },
     );
+  }
+}
+
+/// Drives a [ScanModelPreview] from Flutter controls, e.g. the 3D viewer's
+/// toolbar. Calls before the native view exists, or off iOS, do nothing.
+class ScanModelController {
+  MethodChannel? _channel;
+
+  /// Every finished tap-to-tap measurement's length in metres, oldest
+  /// first, as the native view reports it after each change.
+  final ValueNotifier<List<double>> measured = ValueNotifier<List<double>>(
+    const <double>[],
+  );
+
+  void _attach(int viewId) {
+    _channel = MethodChannel('flex/scan_model_view_$viewId')
+      ..setMethodCallHandler((MethodCall call) async {
+        if (call.method == 'measured') {
+          measured.value = <double>[
+            for (final Object? m
+                in call.arguments as List<Object?>? ?? const [])
+              (m! as num).toDouble(),
+          ];
+        }
+      });
+  }
+
+  Future<void> _call(String method, [Object? args]) async {
+    try {
+      await _channel?.invokeMethod<void>(method, args);
+    } catch (_) {
+      // Only a view control: nothing to recover.
+    }
+  }
+
+  /// Back to the opening angle, the whole room in view.
+  Future<void> resetView() => _call('reset');
+
+  /// Straight down from above, like a plan.
+  Future<void> topView() => _call('top');
+
+  /// Shows or hides the wall length labels.
+  Future<void> showMeasurements(bool show) => _call('labels', show);
+
+  /// Measure mode: each pair of taps on the model is joined by a line
+  /// labelled with the distance between them. Drags still turn the model.
+  Future<void> setMeasuring(bool on) => _call('measure', on);
+
+  /// Takes away the last measurement, or a half-placed one.
+  Future<void> undoMeasurement() => _call('undoMeasure');
+
+  Future<void> clearMeasurements() => _call('clearMeasures');
+
+  void dispose() => measured.dispose();
+}
+
+/// A still of the model at [modelPath], from the same angle the 3D view
+/// opens at, written as a PNG to [outPath] for a thumbnail. Returns
+/// [outPath], or null off iOS or if it could not be rendered.
+Future<String?> renderModelThumbnail(String modelPath, String outPath) async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return null;
+  try {
+    return await RoomScan._methods.invokeMethod<String>(
+      'modelThumbnail',
+      <String, Object?>{'path': modelPath, 'out': outPath},
+    );
+  } catch (_) {
+    return null;
   }
 }
 

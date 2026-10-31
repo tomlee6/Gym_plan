@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
@@ -6,14 +8,18 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/auth_session.dart';
 import '../services/plans_service.dart';
+import '../services/scan_library.dart';
 import '../services/upload_queue.dart';
 import '../theme/app_theme.dart';
+import '../utils/formatting.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/detail_widgets.dart';
 import '../widgets/gym_tab_bar.dart';
 import '../widgets/home_cards.dart';
 import '../widgets/pressable.dart';
 import 'login_screen.dart';
+import 'new_capture_screen.dart';
+import 'scan_viewer_screen.dart';
 import 'tab_navigation.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -39,10 +45,98 @@ class _HomeScreenState extends State<HomeScreen> {
   /// said, and why it could not.
   String? _offline;
 
+  /// Scans kept on this phone, newest first, for the dashboard grid.
+  List<SavedScan> _scans = const <SavedScan>[];
+
+  /// The "What do you want to create?" panel, until it is closed.
+  bool _showCreate = true;
+
   @override
   void initState() {
     super.initState();
     _load();
+    _loadScans();
+    ScanLibrary.instance.addListener(_loadScans);
+  }
+
+  @override
+  void dispose() {
+    ScanLibrary.instance.removeListener(_loadScans);
+    super.dispose();
+  }
+
+  Future<void> _loadScans() async {
+    final List<SavedScan> scans = await ScanLibrary.instance.scans();
+    if (mounted) setState(() => _scans = scans);
+  }
+
+  /// Opens a capture: the camera first, then review on the 3D model or the
+  /// floor plan as chosen.
+  void _startCapture(ScanView view, {String? level}) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => NewCaptureScreen(
+          initialFacility: _data?.gymName,
+          initialLevel: level ?? '2',
+          opensIn: view,
+        ),
+      ),
+    );
+  }
+
+  /// The level above the highest one this gym has a plan for.
+  String _nextLevel(HomeData data) {
+    final Iterable<Plan> here = data.plans.where(
+      (Plan p) => p.site == data.gymName,
+    );
+    final Iterable<Plan> plans = here.isEmpty ? data.plans : here;
+    if (plans.isEmpty) return '1';
+    final int top = plans
+        .map((Plan p) => p.levelNumber)
+        .reduce((int a, int b) => a > b ? a : b);
+    return '${top + 1}';
+  }
+
+  void _openScan(SavedScan scan) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ScanViewerScreen(
+          title: scan.title,
+          subtitle: 'Scanned ${Formatting.stamp(scan.createdAt)}',
+          geometry: scan.geometry,
+          walls: scan.walls,
+          measurements: scan.measurements,
+          modelPath: scan.modelPath,
+          dataPath: scan.dataPath,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmRemoveScan(SavedScan scan) async {
+    final bool? remove = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => CupertinoAlertDialog(
+        title: const Text('Remove from this phone?'),
+        content: Text(
+          '${scan.title} is removed from this iPhone. The submitted plan is '
+          'not affected.',
+        ),
+        actions: <Widget>[
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (remove == true) await ScanLibrary.instance.delete(scan);
   }
 
   Future<void> _load() async {
@@ -186,11 +280,44 @@ class _HomeScreenState extends State<HomeScreen> {
             children: <Widget>[
               _buildHeader(data),
               const SizedBox(height: 22),
-              CaptureCard(
-                subtitle: 'Walk the perimeter · about 12 min',
-                onTap: _openNewCapture,
-              ),
-              const SizedBox(height: 28),
+              if (_showCreate) ...<Widget>[
+                CreatePanel(
+                  onClose: () => setState(() => _showCreate = false),
+                  options: <CreateOption>[
+                    CreateOption(
+                      icon: Icons.grid_view_rounded,
+                      label: 'Floorplan',
+                      onTap: () => _startCapture(ScanView.floorPlan),
+                    ),
+                    CreateOption(
+                      icon: Icons.view_in_ar_rounded,
+                      label: '3D Space',
+                      onTap: () => _startCapture(ScanView.model),
+                    ),
+                    CreateOption(
+                      icon: Icons.stairs_rounded,
+                      label: 'Next level',
+                      onTap: () => _startCapture(
+                        ScanView.model,
+                        level: _nextLevel(data),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 28),
+              ] else ...<Widget>[
+                CaptureCard(
+                  subtitle: 'Walk the perimeter · about 12 min',
+                  onTap: _openNewCapture,
+                ),
+                const SizedBox(height: 28),
+              ],
+              if (_scans.isNotEmpty) ...<Widget>[
+                _buildScansHeader(),
+                const SizedBox(height: 12),
+                _buildScanGrid(),
+                const SizedBox(height: 28),
+              ],
               if (_offline != null)
                 _OfflineNotice(message: _offline!, onRetry: _load)
               else ...<Widget>[
@@ -209,6 +336,44 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildScansHeader() {
+    return const Row(
+      children: <Widget>[
+        Expanded(child: Text('Your scans', style: AppTheme.sectionTitle)),
+        Text('Long-press to remove', style: AppTheme.caption),
+      ],
+    );
+  }
+
+  /// Two to a row, newest first.
+  Widget _buildScanGrid() {
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints box) {
+        const double gap = 14;
+        final double tile = (box.maxWidth - gap) / 2;
+        return Wrap(
+          spacing: gap,
+          runSpacing: 18,
+          children: <Widget>[
+            for (final SavedScan scan in _scans)
+              SizedBox(
+                width: tile,
+                child: ScanTile(
+                  title: scan.title,
+                  date: Formatting.day(scan.createdAt),
+                  thumbnail: scan.thumbnailPath == null
+                      ? null
+                      : FileImage(File(scan.thumbnailPath!)),
+                  onTap: () => _openScan(scan),
+                  onLongPress: () => _confirmRemoveScan(scan),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 

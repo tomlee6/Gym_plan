@@ -8,6 +8,7 @@ import '../services/capture_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/detail_widgets.dart';
 import '../widgets/nav_bar.dart';
+import 'scan_viewer_screen.dart';
 import 'scanning_screen.dart';
 
 /// Opens the camera straight away, Polycam style; the scan starts when the
@@ -24,6 +25,7 @@ class NewCaptureScreen extends StatefulWidget {
     this.initialFacility,
     this.initialLevel = '2',
     this.captureService,
+    this.opensIn = ScanView.model,
   });
 
   /// Pre-selects the gym, by name, the user was last looking at.
@@ -34,6 +36,10 @@ class NewCaptureScreen extends StatefulWidget {
 
   /// Injectable so tests can drive the unsupported-device path.
   final CaptureService? captureService;
+
+  /// Whether the finished scan opens on its 3D model or its floor plan:
+  /// "3D Space" or "Floorplan" on the dashboard. Both are the same scan.
+  final ScanView opensIn;
 
   /// The floor-to-floor height a scan starts with, until the surveyor sets
   /// it on the review screen.
@@ -129,6 +135,7 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
             heightM: NewCaptureScreen.defaultHeightM,
           ),
           facilities: list,
+          opensIn: widget.opensIn,
         ),
         transitionsBuilder: (_, Animation<double> animation, _, Widget child) =>
             FadeTransition(opacity: animation, child: child),
