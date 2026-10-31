@@ -7,7 +7,7 @@ import 'package:mobile/screens/control_distance_screen.dart';
 import 'package:mobile/screens/review_submit_screen.dart';
 import 'package:mobile/screens/scanning_screen.dart';
 import 'package:mobile/screens/uploading_screen.dart';
-import 'package:mobile/services/simulated_scan_session.dart';
+import 'support/simulated_scan_session.dart';
 import 'support/fake_backend.dart';
 import 'package:mobile/services/upload_queue.dart';
 import 'package:mobile/theme/app_theme.dart';
@@ -42,6 +42,7 @@ Future<void> _openScan(
   WidgetTester tester,
   SimulatedScanSession session, {
   double? maxExtentM,
+  bool start = true,
 }) async {
   usePhoneSize(tester);
   await tester.pumpWidget(
@@ -68,7 +69,16 @@ Future<void> _openScan(
   await tester.tap(find.text('launch'));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 500));
+  if (start) {
+    // The camera is live; the scan starts on the capture button.
+    await tester.tap(_startButton);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+  }
 }
+
+/// The capture button shown before the scan starts.
+final Finder _startButton = find.byKey(const ValueKey<String>('start-scan'));
 
 /// Scanning never settles (it ticks), so step time forward explicitly.
 Future<void> _advance(WidgetTester tester, Duration by) async {
@@ -97,6 +107,49 @@ void main() {
       final (Offset end, _) = FloorOutline.pointAt(FloorOutline.perimeter);
       expect(end, FloorOutline.walls.first.start);
     });
+  });
+
+  testWidgets('the camera is live first; the capture button starts the scan', (
+    WidgetTester tester,
+  ) async {
+    final SimulatedScanSession session = SimulatedScanSession(config: _config);
+    addTearDown(session.dispose);
+    await _openScan(tester, session, start: false);
+
+    // Polycam style: camera and capture button, nothing scanning yet.
+    expect(find.byType(RoomCapturePreview), findsOneWidget);
+    expect(find.textContaining('tap the button to start'), findsOneWidget);
+    expect(session.running, isFalse);
+    expect(find.text('Coverage'), findsNothing);
+    expect(find.bySemanticsLabel('Add a tag'), findsNothing);
+    expect(_finishButton, findsNothing);
+
+    await tester.tap(_startButton);
+    await _advance(tester, const Duration(seconds: 1));
+
+    expect(session.running, isTrue);
+    expect(find.text('Coverage'), findsOneWidget);
+    expect(_finishButton, findsOneWidget);
+    expect(_startButton, findsNothing);
+
+    await _tearDown(tester);
+  });
+
+  testWidgets('closing before the scan starts needs no confirmation', (
+    WidgetTester tester,
+  ) async {
+    final SimulatedScanSession session = SimulatedScanSession(config: _config);
+    addTearDown(session.dispose);
+    await _openScan(tester, session, start: false);
+
+    await tester.tap(find.bySemanticsLabel('Discard scan'));
+    await _advance(tester, const Duration(milliseconds: 600));
+
+    expect(find.text('Discard this scan?'), findsNothing);
+    expect(find.byType(ScanningScreen), findsNothing);
+    expect(session.running, isFalse);
+
+    await _tearDown(tester);
   });
 
   testWidgets('shows the camera, a clock and rising coverage', (
@@ -264,28 +317,137 @@ void main() {
     await _tearDown(tester);
   });
 
-  testWidgets('keep scanning returns to the live scan and resumes it', (
-    WidgetTester tester,
-  ) async {
-    final SimulatedScanSession session = SimulatedScanSession(
-      config: _config,
-      unitsPerTick: 200,
+  group('the finished room in 3D (Polycam style)', () {
+    const ScanExport model = ScanExport(
+      modelPath: '/scans/abc/scan.usdz',
+      dataPath: '/scans/abc/scan.json',
+      bytes: 12 * 1024 * 1024,
     );
-    addTearDown(session.dispose);
-    await _openScan(tester, session);
-    await _advance(tester, const Duration(seconds: 2));
 
-    await tester.tap(_finishButton);
-    await _advance(tester, const Duration(milliseconds: 600));
-    expect(find.byType(ReviewSubmitScreen), findsOneWidget);
-    expect(session.running, isFalse);
+    testWidgets('finishing builds the model and review shows it in 3D', (
+      WidgetTester tester,
+    ) async {
+      final SimulatedScanSession session = SimulatedScanSession(
+        config: _config,
+        unitsPerTick: 200,
+        exportResult: model,
+      );
+      addTearDown(session.dispose);
+      await _openScan(tester, session);
+      await _advance(tester, const Duration(seconds: 2));
 
-    await tester.tap(find.text('Keep scanning'));
-    await _advance(tester, const Duration(milliseconds: 600));
-    expect(find.byType(ScanningScreen), findsOneWidget);
-    expect(session.running, isTrue);
+      await tester.tap(_finishButton);
+      await tester.pump();
+      await _advance(tester, const Duration(milliseconds: 600));
 
-    await _tearDown(tester);
+      expect(find.byType(ReviewSubmitScreen), findsOneWidget);
+      final ScanModelPreview preview = tester.widget<ScanModelPreview>(
+        find.byType(ScanModelPreview),
+      );
+      expect(preview.modelPath, '/scans/abc/scan.usdz');
+      expect(find.textContaining('drag to turn'), findsOneWidget);
+      // The scan is finalised, so it cannot be carried on: review replaces
+      // the scan screen, and offers to scan again instead.
+      expect(find.byType(ScanningScreen), findsNothing);
+      expect(find.text('Keep scanning'), findsNothing);
+      expect(find.text('Scan again'), findsOneWidget);
+
+      // Submit sends the model built at finish.
+      await tester.tap(find.text('Submit scan'));
+      await _advance(tester, const Duration(seconds: 2));
+      expect(fakes.uploads.exports.single, same(model));
+
+      await _tearDown(tester);
+    });
+
+    testWidgets('scan again discards it and opens a new capture', (
+      WidgetTester tester,
+    ) async {
+      final SimulatedScanSession session = SimulatedScanSession(
+        config: _config,
+        unitsPerTick: 200,
+        exportResult: model,
+      );
+      addTearDown(session.dispose);
+      await _openScan(tester, session);
+      await _advance(tester, const Duration(seconds: 2));
+      await tester.tap(_finishButton);
+      await _advance(tester, const Duration(milliseconds: 600));
+
+      await tester.ensureVisible(find.text('Scan again'));
+      await tester.tap(find.text('Scan again'));
+      await _advance(tester, const Duration(milliseconds: 400));
+      expect(find.text('Scan again?'), findsOneWidget);
+      await tester.tap(find.text('Scan again').last);
+      await _advance(tester, const Duration(seconds: 2));
+
+      // A fresh scan, camera first, for the same gym and level.
+      expect(find.byType(ReviewSubmitScreen), findsNothing);
+      final ScanningScreen next = tester.widget<ScanningScreen>(
+        find.byType(ScanningScreen),
+      );
+      expect(next.config.facility, 'Northgate Fitness');
+      expect(next.config.level, 2);
+      expect(_startButton, findsOneWidget);
+      expect(fakes.uploads.enqueued, isEmpty);
+
+      await _tearDown(tester);
+    });
+
+    testWidgets('leaving review asks before throwing the scan away', (
+      WidgetTester tester,
+    ) async {
+      final SimulatedScanSession session = SimulatedScanSession(
+        config: _config,
+        unitsPerTick: 200,
+      );
+      addTearDown(session.dispose);
+      await _openScan(tester, session);
+      await _advance(tester, const Duration(seconds: 2));
+      await tester.tap(_finishButton);
+      await _advance(tester, const Duration(milliseconds: 600));
+
+      await tester.tap(find.text('Discard').first);
+      await _advance(tester, const Duration(milliseconds: 400));
+      expect(find.text('Discard this scan?'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await _advance(tester, const Duration(milliseconds: 400));
+      expect(find.byType(ReviewSubmitScreen), findsOneWidget);
+
+      await tester.tap(find.text('Discard').first);
+      await _advance(tester, const Duration(milliseconds: 400));
+      await tester.tap(find.text('Discard').last);
+      await _advance(tester, const Duration(milliseconds: 800));
+      expect(find.byType(ReviewSubmitScreen), findsNothing);
+      expect(find.text('launch'), findsOneWidget);
+
+      await _tearDown(tester);
+    });
+
+    testWidgets('a scan RoomPlan cannot build is said so, then closed', (
+      WidgetTester tester,
+    ) async {
+      final SimulatedScanSession session = SimulatedScanSession(
+        config: _config,
+        unitsPerTick: 200,
+        exportError: const RoomScanException('export_failed', 'No room.'),
+      );
+      addTearDown(session.dispose);
+      await _openScan(tester, session);
+      await _advance(tester, const Duration(seconds: 2));
+
+      await tester.tap(_finishButton);
+      await _advance(tester, const Duration(milliseconds: 600));
+
+      expect(find.text('The scan could not be processed'), findsOneWidget);
+      expect(find.byType(ReviewSubmitScreen), findsNothing);
+      await tester.tap(find.text('OK'));
+      await _advance(tester, const Duration(milliseconds: 800));
+      expect(find.byType(ScanningScreen), findsNothing);
+      expect(find.text('launch'), findsOneWidget);
+
+      await _tearDown(tester);
+    });
   });
 
   testWidgets('the equipment step is optional: submit works without it', (

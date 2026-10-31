@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../models/plan.dart';
@@ -17,16 +18,20 @@ import 'package:room_scan/room_scan.dart';
 import '../models/equipment.dart';
 import 'control_distance_screen.dart';
 import 'equipment_capture_screen.dart';
+import 'new_capture_screen.dart';
 
-/// Last look before the scan leaves the phone: which facility and level it
-/// is, the captured outline, any coverage warnings, and what was tagged and
-/// photographed.
+/// Last look before the scan leaves the phone, Polycam style: the finished
+/// room in 3D, then which facility and level it is, the captured outline,
+/// any coverage warnings, and what was tagged and photographed.
+///
+/// The scan is already finalised when this opens, so it cannot be carried
+/// on: "Scan again" discards it and starts a new one.
 class ReviewSubmitScreen extends StatefulWidget {
   const ReviewSubmitScreen({
     super.key,
     required this.result,
     this.facilities,
-    this.exportModel,
+    this.export,
   });
 
   final ScanResult result;
@@ -36,9 +41,10 @@ class ReviewSubmitScreen extends StatefulWidget {
   /// scan's own facility is offered.
   final FacilityList? facilities;
 
-  /// Ends the scan and writes the 3D model for upload. Omitted, or returning
-  /// null, for a simulated scan.
-  final Future<ScanExport?> Function()? exportModel;
+  /// The finished scan's files: the 3D model shown here and uploaded on
+  /// submit, and RoomPlan's room data. Null only in tests, where there is
+  /// no LiDAR scan behind the result.
+  final ScanExport? export;
 
   @override
   State<ReviewSubmitScreen> createState() => _ReviewSubmitScreenState();
@@ -174,29 +180,13 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
     }
     setState(() => _submitting = true);
 
-    // A LiDAR scan is finalised and written to disk here, which can take a
-    // few seconds. A simulated scan has nothing to write, so it just pauses
-    // as a stand-in.
-    ScanExport? export;
-    try {
-      export = await widget.exportModel?.call();
-      if (export == null) {
-        await Future<void>.delayed(const Duration(milliseconds: 600));
-      }
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _submitting = false);
-      showAppToast(context, 'The scan could not be saved. Scan again.');
-      return;
-    }
-    if (!mounted) return;
-
     try {
       // Writes the upload's manifest to disk before anything leaves the
-      // phone, so the capture survives the app closing from here on.
+      // phone, so the capture survives the app closing from here on. The
+      // model was built when the scan finished, so nothing waits for it.
       await UploadQueue.instance.enqueue(
         _result.copyWith(config: config, controlDistances: _controls),
-        export: export,
+        export: widget.export,
         equipment: _equipment,
         videos: _videos,
       );
@@ -255,8 +245,69 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
     });
   }
 
+  /// Leaving throws the finished scan away, so it asks first. Returns
+  /// whether the surveyor chose to discard it.
+  Future<bool> _confirmDiscard({required bool scanAgain}) async {
+    final bool? discard = await showCupertinoDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => CupertinoAlertDialog(
+        title: Text(scanAgain ? 'Scan again?' : 'Discard this scan?'),
+        content: const Text(
+          'This scan, its tags and photos will be lost. It has not been '
+          'submitted.',
+        ),
+        actions: <Widget>[
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          CupertinoDialogAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(scanAgain ? 'Scan again' : 'Discard'),
+          ),
+        ],
+      ),
+    );
+    return discard == true && mounted;
+  }
+
+  Future<void> _leave() async {
+    final bool discard = await _confirmDiscard(scanAgain: false);
+    if (!discard || !mounted) return;
+    Navigator.of(context).pop();
+  }
+
+  /// Discards this scan and opens a new one for the same gym and level.
+  Future<void> _scanAgain() async {
+    final bool discard = await _confirmDiscard(scanAgain: true);
+    if (!discard || !mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => NewCaptureScreen(
+          initialFacility: _facility.name,
+          initialLevel: _levelController.text.trim().isEmpty
+              ? '${_result.config.level}'
+              : _levelController.text.trim(),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // A back swipe must not silently throw away a finished scan.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (bool didPop, Object? _) {
+        if (!didPop && !_submitting) _leave();
+      },
+      child: _buildPage(context),
+    );
+  }
+
+  Widget _buildPage(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -264,10 +315,7 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
           children: <Widget>[
             Padding(
               padding: const EdgeInsets.only(left: 8, right: 12),
-              child: NavBar(
-                backLabel: 'Scan',
-                onBack: () => Navigator.of(context).maybePop(),
-              ),
+              child: NavBar(backLabel: 'Discard', onBack: _leave),
             ),
             Expanded(
               child: SingleChildScrollView(
@@ -284,6 +332,11 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
                           : '$_title · ${_result.areaM2!.round()} m²',
                     ),
                     const SizedBox(height: 18),
+                    if (widget.export
+                        case final ScanExport export?) ...<Widget>[
+                      _ModelPreview(modelPath: export.modelPath),
+                      const SizedBox(height: 16),
+                    ],
                     _buildDetails(),
                     const SizedBox(height: 16),
                     HairlineContainer(
@@ -338,10 +391,7 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
                     onPressed: _submit,
                   ),
                   const SizedBox(height: 8),
-                  SecondaryAction(
-                    label: 'Keep scanning',
-                    onTap: () => Navigator.of(context).maybePop(),
-                  ),
+                  SecondaryAction(label: 'Scan again', onTap: _scanAgain),
                 ],
               ),
             ),
@@ -556,6 +606,55 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
                     ),
                 ],
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The finished room in 3D (Polycam style), to turn and zoom before
+/// submitting: RoomPlan's own model of the walls, doors, windows and
+/// objects it found.
+class _ModelPreview extends StatelessWidget {
+  const _ModelPreview({required this.modelPath});
+
+  final String modelPath;
+
+  @override
+  Widget build(BuildContext context) {
+    return HairlineContainer(
+      radius: 19,
+      fillColor: AppColors.planCanvas,
+      padding: const EdgeInsets.all(6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: SizedBox(
+              height: 300,
+              child: ScanModelPreview(modelPath: modelPath),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(8, 9, 8, 4),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  Icons.view_in_ar_rounded,
+                  size: 15,
+                  color: AppColors.accent,
+                ),
+                SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    '3D model · drag to turn, pinch to zoom',
+                    style: AppTheme.caption,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

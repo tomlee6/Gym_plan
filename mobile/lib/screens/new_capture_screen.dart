@@ -10,9 +10,11 @@ import '../widgets/detail_widgets.dart';
 import '../widgets/nav_bar.dart';
 import 'scanning_screen.dart';
 
-/// Opens the camera and starts scanning straight away, Polycam style.
+/// Opens the camera straight away, Polycam style; the scan starts when the
+/// surveyor taps the capture button.
 ///
-/// All it waits for is the account's facilities and the device check. The
+/// It checks for LiDAR first and, without it, says so and goes back. Then
+/// it only waits for the account's facilities. The
 /// facility, level and floor-to-floor height are confirmed on the review
 /// screen after the walk; the scan starts with the gym the user was looking
 /// at, [initialLevel] and [defaultHeightM] filled in.
@@ -61,11 +63,28 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
       _noFacilities = false;
       _unsupported = null;
     });
-    final FacilityList list;
+
+    // LiDAR first: without it nothing past this point can work, so the
+    // surveyor is told at once and sent back, before anything is loaded.
     final DeviceCapability device;
     try {
-      list = await _service.facilities();
       device = await _service.checkDevice();
+    } catch (_) {
+      if (mounted) {
+        setState(() => _loadError = 'The LiDAR check could not run.');
+      }
+      return;
+    }
+    if (!mounted) return;
+    if (!device.supported) {
+      setState(() => _unsupported = device);
+      await _sayNoLidar(device);
+      return;
+    }
+
+    final FacilityList list;
+    try {
+      list = await _service.facilities();
     } on ApiException catch (e) {
       if (mounted) setState(() => _loadError = e.message);
       return;
@@ -82,13 +101,6 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
     // to capture against, so say so rather than wait.
     if (list.facilities.isEmpty) {
       setState(() => _noFacilities = true);
-      return;
-    }
-
-    // A phone without LiDAR cannot produce a usable scan, so the sign-in
-    // screen's warning is enforced here.
-    if (!device.supported) {
-      setState(() => _unsupported = device);
       return;
     }
 
@@ -122,6 +134,30 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
             FadeTransition(opacity: animation, child: child),
       ),
     );
+  }
+
+  /// "This device doesn't have LiDAR": scanning cannot go on, so OK goes
+  /// back to where New capture was opened from.
+  Future<void> _sayNoLidar(DeviceCapability device) async {
+    await showCupertinoDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) => CupertinoAlertDialog(
+        title: const Text('LiDAR required'),
+        content: Text(
+          'This device doesn\'t have a LiDAR sensor, so it can\'t scan a '
+          'floor. Use an iPhone Pro (12 Pro or later) or an iPad Pro with '
+          'LiDAR.\n\n${device.detail}',
+        ),
+        actions: <Widget>[
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) Navigator.of(context).maybePop();
   }
 
   @override

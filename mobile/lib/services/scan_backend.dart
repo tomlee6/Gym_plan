@@ -2,41 +2,34 @@ import 'package:flutter/foundation.dart';
 import 'package:room_scan/room_scan.dart';
 
 import '../models/scan.dart';
-import 'lidar_scan_session.dart';
 import 'capture_service.dart';
-import 'simulated_scan_session.dart';
+import 'lidar_scan_session.dart';
 import 'scan_session.dart';
 
-/// Decides whether scans use the LiDAR sensor or the simulated walk.
+/// Whether this device can scan, and the scan it runs.
 ///
-/// - A LiDAR iPhone or iPad (the app needs iOS 17) always scans for real.
-/// - Anywhere else, debug builds fall back to the simulated walk so the
-///   flow can be developed on a simulator, emulator or desktop.
-/// - Release builds on other devices refuse to scan: a simulated plan would
-///   be worthless to the reviewer.
+/// Only a LiDAR iPhone or iPad (the app needs iOS 17) can scan. Anywhere
+/// else — a phone without LiDAR, a simulator, Android, a desktop — the
+/// device is refused, in debug builds as in release: there is no demo walk
+/// or made-up data, since a plan the reviewer cannot trust is worse than
+/// none.
 class ScanBackend {
   const ScanBackend._();
 
-  static bool _useLidar = false;
-
-  /// Whether [createSession] will return a real scan. Settled by [detect].
-  static bool get usesLidar => _useLidar;
-
-  static const DeviceCapability simulated = DeviceCapability(
-    supported: true,
-    headline: 'Simulated scan',
-    detail: 'No LiDAR here · runs a demo walk',
-  );
+  /// Tests set this to stand in for the device check, so they choose the
+  /// device rather than the app ever pretending to have one.
+  @visibleForTesting
+  static DeviceCapability? debugOverride;
 
   static Future<DeviceCapability> detect() async {
-    _useLidar = false;
-    String? reason;
+    final DeviceCapability? override = debugOverride;
+    if (override != null) return override;
 
+    String? reason;
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
       try {
         final RoomScanDeviceInfo info = await RoomScan.deviceInfo();
         if (info.supported) {
-          _useLidar = true;
           return DeviceCapability(
             supported: true,
             headline: 'LiDAR ready',
@@ -49,7 +42,6 @@ class ScanBackend {
       }
     }
 
-    if (kDebugMode) return simulated;
     return DeviceCapability(
       supported: false,
       headline: 'Cannot scan on this device',
@@ -57,7 +49,7 @@ class ScanBackend {
     );
   }
 
-  static ScanSession createSession(ScanConfig config) => _useLidar
-      ? LidarScanSession(config: config)
-      : SimulatedScanSession(config: config);
+  /// The scan for [config]: always the LiDAR scanner.
+  static ScanSession createSession(ScanConfig config) =>
+      LidarScanSession(config: config);
 }

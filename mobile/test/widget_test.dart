@@ -291,8 +291,8 @@ void main() {
       expect(find.text('This app needs an iPhone with LiDAR'), findsOneWidget);
       expect(find.byType(LoginScreen), findsNothing);
 
-      // Debug builds may carry on with the simulated scan.
-      await tester.tap(find.text('Continue with the simulated scan (debug)'));
+      // Debug builds may carry on to browse; scanning stays off.
+      await tester.tap(find.text('Continue without scanning (debug)'));
       await _settle(tester);
       expect(find.byType(LoginScreen), findsOneWidget);
     });

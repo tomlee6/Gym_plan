@@ -6,6 +6,8 @@ import 'package:http/testing.dart';
 import 'package:mobile/models/scan.dart';
 import 'package:mobile/services/api_client.dart';
 import 'package:mobile/services/auth_session.dart';
+import 'package:mobile/services/capture_service.dart';
+import 'package:mobile/services/scan_backend.dart';
 import 'package:mobile/services/hub_auth.dart';
 import 'package:mobile/services/offline_cache.dart';
 import 'package:mobile/services/profile_service.dart';
@@ -559,5 +561,15 @@ class FakeWebAuthenticator implements WebAuthenticator {
   final FakeUploadQueue uploads = FakeUploadQueue();
   UploadQueue.instance = uploads;
   CaptureSettings.instance.reset();
+  // Tests run as a LiDAR iPhone unless they say otherwise. The app itself
+  // has no stand-in: off a LiDAR device it refuses to scan.
+  ScanBackend.debugOverride = lidarIPhone;
   return (backend: backend, uploads: uploads);
 }
+
+/// What the device check reports on a LiDAR iPhone.
+const DeviceCapability lidarIPhone = DeviceCapability(
+  supported: true,
+  headline: 'LiDAR ready',
+  detail: 'iPhone · iOS 18.2',
+);

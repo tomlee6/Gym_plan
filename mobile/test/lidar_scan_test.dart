@@ -324,6 +324,8 @@ void main() {
   });
 
   group('ScanBackend', () {
+    // These test the real check, not the stand-in the other tests use.
+    setUp(() => ScanBackend.debugOverride = null);
     tearDown(() => debugDefaultTargetPlatformOverride = null);
 
     test('a LiDAR iPhone scans for real', () async {
@@ -336,30 +338,30 @@ void main() {
       expect(device.supported, isTrue);
       expect(device.headline, 'LiDAR ready');
       expect(device.detail, 'iPhone · iOS 18.2');
-      expect(ScanBackend.usesLidar, isTrue);
       expect(ScanBackend.createSession(_config), isA<LidarScanSession>());
     });
 
-    test('an iPhone without LiDAR falls back to the demo in debug', () async {
+    test('an iPhone without LiDAR is refused, even in debug', () async {
       final _FakeNative native = _FakeNative(messenger, supported: false);
       addTearDown(native.dispose);
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
 
       final DeviceCapability device = await ScanBackend.detect();
 
-      expect(device, same(ScanBackend.simulated));
-      expect(ScanBackend.usesLidar, isFalse);
+      // No demo walk and no made-up data: the device cannot scan.
+      expect(device.supported, isFalse);
+      expect(device.detail, 'iPhone · This device has no LiDAR sensor.');
     });
 
-    test('other platforms never touch the native scanner', () async {
+    test('other platforms are refused without touching the scanner', () async {
       final _FakeNative native = _FakeNative(messenger);
       addTearDown(native.dispose);
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
 
-      await ScanBackend.detect();
+      final DeviceCapability device = await ScanBackend.detect();
 
       expect(native.calls, isEmpty);
-      expect(ScanBackend.usesLidar, isFalse);
+      expect(device.supported, isFalse);
     });
   });
 
@@ -386,6 +388,10 @@ void main() {
           home: ScanningScreen(config: _config, session: session),
         ),
       );
+      await tester.pump();
+      // The camera is live; the scan starts on the capture button.
+      expect(native.calls, isNot(contains('start')));
+      await tester.tap(find.byKey(const ValueKey<String>('start-scan')));
       await tester.pump();
       return session;
     }

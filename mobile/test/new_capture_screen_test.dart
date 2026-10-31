@@ -121,9 +121,53 @@ void main() {
     );
     await _settle(tester);
 
-    expect(find.text('No LiDAR sensor'), findsOneWidget);
-    expect(find.text('iPhone 11 · iOS 18.2'), findsOneWidget);
+    // Checked before anything else, and said in an alert.
+    expect(find.text('LiDAR required'), findsOneWidget);
+    expect(find.textContaining('doesn\'t have a LiDAR sensor'), findsOneWidget);
+    expect(find.textContaining('iPhone 11 · iOS 18.2'), findsWidgets);
     expect(find.byType(ScanningScreen), findsNothing);
+
+    await tester.tap(find.text('OK'));
+    await _settle(tester);
+    expect(find.text('LiDAR required'), findsNothing);
+    expect(find.byType(ScanningScreen), findsNothing);
+  });
+
+  testWidgets('without LiDAR, OK goes back to where it was opened from', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.dark,
+        home: Builder(
+          builder: (BuildContext context) => TextButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => NewCaptureScreen(
+                  captureService: CaptureService(
+                    deviceOverride: const DeviceCapability(
+                      supported: false,
+                      headline: 'Cannot scan on this device',
+                      detail: 'iPhone · This device has no LiDAR sensor.',
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            child: const Text('home'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('home'));
+    await _settle(tester);
+    expect(find.text('LiDAR required'), findsOneWidget);
+
+    await tester.tap(find.text('OK'));
+    await _settle(tester);
+
+    expect(find.byType(NewCaptureScreen), findsNothing);
+    expect(find.text('home'), findsOneWidget);
   });
 
   testWidgets('offline: says so, and starts on retry', (

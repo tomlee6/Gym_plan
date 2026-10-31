@@ -71,8 +71,8 @@ class _StartupScreenState extends State<StartupScreen> {
     });
   }
 
-  /// Debug builds only: carry on with the simulated scan, so the flow can
-  /// still be worked through on a simulator.
+  /// Debug builds only: carry on to browse the app on a simulator. Scanning
+  /// itself stays off: New capture refuses a device without LiDAR.
   void _continueAnyway() =>
       setState(() => _next = screenForSession(widget.session));
 
@@ -148,7 +148,7 @@ class LidarRequiredScreen extends StatelessWidget {
               const Spacer(),
               if (onContinueAnyway != null)
                 SecondaryAction(
-                  label: 'Continue with the simulated scan (debug)',
+                  label: 'Continue without scanning (debug)',
                   onTap: onContinueAnyway!,
                 ),
             ],

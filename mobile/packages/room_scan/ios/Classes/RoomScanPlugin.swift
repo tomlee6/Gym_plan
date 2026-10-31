@@ -49,11 +49,32 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     registrar.register(
       RoomCaptureViewFactory(plugin: instance),
       withId: "flex/room_capture_view")
+
+    // The finished room in 3D, shown before it is submitted.
+    registrar.register(ScanModelViewFactory(), withId: "flex/scan_model_view")
   }
 
   func attachCaptureContainer(_ container: RoomCaptureContainerView) {
     self.captureContainer = container
     updateCaptureView()
+  }
+
+  /// The scan has ended (finished or discarded) and its screen is closing.
+  /// The camera is left free rather than going back to the preview, so
+  /// the 360 equipment recorder can take it next.
+  private func releaseCamera() {
+    fallbackCamera?.stop()
+    fallbackCamera = nil
+    captureContainer?.activeView = nil
+  }
+
+  /// The viewfinder is gone. Stops the preview camera unless a newer
+  /// viewfinder has taken over.
+  func detachCaptureContainer(_ container: RoomCaptureContainerView) {
+    guard captureContainer == nil || captureContainer === container else { return }
+    captureContainer = nil
+    fallbackCamera?.stop()
+    fallbackCamera = nil
   }
 
   func updateCaptureView() {
@@ -153,14 +174,24 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         return
       }
       active?.stop()
-      do {
-        let next = try RoomScanner(emit: { [weak self] event in self?.eventSink?(event) })
-        scanner = next
-        next.start()
-        updateCaptureView()
-        result(nil)
-      } catch {
-        result(FlutterError(code: "start_failed", message: error.localizedDescription, details: nil))
+      // The preview camera shown before the scan must let go of the camera
+      // before ARKit takes it: two capture sessions cannot share it.
+      let launch = { [weak self] in
+        guard let self = self else { return }
+        do {
+          let next = try RoomScanner(emit: { [weak self] event in self?.eventSink?(event) })
+          self.scanner = next
+          self.updateCaptureView()
+          next.start()
+          result(nil)
+        } catch {
+          result(FlutterError(code: "start_failed", message: error.localizedDescription, details: nil))
+        }
+      }
+      if let camera = fallbackCamera {
+        camera.stop(then: launch)
+      } else {
+        launch()
       }
 
     case "pause":
@@ -174,7 +205,7 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     case "stop":
       active?.stop()
       scanner = nil
-      updateCaptureView()
+      releaseCamera()
       result(nil)
 
     case "nextSection":
@@ -211,7 +242,7 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         do {
           let export = try await active.finish()
           self.scanner = nil
-          self.updateCaptureView()
+          self.releaseCamera()
           result(export)
         } catch {
           result(FlutterError(code: "export_failed", message: error.localizedDescription, details: nil))
@@ -336,14 +367,25 @@ final class VideoEventStream: NSObject, FlutterStreamHandler {
 
 final class RoomCapturePlatformView: NSObject, FlutterPlatformView {
   private let container = RoomCaptureContainerView()
+  private weak var plugin: RoomScanPlugin?
 
   init(frame: CGRect, plugin: RoomScanPlugin) {
     container.frame = frame
+    self.plugin = plugin
     super.init()
     plugin.attachCaptureContainer(container)
   }
 
   func view() -> UIView { container }
+
+  /// The scan screen has closed: let go of the preview camera, so it does
+  /// not keep running behind the rest of the app.
+  deinit {
+    let container = self.container
+    DispatchQueue.main.async { [weak plugin] in
+      plugin?.detachCaptureContainer(container)
+    }
+  }
 }
 
 final class RoomCaptureViewFactory: NSObject, FlutterPlatformViewFactory {
@@ -379,29 +421,20 @@ final class RoomCaptureContainerView: UIView {
   }
 }
 
+/// The live camera shown before the scan starts, Polycam style: the
+/// surveyor sees the room at once and taps capture to start RoomPlan.
+/// Released before ARKit takes the camera (see `stop(then:)`).
 final class FallbackCameraView: UIView {
   private let session = AVCaptureSession()
   private var previewLayer: AVCaptureVideoPreviewLayer?
   private var isRunning = false
 
+  /// Configuring, starting and stopping, one at a time, off the main thread.
+  private let queue = DispatchQueue(label: "flex.room_scan.preview_camera")
+
   override init(frame: CGRect) {
     super.init(frame: frame)
     backgroundColor = .black
-    setupCamera()
-  }
-
-  required init?(coder: NSCoder) { nil }
-
-  private func setupCamera() {
-    session.beginConfiguration()
-    session.sessionPreset = .high
-
-    if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-       let input = try? AVCaptureDeviceInput(device: device),
-       session.canAddInput(input) {
-      session.addInput(input)
-    }
-    session.commitConfiguration()
 
     let layer = AVCaptureVideoPreviewLayer(session: session)
     layer.videoGravity = .resizeAspectFill
@@ -409,22 +442,52 @@ final class FallbackCameraView: UIView {
     self.layer.addSublayer(layer)
     self.previewLayer = layer
 
-    start()
-  }
-
-  func start() {
-    guard !isRunning else { return }
-    isRunning = true
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      self?.session.startRunning()
+    // Asks for camera access the first time; RoomPlan needs it anyway.
+    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    case .authorized:
+      configureAndStart()
+    case .notDetermined:
+      AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+        guard granted else { return }
+        DispatchQueue.main.async { self?.configureAndStart() }
+      }
+    default:
+      break  // Refused: the scan says so when it cannot start.
     }
   }
 
-  func stop() {
-    guard isRunning else { return }
+  required init?(coder: NSCoder) { nil }
+
+  private func configureAndStart() {
+    guard !isRunning else { return }
+    isRunning = true
+    queue.async { [session] in
+      if session.inputs.isEmpty {
+        session.beginConfiguration()
+        session.sessionPreset = .high
+        if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+          let input = try? AVCaptureDeviceInput(device: device),
+          session.canAddInput(input)
+        {
+          session.addInput(input)
+        }
+        session.commitConfiguration()
+      }
+      session.startRunning()
+    }
+  }
+
+  func start() {
+    configureAndStart()
+  }
+
+  /// Stops the preview, then calls `then` on the main thread once the
+  /// camera is free for ARKit.
+  func stop(then: (() -> Void)? = nil) {
     isRunning = false
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      self?.session.stopRunning()
+    queue.async { [session] in
+      if session.isRunning { session.stopRunning() }
+      if let then = then { DispatchQueue.main.async(execute: then) }
     }
   }
 

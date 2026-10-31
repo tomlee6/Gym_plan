@@ -1,17 +1,32 @@
 import 'dart:async';
 import 'dart:ui';
 
-import '../models/scan.dart';
-import 'scan_session.dart';
+import 'package:mobile/models/scan.dart';
+import 'package:mobile/services/scan_session.dart';
 
-/// Simulates a walk round [FloorOutline] so the flow can be demonstrated and
-/// tested without a LiDAR device.
+/// Test only: walks round [FloorOutline] so the scan screens can be driven
+/// without a LiDAR device. The app has no demo scan.
 class SimulatedScanSession extends ScanSession {
   SimulatedScanSession({
     required super.config,
     this.tickInterval = const Duration(milliseconds: 200),
     this.unitsPerTick = 4,
+    this.exportResult,
+    this.exportError,
   });
+
+  /// What finishing the scan produces: the files a LiDAR scan would write.
+  /// Null, like a scan with nothing to export.
+  final ScanExport? exportResult;
+
+  /// Set to make finishing fail, as RoomPlan can.
+  final Object? exportError;
+
+  @override
+  Future<ScanExport?> export() async {
+    if (exportError case final Object error) throw error;
+    return exportResult;
+  }
 
   final Duration tickInterval;
 

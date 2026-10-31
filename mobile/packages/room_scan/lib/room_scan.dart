@@ -8,6 +8,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -542,6 +543,43 @@ class MachineClassifier {
       // the surveyor names the machine as before.
       return const <MachineTypeSuggestion>[];
     }
+  }
+}
+
+/// The finished room as a 3D model the surveyor can turn and zoom, Polycam
+/// style: RoomPlan's exported `scan.usdz`, shown with SceneKit. Drag to
+/// turn, pinch to zoom, two fingers to move.
+///
+/// iOS only; elsewhere it says the preview is shown on the iPhone.
+class ScanModelPreview extends StatelessWidget {
+  const ScanModelPreview({super.key, required this.modelPath});
+
+  /// Where the finished scan's `scan.usdz` is on the device.
+  final String modelPath;
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
+      return const ColoredBox(
+        color: Color(0xFF0D1518),
+        child: Center(
+          child: Text(
+            '3D preview is shown on the iPhone',
+            style: TextStyle(color: Color(0xFF7B8188), fontSize: 13),
+          ),
+        ),
+      );
+    }
+    return UiKitView(
+      viewType: 'flex/scan_model_view',
+      creationParams: <String, Object?>{'path': modelPath},
+      creationParamsCodec: const StandardMessageCodec(),
+      // The view takes every touch, so turning the model never scrolls
+      // the page instead.
+      gestureRecognizers: <Factory<OneSequenceGestureRecognizer>>{
+        Factory<OneSequenceGestureRecognizer>(EagerGestureRecognizer.new),
+      },
+    );
   }
 }
 

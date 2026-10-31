@@ -5,24 +5,23 @@ import 'package:room_scan/room_scan.dart';
 import '../models/scan.dart';
 import '../services/app_config.dart';
 import '../services/capture_service.dart';
-import '../services/lidar_scan_session.dart';
 import '../services/profile_service.dart';
 import '../services/scan_backend.dart';
 import '../services/scan_session.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/detail_widgets.dart';
-import '../widgets/floor_plan.dart';
 import '../widgets/hairline_container.dart';
 import '../widgets/pressable.dart';
 import '../widgets/tag_sheet.dart';
 import 'review_submit_screen.dart';
 
-/// Live scan, Polycam style: the camera fills the screen and, on a LiDAR
-/// device, Apple's RoomCaptureView outlines each wall, edge and opening in
-/// white as it is found, with a small 3D model of the room so far. Over it
-/// sit only the clock, the closure check, coverage, and the tag, finish and
-/// photo buttons.
+/// Live scan, Polycam style. The camera is live as soon as the screen
+/// opens; the capture button starts the scan, and from then Apple's
+/// RoomCaptureView outlines each wall, edge and opening in white as it is
+/// found, with a small 3D model of the room so far. Over it sit only the
+/// clock, the closure check, coverage, and the tag, finish and photo
+/// buttons.
 class ScanningScreen extends StatefulWidget {
   const ScanningScreen({
     super.key,
@@ -58,9 +57,12 @@ class _ScanningScreenState extends State<ScanningScreen> {
 
   late final double _maxExtentM = widget.maxExtentM ?? AppConfig.maxScanExtentM;
 
-  /// Apple's view draws the walls and the 3D model itself. Without it (the
-  /// simulated walk) a small 2D outline stands in.
-  bool get _nativeOverlay => _session is LidarScanSession;
+  /// The surveyor has tapped the capture button. Until then the camera is
+  /// live but nothing is scanned.
+  bool _started = false;
+
+  /// Finish was tapped and RoomPlan is building the final room.
+  bool _processing = false;
 
   /// The walls of the current section already span more than one scan may
   /// hold (F-04). With sections (F-01) the limit is per section, so a big
@@ -78,10 +80,16 @@ class _ScanningScreenState extends State<ScanningScreen> {
   /// last one.
   bool _startingSection = false;
 
-  @override
-  void initState() {
-    super.initState();
+  /// The capture button, first tap: RoomPlan starts and the white wall
+  /// outlines begin to form.
+  void _begin() {
+    setState(() => _started = true);
     _session.start();
+  }
+
+  /// Carries on after a dialog, once the scan has been started.
+  void _resume() {
+    if (_started) _session.start();
   }
 
   @override
@@ -206,7 +214,7 @@ class _ScanningScreenState extends State<ScanningScreen> {
       );
       if (!mounted) return;
       if (reason == null) {
-        _session.start();
+        _resume();
         return;
       }
     }
@@ -214,22 +222,61 @@ class _ScanningScreenState extends State<ScanningScreen> {
     _session.pause();
     final ScanResult result = _session.finish(overrideReason: reason);
 
-    await Navigator.of(context).push(
+    // Polycam style: the scan is finalised now, so the review screen can
+    // show the room in 3D before it is submitted. RoomPlan cannot carry on
+    // a finalised scan, so the review screen replaces this one; a missed
+    // wall means scanning again (or a New section before finishing).
+    setState(() => _processing = true);
+    final ScanExport? export;
+    try {
+      export = await _session.export();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _processing = false);
+      await _sayNotProcessed();
+      return;
+    }
+    if (!mounted) return;
+
+    Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
         builder: (_) => ReviewSubmitScreen(
           result: result,
           facilities: widget.facilities,
-          exportModel: _session.export,
+          export: export,
         ),
       ),
     );
+  }
 
-    // Back from review via "Keep scanning". If the scan was submitted this
-    // screen has already been removed.
-    if (mounted) _session.start();
+  /// RoomPlan could not build the room. The scan has ended, so the only
+  /// way on is to scan again.
+  Future<void> _sayNotProcessed() async {
+    await showCupertinoDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) => CupertinoAlertDialog(
+        title: const Text('The scan could not be processed'),
+        content: const Text(
+          'The room could not be built from this scan. Please scan it again.',
+        ),
+        actions: <Widget>[
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) Navigator.of(context).pop();
   }
 
   Future<void> _confirmDiscard() async {
+    // Nothing scanned yet, so nothing to lose: just close.
+    if (!_started) {
+      Navigator.of(context).pop();
+      return;
+    }
     _session.pause();
     final bool? discard = await showCupertinoDialog<bool>(
       context: context,
@@ -254,7 +301,7 @@ class _ScanningScreenState extends State<ScanningScreen> {
     if (discard == true) {
       Navigator.of(context).pop();
     } else {
-      _session.start();
+      _resume();
     }
   }
 
@@ -264,7 +311,7 @@ class _ScanningScreenState extends State<ScanningScreen> {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (bool didPop, Object? _) {
-        if (!didPop) _confirmDiscard();
+        if (!didPop && !_processing) _confirmDiscard();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -281,41 +328,46 @@ class _ScanningScreenState extends State<ScanningScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      _buildTopBar(),
-                      const SizedBox(height: 12),
-                      _buildClosureCallout(),
-                      if (_tooLarge) ...<Widget>[
-                        const SizedBox(height: 8),
-                        _TooLargeCallout(
-                          maxM: _maxExtentM,
-                          canSection: _session.supportsSections,
-                        ),
-                      ],
-                      const Spacer(),
-                      if (!_nativeOverlay) ...<Widget>[
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: _buildMiniMap(),
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-                      if (_session.tags.isNotEmpty) ...<Widget>[
-                        _TagChips(tags: _session.tags),
-                        const SizedBox(height: 10),
-                      ],
-                      _buildProgress(),
-                      if (_canStartSection) ...<Widget>[
-                        const SizedBox(height: 10),
-                        Center(child: _buildSectionButton()),
-                      ],
-                      const SizedBox(height: 16),
-                      _buildActions(),
-                    ],
+                    children: !_started
+                        ? <Widget>[
+                            // Camera live, nothing scanned yet: only the
+                            // way out, a hint and the capture button.
+                            _buildTopBar(),
+                            const Spacer(),
+                            const _StartHint(),
+                            const SizedBox(height: 16),
+                            Center(child: _RecordButton.start(onTap: _begin)),
+                          ]
+                        : <Widget>[
+                            _buildTopBar(),
+                            const SizedBox(height: 12),
+                            _buildClosureCallout(),
+                            if (_tooLarge) ...<Widget>[
+                              const SizedBox(height: 8),
+                              _TooLargeCallout(
+                                maxM: _maxExtentM,
+                                canSection: _session.supportsSections,
+                              ),
+                            ],
+                            const Spacer(),
+                            if (_session.tags.isNotEmpty) ...<Widget>[
+                              _TagChips(tags: _session.tags),
+                              const SizedBox(height: 10),
+                            ],
+                            _buildProgress(),
+                            if (_canStartSection) ...<Widget>[
+                              const SizedBox(height: 10),
+                              Center(child: _buildSectionButton()),
+                            ],
+                            const SizedBox(height: 16),
+                            _buildActions(),
+                          ],
                   ),
                 ),
               ),
             ),
+
+            if (_processing) const Positioned.fill(child: _Processing()),
           ],
         ),
       ),
@@ -452,31 +504,6 @@ class _ScanningScreenState extends State<ScanningScreen> {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMiniMap() {
-    return Container(
-      width: 120,
-      height: 120,
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: AppColors.planCanvas.withValues(alpha: 0.85),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: FloorPlanView(
-          geometry: _session.geometry,
-          walls: _session.walls,
-          wallProgress: _session.wallProgress,
-          tags: _session.tags,
-          walker: _session.walker,
-          showGrid: false,
-          semanticLabel: 'Live top-down outline of the level being scanned',
         ),
       ),
     );
@@ -643,16 +670,21 @@ class _Glass extends StatelessWidget {
 
 /// The big finish button: a white ring round a red square, as on a camera.
 class _RecordButton extends StatelessWidget {
-  const _RecordButton({required this.onTap});
+  /// While scanning: a red square, which finishes the scan.
+  const _RecordButton({required this.onTap}) : starting = false;
+
+  /// Before the scan: a red circle, which starts it.
+  const _RecordButton.start({required this.onTap}) : starting = true;
 
   final VoidCallback? onTap;
+  final bool starting;
 
   @override
   Widget build(BuildContext context) {
     return Pressable(
-      key: const ValueKey<String>('finish-scan'),
+      key: ValueKey<String>(starting ? 'start-scan' : 'finish-scan'),
       onTap: onTap,
-      semanticLabel: 'Finish scan',
+      semanticLabel: starting ? 'Start scan' : 'Finish scan',
       haptic: HapticImpact.medium,
       pressedScale: 0.92,
       disabledOpacity: 0.4,
@@ -665,15 +697,78 @@ class _RecordButton extends StatelessWidget {
           color: Colors.black.withValues(alpha: 0.25),
         ),
         child: Center(
-          child: Container(
-            width: 32,
-            height: 32,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: starting ? 58 : 32,
+            height: starting ? 58 : 32,
             decoration: BoxDecoration(
               color: AppColors.danger,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(starting ? 29 : 8),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// While RoomPlan builds the final room after Finish. It takes a few
+/// seconds and nothing can be tapped meanwhile.
+class _Processing extends StatelessWidget {
+  const _Processing();
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: Colors.black.withValues(alpha: 0.75),
+      child: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            CupertinoActivityIndicator(radius: 14, color: Colors.white),
+            SizedBox(height: 16),
+            Text(
+              'Processing your scan…',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+            SizedBox(height: 6),
+            Text('Building the 3D model of the room', style: AppTheme.caption),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Before the scan starts: what to do, Polycam style.
+class _StartHint extends StatelessWidget {
+  const _StartHint();
+
+  @override
+  Widget build(BuildContext context) {
+    return _Glass(
+      radius: 15,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      child: Row(
+        children: <Widget>[
+          const Icon(
+            Icons.crop_free_rounded,
+            size: 18,
+            color: AppColors.accent,
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Text(
+              'Point the camera at a wall and tap the button to start '
+              'scanning. Then walk slowly round the edge of the room.',
+              style: AppTheme.caption.copyWith(color: Colors.white70),
+            ),
+          ),
+        ],
       ),
     );
   }
