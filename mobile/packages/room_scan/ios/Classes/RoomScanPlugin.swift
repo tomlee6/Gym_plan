@@ -129,7 +129,10 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
       return
     }
     if call.method == "object.isSupported" {
-      result(ObjectScanner.isSupported)
+      // Read on the main actor, where ObjectCaptureSession lives.
+      Task { @MainActor in
+        result(ObjectScanner.isSupported)
+      }
       return
     }
     if call.method == "object.capture" {

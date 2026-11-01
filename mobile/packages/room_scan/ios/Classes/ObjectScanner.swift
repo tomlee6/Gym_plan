@@ -14,6 +14,8 @@ import UIKit
  Flutter. Cancelling hands back nothing.
  */
 enum ObjectScanner {
+  /// ObjectCaptureSession is main-actor isolated, so this is too.
+  @MainActor
   static var isSupported: Bool {
     ObjectCaptureSession.isSupported && PhotogrammetrySession.isSupported
   }
@@ -76,7 +78,7 @@ final class ObjectCaptureModel: ObservableObject {
   @Published var phase: Phase = .capturing
   @Published var error: String?
 
-  var onFinish: ((Result<[String: Any]?, Error>) -> Void)?
+  var onFinish: (@MainActor (Result<[String: Any]?, Error>) -> Void)?
 
   private let folder: URL
   private var imagesFolder: URL { folder.appendingPathComponent("Images", isDirectory: true) }
@@ -186,6 +188,7 @@ final class ObjectCaptureModel: ObservableObject {
 
 /// Apple's guided capture with a cancel button and the one action button,
 /// then progress while the model is built.
+@MainActor
 struct ObjectCaptureScreen: View {
   @ObservedObject var model: ObjectCaptureModel
 
