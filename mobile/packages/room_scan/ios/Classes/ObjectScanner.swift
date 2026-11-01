@@ -57,16 +57,23 @@ enum ObjectScanner {
 @MainActor
 final class ObjectCaptureModel: ObservableObject {
   enum CaptureError: LocalizedError {
-    case unsupported, noWindow, noModel
+    case unsupported, noWindow, noModel, notEnoughPhotos
 
     var errorDescription: String? {
       switch self {
       case .unsupported: return "This device cannot capture 3D objects."
       case .noWindow: return "The capture screen could not be shown."
       case .noModel: return "The 3D model could not be built. Try again with more of the object in view."
+      case .notEnoughPhotos:
+        return "Not enough photos to build the model. Walk slowly all the way round the object, "
+          + "keeping it in view, until the ring fills."
       }
     }
   }
+
+  /// Photos needed before Finish is offered. Photogrammetry refuses far
+  /// fewer, and a full walk round takes many more.
+  static let minimumPhotos = 20
 
   enum Phase {
     case capturing
@@ -77,6 +84,8 @@ final class ObjectCaptureModel: ObservableObject {
   @Published var state: ObjectCaptureSession.CaptureState = .initializing
   @Published var phase: Phase = .capturing
   @Published var error: String?
+  /// Photos taken so far in the walk round.
+  @Published var shots = 0
 
   var onFinish: (@MainActor (Result<[String: Any]?, Error>) -> Void)?
 
@@ -110,12 +119,14 @@ final class ObjectCaptureModel: ObservableObject {
         apply(state)
       }
     }
-    // A fallback while the camera starts: picks up a state the stream did
-    // not report, and stops once the capture is under way.
+    // Twice a second until the walk round ends: picks up a state the stream
+    // did not report while the camera starts, and counts the photos, which
+    // the session does not announce.
     Task {
-      while !finished {
+      while !finished && !building {
         try? await Task.sleep(nanoseconds: 500_000_000)
-        if case .initializing = state { apply(session.state) } else { break }
+        if case .initializing = state { apply(session.state) }
+        shots = session.numberOfShotsTaken
       }
     }
   }
@@ -142,17 +153,22 @@ final class ObjectCaptureModel: ObservableObject {
     switch state {
     case .ready: return "Continue"
     case .detecting: return "Start capture"
-    case .capturing: return "Finish"
+    case .capturing:
+      return shots < Self.minimumPhotos
+        ? "Keep walking round · \(shots)/\(Self.minimumPhotos) photos"
+        : "Finish · \(shots) photos"
     case .finishing: return "Finishing…"
     case .failed: return "Close"
     default: return "Starting the camera…"
     }
   }
 
-  /// Whether the button does anything at this stage.
+  /// Whether the button does anything at this stage. Finish waits for
+  /// enough photos: the model cannot be built from a handful.
   var actionEnabled: Bool {
     switch state {
-    case .ready, .detecting, .capturing, .failed: return true
+    case .ready, .detecting, .failed: return true
+    case .capturing: return shots >= Self.minimumPhotos
     default: return false
     }
   }
@@ -161,7 +177,9 @@ final class ObjectCaptureModel: ObservableObject {
     switch state {
     case .ready: _ = session.startDetecting()
     case .detecting: session.startCapturing()
-    case .capturing: session.finish()
+    case .capturing:
+      guard session.numberOfShotsTaken >= Self.minimumPhotos else { return }
+      session.finish()
     case .failed: cancel()
     default: break
     }
@@ -170,7 +188,12 @@ final class ObjectCaptureModel: ObservableObject {
   }
 
   func cancel() {
-    session.cancel()
+    // A session that has completed or failed is already over; cancelling
+    // it again is an error to ObjectCaptureSession.
+    switch session.state {
+    case .completed, .failed: break
+    default: session.cancel()
+    }
     try? FileManager.default.removeItem(at: folder)
     done(.success(nil))
   }
@@ -178,6 +201,12 @@ final class ObjectCaptureModel: ObservableObject {
   /// Builds the model from the photos, on the phone.
   private func build() async {
     phase = .building(progress: 0)
+    let taken = (try? FileManager.default.contentsOfDirectory(atPath: imagesFolder.path).count) ?? 0
+    guard taken >= Self.minimumPhotos else {
+      try? FileManager.default.removeItem(at: folder)
+      done(.failure(CaptureError.notEnoughPhotos))
+      return
+    }
     do {
       var configuration = PhotogrammetrySession.Configuration()
       configuration.checkpointDirectory = checkpoints
