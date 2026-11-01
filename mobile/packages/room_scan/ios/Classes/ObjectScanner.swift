@@ -237,7 +237,19 @@ final class ObjectCaptureModel: ObservableObject {
         }
       }
     } catch {
-      done(.failure(error))
+      done(.failure(Self.plain(error)))
+    }
+  }
+
+  /// Photogrammetry's errors in words: Apple's own read only as
+  /// "PhotogrammetrySession.Error error 0".
+  private static func plain(_ error: Error) -> Error {
+    guard let failure = error as? PhotogrammetrySession.Error else { return error }
+    switch failure {
+    // Too few photos it could use: blurred, too alike, or the object
+    // mostly out of view.
+    case .invalidImages: return CaptureError.notEnoughPhotos
+    default: return CaptureError.noModel
     }
   }
 
