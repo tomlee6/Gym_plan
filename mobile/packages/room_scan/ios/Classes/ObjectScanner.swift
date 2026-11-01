@@ -101,29 +101,59 @@ final class ObjectCaptureModel: ObservableObject {
     var configuration = ObjectCaptureSession.Configuration()
     configuration.checkpointDirectory = checkpoints
     session.start(imagesDirectory: imagesFolder, configuration: configuration)
+    // The session may already have moved on (to .ready) before the loop
+    // below starts listening, and stateUpdates only reports changes from
+    // then on; without this the screen waits for a .ready that has passed.
+    apply(session.state)
     Task {
       for await state in session.stateUpdates {
-        self.state = state
-        switch state {
-        case .completed:
-          await build()
-        case .failed(let failure):
-          error = failure.localizedDescription
-        default:
-          break
-        }
+        apply(state)
       }
+    }
+    // A fallback while the camera starts: picks up a state the stream did
+    // not report, and stops once the capture is under way.
+    Task {
+      while !finished {
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        if case .initializing = state { apply(session.state) } else { break }
+      }
+    }
+  }
+
+  private var building = false
+
+  private func apply(_ newState: ObjectCaptureSession.CaptureState) {
+    state = newState
+    switch newState {
+    case .completed:
+      guard !building else { return }
+      building = true
+      Task { await build() }
+    case .failed(let failure):
+      error = failure.localizedDescription
+    default:
+      break
     }
   }
 
   /// The one button under the camera, by stage: frame the object, start
   /// the walk round, then finish.
-  var actionTitle: String? {
+  var actionTitle: String {
     switch state {
     case .ready: return "Continue"
     case .detecting: return "Start capture"
     case .capturing: return "Finish"
-    default: return nil
+    case .finishing: return "Finishing…"
+    case .failed: return "Close"
+    default: return "Starting the camera…"
+    }
+  }
+
+  /// Whether the button does anything at this stage.
+  var actionEnabled: Bool {
+    switch state {
+    case .ready, .detecting, .capturing, .failed: return true
+    default: return false
     }
   }
 
@@ -132,8 +162,11 @@ final class ObjectCaptureModel: ObservableObject {
     case .ready: _ = session.startDetecting()
     case .detecting: session.startCapturing()
     case .capturing: session.finish()
+    case .failed: cancel()
     default: break
     }
+    // Read back at once, so the button moves on even if the update is late.
+    apply(session.state)
   }
 
   func cancel() {
@@ -227,18 +260,20 @@ struct ObjectCaptureScreen: View {
             .background(.red.opacity(0.75), in: RoundedRectangle(cornerRadius: 12))
             .padding(.horizontal)
         }
-        if let title = model.actionTitle {
-          Button(action: { model.act() }) {
-            Text(title)
-              .font(.headline)
-              .frame(maxWidth: .infinity)
-              .padding(.vertical, 15)
-          }
-          .background(Color(red: 0.0, green: 0.79, blue: 0.70), in: Capsule())
-          .foregroundStyle(Color(red: 0.0, green: 0.02, blue: 0.04))
-          .padding(.horizontal, 24)
-          .padding(.bottom, 24)
+        Button(action: { model.act() }) {
+          Text(model.actionTitle)
+            .font(.headline)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
         }
+        .disabled(!model.actionEnabled)
+        .background(
+          Color(red: 0.0, green: 0.79, blue: 0.70).opacity(model.actionEnabled ? 1 : 0.45),
+          in: Capsule()
+        )
+        .foregroundStyle(Color(red: 0.0, green: 0.02, blue: 0.04))
+        .padding(.horizontal, 24)
+        .padding(.bottom, 24)
       }
     }
   }
