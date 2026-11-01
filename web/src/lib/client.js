@@ -363,6 +363,13 @@ export const plansApi = {
   revokeShare: (id) => request('DELETE', `/v1/plans/${enc(id)}/share-links`),
 };
 
+/** Owner: 3D objects scanned with the app (backend/src/modules/objects.js). */
+export const objectsApi = {
+  list: () => request('GET', '/v1/objects'),
+  get: (id) => request('GET', `/v1/objects/${enc(id)}`),
+  remove: (id) => request('DELETE', `/v1/objects/${enc(id)}`),
+};
+
 /** Owner: uploading a drawing (mobile/docs/upload-api.md, via /drawings). */
 export const capturesApi = {
   registerDrawing: (body, idempotencyKey) =>

@@ -64,6 +64,9 @@ class _ScanViewerScreenState extends State<ScanViewerScreen> {
 
   bool get _hasModel => widget.modelPath != null;
 
+  /// A 3D Space mesh or a 3D Object has no floor plan.
+  bool get _hasPlan => widget.geometry.walls.isNotEmpty;
+
   @override
   void dispose() {
     if (widget.controller == null) _model.dispose();
@@ -190,13 +193,16 @@ class _ScanViewerScreenState extends State<ScanViewerScreen> {
           ),
           const SizedBox(height: 12),
         ],
-        _RoundButton(
-          icon: Icons.straighten_rounded,
-          label: _measurements ? 'Hide measurements' : 'Show measurements',
-          selected: _measurements,
-          onTap: _toggleMeasurements,
-        ),
-        if (_hasModel) ...<Widget>[
+        // Wall lengths: a room scan has walls to label; a mesh or an
+        // object is measured with the Measure tool instead.
+        if (_hasPlan || widget.dataPath != null)
+          _RoundButton(
+            icon: Icons.straighten_rounded,
+            label: _measurements ? 'Hide measurements' : 'Show measurements',
+            selected: _measurements,
+            onTap: _toggleMeasurements,
+          ),
+        if (_hasModel && _hasPlan) ...<Widget>[
           const SizedBox(height: 12),
           _RoundButton(
             icon: model ? Icons.grid_view_rounded : Icons.view_in_ar_rounded,
@@ -436,11 +442,25 @@ class MeasurementChips extends StatelessWidget {
         (Icons.square_foot_rounded, area),
       if (measurements.heightLabel case final String height)
         (Icons.height_rounded, height),
-      (
-        Icons.border_outer_rounded,
-        '${measurements.wallCount} '
-            '${measurements.wallCount == 1 ? 'wall' : 'walls'}',
-      ),
+      // Only a room scan has walls; a mesh or an object has none to count.
+      if (measurements.wallCount > 0)
+        (
+          Icons.border_outer_rounded,
+          '${measurements.wallCount} '
+              '${measurements.wallCount == 1 ? 'wall' : 'walls'}',
+        ),
+      if (measurements.doorCount > 0)
+        (
+          Icons.door_front_door_outlined,
+          '${measurements.doorCount} '
+              '${measurements.doorCount == 1 ? 'door' : 'doors'}',
+        ),
+      if (measurements.windowCount > 0)
+        (
+          Icons.window_outlined,
+          '${measurements.windowCount} '
+              '${measurements.windowCount == 1 ? 'window' : 'windows'}',
+        ),
     ];
     return Wrap(
       spacing: 8,

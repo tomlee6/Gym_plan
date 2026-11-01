@@ -6,6 +6,8 @@ import 'package:http/testing.dart';
 import 'package:mobile/models/scan.dart';
 import 'package:mobile/services/api_client.dart';
 import 'package:mobile/services/auth_session.dart';
+import 'package:mobile/services/capture_modes.dart';
+import 'package:mobile/services/object_uploads.dart';
 import 'package:mobile/services/capture_service.dart';
 import 'package:mobile/services/scan_backend.dart';
 import 'package:mobile/services/scan_library.dart';
@@ -451,6 +453,9 @@ class FakeUploadQueue extends UploadQueue {
   final List<Map<String, EquipmentVideo>> enqueuedVideos =
       <Map<String, EquipmentVideo>>[];
   final List<ScanExport?> exports = <ScanExport?>[];
+
+  /// The 3D Space mesh sent with each capture, if any.
+  final List<String?> meshes = <String?>[];
   int retries = 0;
   bool? mobileData;
 
@@ -464,11 +469,13 @@ class FakeUploadQueue extends UploadQueue {
   Future<void> enqueue(
     ScanResult result, {
     ScanExport? export,
+    String? meshPath,
     List<Equipment> equipment = const <Equipment>[],
     Map<String, EquipmentVideo> videos = const <String, EquipmentVideo>{},
   }) async {
     enqueued.add(result);
     exports.add(export);
+    meshes.add(meshPath);
     enqueuedEquipment.add(equipment);
     enqueuedVideos.add(videos);
     job = UploadJob(
@@ -567,6 +574,8 @@ class FakeWebAuthenticator implements WebAuthenticator {
   ScanBackend.debugOverride = lidarIPhone;
   // Scans are kept in memory, not on disk.
   ScanLibrary.instance = MemoryScanLibrary();
+  CaptureModes.reset();
+  ObjectUploads.instance = FakeObjectUploads();
   return (backend: backend, uploads: uploads);
 }
 
@@ -576,3 +585,19 @@ const DeviceCapability lidarIPhone = DeviceCapability(
   headline: 'LiDAR ready',
   detail: 'iPhone · iOS 18.2',
 );
+
+/// Stands in for sending 3D Objects to the platform.
+class FakeObjectUploads implements ObjectUploads {
+  /// The scans sent, in order.
+  final List<SavedScan> sent = <SavedScan>[];
+
+  /// Set to make every send fail, as with no signal.
+  bool offline = false;
+
+  @override
+  Future<String> send(SavedScan scan) async {
+    if (offline) throw ApiException('No connection. Check your signal.');
+    sent.add(scan);
+    return 'obj_${scan.id}';
+  }
+}

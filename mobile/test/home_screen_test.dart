@@ -20,8 +20,12 @@ Widget _wrap() => MaterialApp(
   home: const HomeScreen(email: 'sam.okafor@northgatefitness.com'),
 );
 
-/// Lets the fake backend's answers arrive and the screen settle.
+/// Lets the fake backend's answers arrive and the screen settle, on a tall
+/// phone so the whole dashboard (create panel and plan rows) is laid out.
 Future<void> _settle(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(393, 1400) * 3;
+  tester.view.devicePixelRatio = 3;
+  addTearDown(tester.view.reset);
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
   await tester.pumpAndSettle();

@@ -228,6 +228,13 @@ async function removeAccount(job) {
        JOIN captures c ON c.id = cf.capture_id WHERE c.account_id = ?`,
       [accountId],
     )),
+    // 3D object scans: one file each, outside any capture.
+    ...(await many(
+      pool,
+      `SELECT storage_key AS k, upload_id, IF(status = 'ready', 'stored', 'uploading') AS status
+       FROM object_scans WHERE account_id = ?`,
+      [accountId],
+    )),
   ];
   for (const f of keys) {
     if (f.status === 'uploading') await storage().abort(f.k, f.upload_id);
@@ -277,6 +284,7 @@ async function removeAccount(job) {
     await del('DELETE cf FROM capture_files cf JOIN captures c ON c.id = cf.capture_id WHERE c.account_id = ?');
     // Tags, control distances and drawing details cascade with the capture.
     await del('DELETE FROM captures WHERE account_id = ?');
+    await del('DELETE FROM object_scans WHERE account_id = ?');
     await del('DELETE FROM plans WHERE account_id = ?');
     await del('DELETE FROM facilities WHERE account_id = ?');
     await del('DELETE FROM equipment_types WHERE account_id = ?');

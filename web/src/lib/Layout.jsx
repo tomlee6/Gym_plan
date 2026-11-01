@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 
 import { accountRoleOf, ROLES, useAuth } from './auth.jsx';
 import { t } from './i18n.js';
-import { AccountsIcon, AuditIcon, PlansIcon, QueueIcon, SignOutIcon, StaffIcon, UploadIcon } from './icons.jsx';
+import { AccountsIcon, AuditIcon, CubeIcon, PlansIcon, QueueIcon, SignOutIcon, StaffIcon, UploadIcon } from './icons.jsx';
 
 /**
  * The prototype's web shell: a sidebar with a section per role the user
@@ -23,6 +23,7 @@ export default function Layout() {
       title: 'MY GYMS',
       links: [
         { to: '/plans', label: 'My plans', icon: PlansIcon },
+        { to: '/objects', label: '3D objects', icon: CubeIcon },
         { to: '/upload', label: 'Upload a plan', icon: UploadIcon },
       ],
     },

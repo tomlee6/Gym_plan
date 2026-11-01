@@ -18,9 +18,9 @@ Pod::Spec.new do |s|
   # answers false and the app shows its "needs LiDAR" screen. CoreMotion feeds the
   # walk-around coverage ring; AVFoundation records the (silent) equipment video. Vision
   # and CoreML run the on-device machine type classifier (F-07); SceneKit shows the finished
-  # room in 3D before it is submitted.
+  # room in 3D before it is submitted. RealityKit's Object Capture and SwiftUI make 3D Objects.
   s.platform         = :ios, '17.0'
-  s.frameworks       = 'UIKit', 'CoreImage', 'RoomPlan', 'ARKit', 'AVFoundation', 'CoreMotion', 'Vision', 'CoreML', 'SceneKit'
+  s.frameworks       = 'UIKit', 'CoreImage', 'RoomPlan', 'ARKit', 'AVFoundation', 'CoreMotion', 'Vision', 'CoreML', 'SceneKit', 'RealityKit', 'SwiftUI'
 
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.swift_version    = '5.0'

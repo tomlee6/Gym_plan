@@ -180,6 +180,7 @@ class BackgroundUploadQueue extends UploadQueue {
   Future<void> enqueue(
     ScanResult result, {
     ScanExport? export,
+    String? meshPath,
     List<Equipment> equipment = const <Equipment>[],
     Map<String, EquipmentVideo> videos = const <String, EquipmentVideo>{},
   }) async {
@@ -190,6 +191,9 @@ class BackgroundUploadQueue extends UploadQueue {
         (export.modelPath, 'model', 'model/vnd.usdz+zip'),
         (export.dataPath, 'room', 'application/json'),
       ],
+      // 3D Space: the coloured LiDAR mesh, which the server reads for
+      // machines (F-06) and the reviewer sees under the plan (H-03).
+      if (meshPath != null) (meshPath, 'mesh', 'model/obj'),
       for (final String photo in result.photoPaths)
         (photo, 'photo', 'image/jpeg'),
     ];
@@ -215,7 +219,7 @@ class BackgroundUploadQueue extends UploadQueue {
       title: result.config.shortTitle,
       facility: result.config.facility,
       level: result.config.level,
-      metadata: _metadata(result, lidar: export != null),
+      metadata: _metadata(result, lidar: export != null || meshPath != null),
       files: files,
       createdAt: DateTime.now(),
       accountId: result.config.accountId ?? api.currentAccountId,

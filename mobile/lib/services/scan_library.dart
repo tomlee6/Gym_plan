@@ -9,6 +9,23 @@ import 'package:room_scan/room_scan.dart';
 import '../models/room_measurements.dart';
 import '../models/scan.dart';
 
+/// What a kept scan is.
+enum ScanKind {
+  /// A RoomPlan scan: clean 3D model and a measured floor plan.
+  room(tag: 'Plan'),
+
+  /// "3D Space": the whole room as a coloured LiDAR mesh.
+  space(tag: 'Space'),
+
+  /// "3D Object": one object as a photo-textured model.
+  object(tag: 'Object');
+
+  const ScanKind({required this.tag});
+
+  /// The short label on its dashboard tile.
+  final String tag;
+}
+
 /// One scan kept on this phone for the dashboard: its 3D model, room data,
 /// a thumbnail and its floor plan, so it can be looked at again in 3D or as
 /// a plan, even with no signal.
@@ -23,12 +40,16 @@ class SavedScan {
     required this.geometry,
     required this.walls,
     required this.measurements,
+    this.kind = ScanKind.room,
     this.modelPath,
     this.dataPath,
     this.thumbnailPath,
+    this.platformId,
+    this.photos,
   });
 
   final String id;
+  final ScanKind kind;
 
   /// "Northgate · Level 2".
   final String title;
@@ -46,6 +67,31 @@ class SavedScan {
   final String? modelPath;
   final String? dataPath;
   final String? thumbnailPath;
+
+  /// The platform's id for this scan once it has been sent there; null
+  /// while it is only on this phone. Only 3D Objects are sent from here:
+  /// a room scan goes up as a capture through the upload queue.
+  final String? platformId;
+
+  /// How many photos a 3D Object was built from.
+  final int? photos;
+
+  SavedScan sentAs(String id) => SavedScan(
+    id: this.id,
+    kind: kind,
+    title: title,
+    facility: facility,
+    level: level,
+    createdAt: createdAt,
+    geometry: geometry,
+    walls: walls,
+    measurements: measurements,
+    modelPath: modelPath,
+    dataPath: dataPath,
+    thumbnailPath: thumbnailPath,
+    platformId: id,
+    photos: photos,
+  );
 }
 
 /// The scans kept on this phone (Application Support, `ScanLibrary/<id>/`),
@@ -161,6 +207,11 @@ class ScanLibrary extends ChangeNotifier {
               for (final Offset p in o) <double>[p.dx, p.dy],
             ],
         ],
+        'labels': result.geometry.labels,
+        'openings': <Object?>[
+          for (final PlanOpening o in result.geometry.openings)
+            <Object?>[o.kind.name, o.start.dx, o.start.dy, o.end.dx, o.end.dy],
+        ],
       };
       await File('${folder.path}/entry.json').writeAsString(jsonEncode(json));
       notifyListeners();
@@ -168,6 +219,104 @@ class ScanLibrary extends ChangeNotifier {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Keeps a 3D Space scan: its coloured mesh as a SceneKit scene, for the
+  /// viewer, with the space's extent.
+  Future<SavedScan?> saveSpace(ScanConfig config, MeshScanExport mesh) =>
+      _keepModel(
+        kind: ScanKind.space,
+        title: '${config.shortTitle} · 3D Space',
+        facility: config.facility,
+        level: config.level,
+        modelFrom: mesh.scenePath,
+        modelName: 'space.scn',
+        measurements: RoomMeasurements(
+          wallCount: 0,
+          widthM: mesh.widthM,
+          lengthM: mesh.lengthM,
+          heightM: mesh.heightM,
+        ),
+      );
+
+  /// Keeps a 3D Object under the name the surveyor gave it.
+  Future<SavedScan?> saveObject(String name, ObjectCaptureResult object) =>
+      _keepModel(
+        kind: ScanKind.object,
+        title: name,
+        facility: '',
+        level: 0,
+        modelFrom: object.modelPath,
+        modelName: 'object.usdz',
+        measurements: const RoomMeasurements(wallCount: 0),
+        photos: object.photos,
+      );
+
+  /// A model with no floor plan: copied in, with a thumbnail.
+  Future<SavedScan?> _keepModel({
+    required ScanKind kind,
+    required String title,
+    required String facility,
+    required int level,
+    required String modelFrom,
+    required String modelName,
+    required RoomMeasurements measurements,
+    int? photos,
+  }) async {
+    try {
+      final String id = DateTime.now().microsecondsSinceEpoch.toString();
+      final Directory folder = Directory('${(await _root()).path}/$id');
+      await folder.create(recursive: true);
+      String? model;
+      if (await File(modelFrom).exists()) {
+        await File(modelFrom).copy('${folder.path}/$modelName');
+        model = modelName;
+      }
+      String? thumbnail;
+      if (model != null &&
+          await _thumbnailer(
+                '${folder.path}/$model',
+                '${folder.path}/thumbnail.png',
+              ) !=
+              null) {
+        thumbnail = 'thumbnail.png';
+      }
+      final Map<String, Object?> json = <String, Object?>{
+        'id': id,
+        'kind': kind.name,
+        'title': title,
+        'facility': facility,
+        'level': level,
+        'createdAt': DateTime.now().toUtc().toIso8601String(),
+        'model': model,
+        'thumbnail': thumbnail,
+        'measurements': measurements.toJson(),
+        'walls': const <Object?>[],
+        'objects': const <Object?>[],
+        'photos': ?photos,
+      };
+      await File('${folder.path}/entry.json').writeAsString(jsonEncode(json));
+      notifyListeners();
+      return _fromJson(folder.path, json);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Records that [scan] has reached the platform as [platformId], so it is
+  /// not sent again.
+  Future<SavedScan> markSent(SavedScan scan, String platformId) async {
+    try {
+      final File file = File('${(await _root()).path}/${scan.id}/entry.json');
+      final Map<String, Object?> json =
+          jsonDecode(await file.readAsString()) as Map<String, Object?>;
+      json['platformId'] = platformId;
+      await file.writeAsString(jsonEncode(json));
+    } catch (_) {
+      // Not recorded: at worst it is sent again, as the same scan.
+    }
+    notifyListeners();
+    return scan.sentAs(platformId);
   }
 
   /// Removes a kept scan and its files. The submitted capture on the
@@ -214,6 +363,11 @@ class ScanLibrary extends ChangeNotifier {
 
     return SavedScan(
       id: json['id']! as String,
+      // Entries kept before there were kinds are room scans.
+      kind: ScanKind.values.firstWhere(
+        (ScanKind k) => k.name == json['kind'],
+        orElse: () => ScanKind.room,
+      ),
       title: json['title']! as String,
       facility: json['facility'] as String? ?? '',
       level: (json['level'] as num? ?? 0).toInt(),
@@ -222,6 +376,29 @@ class ScanLibrary extends ChangeNotifier {
         walls: segments,
         objects: objects,
         areaM2: (json['areaM2'] as num?)?.toDouble(),
+        labels: <String?>[
+          for (final Object? l in json['labels'] as List<Object?>? ?? const [])
+            l as String?,
+        ],
+        openings: <PlanOpening>[
+          for (final Object? raw
+              in json['openings'] as List<Object?>? ?? const [])
+            if (raw case [
+              final String kind,
+              final num ax,
+              final num ay,
+              final num bx,
+              final num by,
+            ])
+              PlanOpening(
+                OpeningKind.values.firstWhere(
+                  (OpeningKind k) => k.name == kind,
+                  orElse: () => OpeningKind.opening,
+                ),
+                Offset(ax.toDouble(), ay.toDouble()),
+                Offset(bx.toDouble(), by.toDouble()),
+              ),
+        ],
       ),
       walls: qualities,
       measurements: RoomMeasurements.fromJson(
@@ -230,6 +407,8 @@ class ScanLibrary extends ChangeNotifier {
       modelPath: path('model'),
       dataPath: path('data'),
       thumbnailPath: path('thumbnail'),
+      platformId: json['platformId'] as String?,
+      photos: (json['photos'] as num?)?.toInt(),
     );
   }
 }
@@ -260,6 +439,63 @@ class MemoryScanLibrary extends ScanLibrary {
     kept.add(scan);
     notifyListeners();
     return scan;
+  }
+
+  @override
+  Future<SavedScan?> saveSpace(ScanConfig config, MeshScanExport mesh) async =>
+      _add(
+        SavedScan(
+          id: '${kept.length + 1}',
+          kind: ScanKind.space,
+          title: '${config.shortTitle} · 3D Space',
+          facility: config.facility,
+          level: config.level,
+          createdAt: DateTime.now(),
+          geometry: PlanGeometry.fitted(walls: const <WallSegment>[]),
+          walls: const <WallQuality>[],
+          measurements: RoomMeasurements(
+            wallCount: 0,
+            widthM: mesh.widthM,
+            lengthM: mesh.lengthM,
+            heightM: mesh.heightM,
+          ),
+          modelPath: mesh.scenePath,
+        ),
+      );
+
+  @override
+  Future<SavedScan?> saveObject(
+    String name,
+    ObjectCaptureResult object,
+  ) async => _add(
+    SavedScan(
+      id: '${kept.length + 1}',
+      kind: ScanKind.object,
+      title: name,
+      facility: '',
+      level: 0,
+      createdAt: DateTime.now(),
+      geometry: PlanGeometry.fitted(walls: const <WallSegment>[]),
+      walls: const <WallQuality>[],
+      measurements: const RoomMeasurements(wallCount: 0),
+      modelPath: object.modelPath,
+      photos: object.photos,
+    ),
+  );
+
+  SavedScan _add(SavedScan scan) {
+    kept.add(scan);
+    notifyListeners();
+    return scan;
+  }
+
+  @override
+  Future<SavedScan> markSent(SavedScan scan, String platformId) async {
+    final SavedScan sent = scan.sentAs(platformId);
+    final int at = kept.indexWhere((SavedScan s) => s.id == scan.id);
+    if (at >= 0) kept[at] = sent;
+    notifyListeners();
+    return sent;
   }
 
   @override

@@ -17,6 +17,8 @@ class RoomMeasurements {
     this.lengthM,
     this.areaM2,
     this.heightM,
+    this.doorCount = 0,
+    this.windowCount = 0,
   });
 
   /// From the scanned outline. [heightM] comes from RoomPlan's room data
@@ -29,6 +31,8 @@ class RoomMeasurements {
       lengthM: extent?.height,
       areaM2: geometry.areaM2,
       heightM: heightM,
+      doorCount: geometry.countOf(OpeningKind.door),
+      windowCount: geometry.countOf(OpeningKind.window),
     );
   }
 
@@ -39,9 +43,15 @@ class RoomMeasurements {
         lengthM: (json['lengthM'] as num?)?.toDouble(),
         areaM2: (json['areaM2'] as num?)?.toDouble(),
         heightM: (json['heightM'] as num?)?.toDouble(),
+        doorCount: (json['doorCount'] as num? ?? 0).toInt(),
+        windowCount: (json['windowCount'] as num? ?? 0).toInt(),
       );
 
   final int wallCount;
+
+  /// Doors and windows RoomPlan found in the walls.
+  final int doorCount;
+  final int windowCount;
 
   /// The outline's extent along each side, in metres.
   final double? widthM;
@@ -70,6 +80,8 @@ class RoomMeasurements {
     'lengthM': lengthM,
     'areaM2': areaM2,
     'heightM': heightM,
+    'doorCount': doorCount,
+    'windowCount': windowCount,
   };
 
   /// The tallest wall in RoomPlan's `scan.json`: a CapturedRoom, or a

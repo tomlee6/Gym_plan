@@ -12,6 +12,7 @@ import { homeFor, ROLES, useAuth } from './lib/auth.jsx';
 import Layout from './lib/Layout.jsx';
 import LoginPage from './lib/LoginPage.jsx';
 import RequireRole from './lib/RequireRole.jsx';
+import ObjectsPage from './owner/ObjectsPage.jsx';
 import PlanPage from './owner/PlanPage.jsx';
 import PlansPage from './owner/PlansPage.jsx';
 import UploadPage from './owner/UploadPage.jsx';
@@ -104,6 +105,14 @@ export default function Root() {
             element={
               <RequireRole roles={ROLES.customer}>
                 <PlanPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/objects"
+            element={
+              <RequireRole roles={ROLES.customer}>
+                <ObjectsPage />
               </RequireRole>
             }
           />

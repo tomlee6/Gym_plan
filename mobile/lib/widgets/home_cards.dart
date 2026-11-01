@@ -369,9 +369,13 @@ class ScanTile extends StatelessWidget {
     required this.onTap,
     this.thumbnail,
     this.onLongPress,
+    this.tag = '3D',
   });
 
   final String title;
+
+  /// What kind of scan it is, e.g. "Plan", "Space" or "Object".
+  final String tag;
 
   /// e.g. "31 Oct".
   final String date;
@@ -422,9 +426,9 @@ class ScanTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(color: AppColors.chipEdge),
                   ),
-                  child: const Text(
-                    '3D',
-                    style: TextStyle(
+                  child: Text(
+                    tag,
+                    style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                       color: AppColors.accent,

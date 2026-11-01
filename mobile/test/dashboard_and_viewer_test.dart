@@ -213,12 +213,13 @@ void main() {
       await tester.pumpWidget(home());
       await _settle(tester);
 
+      // 3D Space is the LiDAR mesh mode, after the usual checks.
       await tester.tap(find.text('3D Space'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
       expect(
-        tester.widget<NewCaptureScreen>(find.byType(NewCaptureScreen)).opensIn,
-        ScanView.model,
+        tester.widget<NewCaptureScreen>(find.byType(NewCaptureScreen)).space,
+        isTrue,
       );
       await tester.pumpWidget(const SizedBox());
 

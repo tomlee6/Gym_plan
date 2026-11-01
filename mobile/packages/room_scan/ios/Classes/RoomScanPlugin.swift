@@ -53,6 +53,9 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     // The finished room in 3D, shown before it is submitted.
     registrar.register(
       ScanModelViewFactory(messenger: registrar.messenger()), withId: "flex/scan_model_view")
+
+    // "3D Space": the camera with the LiDAR mesh forming over it.
+    registrar.register(MeshScanViewFactory(plugin: instance), withId: "flex/mesh_scan_view")
   }
 
   func attachCaptureContainer(_ container: RoomCaptureContainerView) {
@@ -116,6 +119,31 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     // handled before the RoomPlan availability check below.
     if call.method.hasPrefix("video.") {
       handleVideo(call, result: result)
+      return
+    }
+
+    // "3D Space" (LiDAR mesh) and "3D Object" (Object Capture). Neither uses
+    // RoomPlan, so they are handled before its availability check.
+    if call.method.hasPrefix("mesh.") {
+      handleMesh(call, result: result)
+      return
+    }
+    if call.method == "object.isSupported" {
+      result(ObjectScanner.isSupported)
+      return
+    }
+    if call.method == "object.capture" {
+      Task { @MainActor in
+        ObjectScanner.present { outcome in
+          switch outcome {
+          case .success(let map): result(map)
+          case .failure(let error):
+            result(
+              FlutterError(
+                code: "object_failed", message: error.localizedDescription, details: nil))
+          }
+        }
+      }
       return
     }
 
@@ -271,6 +299,92 @@ public class RoomScanPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
   }
   #endif
 
+  // MARK: - 3D Space (LiDAR mesh)
+
+  /// The mesh scan while one exists, and the viewfinder showing it.
+  private var meshScanner: MeshScanner?
+  private weak var meshContainer: RoomCaptureContainerView?
+
+  func attachMeshContainer(_ container: RoomCaptureContainerView) {
+    meshContainer = container
+    container.activeView = meshScanner?.view
+  }
+
+  func detachMeshContainer(_ container: RoomCaptureContainerView) {
+    guard meshContainer === container else { return }
+    meshContainer = nil
+  }
+
+  private func handleMesh(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "mesh.isSupported":
+      result(MeshScanner.isSupported)
+
+    case "mesh.prepare":
+      guard MeshScanner.isSupported else {
+        result(unsupported())
+        return
+      }
+      // The room scan's preview camera must let go first.
+      let open = { [weak self] in
+        guard let self = self else { return }
+        self.meshScanner?.cancel()
+        let scanner = MeshScanner()
+        self.meshScanner = scanner
+        self.meshContainer?.activeView = scanner.view
+        scanner.prepare()
+        result(nil)
+      }
+      if let camera = fallbackCamera {
+        fallbackCamera = nil
+        camera.stop(then: open)
+      } else {
+        open()
+      }
+
+    case "mesh.start":
+      guard let scanner = meshScanner else {
+        result(noScan())
+        return
+      }
+      do {
+        try scanner.start()
+        result(nil)
+      } catch {
+        result(FlutterError(code: "mesh_failed", message: error.localizedDescription, details: nil))
+      }
+
+    case "mesh.status":
+      result(meshScanner?.status())
+
+    case "mesh.finish":
+      guard let scanner = meshScanner else {
+        result(noScan())
+        return
+      }
+      Task { @MainActor in
+        do {
+          let export = try await scanner.finish()
+          self.meshScanner = nil
+          self.meshContainer?.activeView = nil
+          result(export)
+        } catch {
+          result(
+            FlutterError(code: "mesh_failed", message: error.localizedDescription, details: nil))
+        }
+      }
+
+    case "mesh.cancel":
+      meshScanner?.cancel()
+      meshScanner = nil
+      meshContainer?.activeView = nil
+      result(nil)
+
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
   private func noScan() -> FlutterError {
     FlutterError(code: "no_scan", message: "No scan is running.", details: nil)
   }
@@ -401,6 +515,42 @@ final class RoomCapturePlatformView: NSObject, FlutterPlatformView {
     DispatchQueue.main.async { [weak plugin] in
       plugin?.detachCaptureContainer(container)
     }
+  }
+}
+
+/// The 3D Space viewfinder: the mesh scanner's camera view, in a container
+/// so it can be put in place when the scan is prepared.
+final class MeshScanPlatformView: NSObject, FlutterPlatformView {
+  private let container = RoomCaptureContainerView()
+  private weak var plugin: RoomScanPlugin?
+
+  init(frame: CGRect, plugin: RoomScanPlugin) {
+    container.frame = frame
+    self.plugin = plugin
+    super.init()
+    plugin.attachMeshContainer(container)
+  }
+
+  func view() -> UIView { container }
+
+  deinit {
+    let container = self.container
+    DispatchQueue.main.async { [weak plugin] in plugin?.detachMeshContainer(container) }
+  }
+}
+
+final class MeshScanViewFactory: NSObject, FlutterPlatformViewFactory {
+  private let plugin: RoomScanPlugin
+
+  init(plugin: RoomScanPlugin) {
+    self.plugin = plugin
+    super.init()
+  }
+
+  func create(withFrame frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?)
+    -> FlutterPlatformView
+  {
+    MeshScanPlatformView(frame: frame, plugin: plugin)
   }
 }
 

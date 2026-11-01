@@ -82,6 +82,7 @@ class LidarScanSession extends ScanSession {
       walls: current,
       frame: _geometry.frame,
       metresPerUnit: _geometry.metresPerUnit,
+      rotation: _geometry.rotation,
     ).wallExtentM;
   }
 
@@ -123,9 +124,36 @@ class LidarScanSession extends ScanSession {
       areaM2: update.areaM2,
       // Keep the surveyor in view even before any wall is found.
       include: update.position,
+      openings: <PlanOpening>[
+        for (final RoomScanOpening o in update.openings)
+          PlanOpening(
+            OpeningKind.values.firstWhere(
+              (OpeningKind k) => k.name == o.kind,
+              orElse: () => OpeningKind.opening,
+            ),
+            o.start,
+            o.end,
+          ),
+      ],
+      // Detected objects come in the same order as the footprints.
+      labels: <String?>[
+        for (int i = 0; i < update.objects.length; i++)
+          i < update.detected.length
+              ? planLabel(update.detected[i].category)
+              : null,
+      ],
     );
     notifyListeners();
   }
+
+  /// RoomPlan's category as a name on the plan, e.g. "Table"; null for
+  /// "object", what it calls everything it has no name for.
+  static String? planLabel(String category) => switch (category) {
+    'object' || '' => null,
+    'washerDryer' => 'Washer',
+    'television' => 'TV',
+    _ => category[0].toUpperCase() + category.substring(1),
+  };
 
   void _fail(Object error) {
     _running = false;

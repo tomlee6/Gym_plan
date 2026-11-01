@@ -379,8 +379,10 @@ router.post('/:captureId/complete', async (req, res) => {
     `SELECT * FROM capture_files WHERE capture_id = ? AND kind NOT IN ('video', 'thumbnail', 'frames')`,
     [capture.id],
   );
-  if (capture.source === 'lidar' && !files.some((f) => f.kind === 'model')) {
-    throw badRequest('A LiDAR capture needs its 3D model.');
+  // A room scan carries RoomPlan's model; a 3D Space scan carries the LiDAR
+  // mesh of the whole room instead, and the reviewer traces the walls on it.
+  if (capture.source === 'lidar' && !files.some((f) => f.kind === 'model' || f.kind === 'mesh')) {
+    throw badRequest('A LiDAR capture needs its 3D model or its mesh.');
   }
   if (capture.source === 'upload' && !files.some((f) => f.kind === 'source')) {
     throw badRequest('Upload the drawing itself before submitting.');

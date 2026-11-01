@@ -2,12 +2,17 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:room_scan/room_scan.dart';
 
 import '../models/plan.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../services/auth_session.dart';
+import '../services/capture_modes.dart';
+import '../services/capture_service.dart';
 import '../services/plans_service.dart';
+import '../services/scan_backend.dart';
+import '../services/object_uploads.dart';
 import '../services/scan_library.dart';
 import '../services/upload_queue.dart';
 import '../theme/app_theme.dart';
@@ -68,6 +73,33 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadScans() async {
     final List<SavedScan> scans = await ScanLibrary.instance.scans();
     if (mounted) setState(() => _scans = scans);
+    _sendObjects(scans);
+  }
+
+  /// 3D Objects on their way to the platform, so a reload does not send one
+  /// twice.
+  static final Set<String> _sending = <String>{};
+
+  /// Sends every 3D Object the platform does not have yet: one just made,
+  /// or one kept while there was no signal. One that fails stays on the
+  /// phone and is tried again the next time the dashboard loads.
+  Future<void> _sendObjects(List<SavedScan> scans) async {
+    for (final SavedScan scan in scans) {
+      if (scan.kind != ScanKind.object ||
+          scan.platformId != null ||
+          scan.modelPath == null ||
+          !_sending.add(scan.id)) {
+        continue;
+      }
+      try {
+        final String id = await ObjectUploads.instance.send(scan);
+        await ScanLibrary.instance.markSent(scan, id);
+      } catch (_) {
+        // Kept on the phone; sent on a later load.
+      } finally {
+        _sending.remove(scan.id);
+      }
+    }
   }
 
   /// Opens a capture: the camera first, then review on the 3D model or the
@@ -83,6 +115,105 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  /// "3D Space": the LiDAR mesh of the whole room, after the same LiDAR
+  /// check and gym loading as any capture.
+  void _startSpace() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            NewCaptureScreen(initialFacility: _data?.gymName, space: true),
+      ),
+    );
+  }
+
+  /// "3D Object": Apple's guided Object Capture, then a name, then it is
+  /// kept and opened in the viewer.
+  Future<void> _captureObject() async {
+    final DeviceCapability device = await ScanBackend.detect();
+    final bool supported =
+        device.supported && await CaptureModes.objectCaptureSupported();
+    if (!mounted) return;
+    if (!supported) {
+      await _sayCannot(
+        'LiDAR required',
+        '3D objects need an iPhone Pro (12 Pro or later) or an iPad Pro '
+            'with LiDAR, on iOS 17 or later.',
+      );
+      return;
+    }
+
+    final ObjectCaptureResult? object;
+    try {
+      object = await CaptureModes.captureObject();
+    } catch (e) {
+      if (mounted) {
+        await _sayCannot(
+          'The 3D object could not be made',
+          RoomScanException.from(e).message,
+        );
+      }
+      return;
+    }
+    if (object == null || !mounted) return;
+
+    final String name = await _askObjectName() ?? '3D object';
+    final SavedScan? saved = await ScanLibrary.instance.saveObject(
+      name,
+      object,
+    );
+    if (saved != null && mounted) _openScan(saved);
+  }
+
+  Future<String?> _askObjectName() async {
+    final TextEditingController name = TextEditingController(
+      text:
+          'Object ${_scans.where((SavedScan s) => s.kind == ScanKind.object).length + 1}',
+    );
+    final String? chosen = await showCupertinoDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => CupertinoAlertDialog(
+        title: const Text('Name this object'),
+        content: Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: CupertinoTextField(
+            controller: name,
+            autofocus: true,
+            placeholder: 'e.g. Treadmill by the window',
+            keyboardAppearance: Brightness.dark,
+          ),
+        ),
+        actions: <Widget>[
+          CupertinoDialogAction(
+            isDefaultAction: true,
+            onPressed: () {
+              final String text = name.text.trim();
+              Navigator.of(dialogContext).pop(text.isEmpty ? null : text);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    name.dispose();
+    return chosen;
+  }
+
+  Future<void> _sayCannot(String title, String message) =>
+      showCupertinoDialog<void>(
+        context: context,
+        builder: (BuildContext dialogContext) => CupertinoAlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: <Widget>[
+            CupertinoDialogAction(
+              isDefaultAction: true,
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
 
   /// The level above the highest one this gym has a plan for.
   String _nextLevel(HomeData data) {
@@ -102,7 +233,15 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute<void>(
         builder: (_) => ScanViewerScreen(
           title: scan.title,
-          subtitle: 'Scanned ${Formatting.stamp(scan.createdAt)}',
+          subtitle: switch (scan) {
+            SavedScan(kind: ScanKind.object, platformId: null) =>
+              'Scanned ${Formatting.stamp(scan.createdAt)} · '
+                  'on this phone, sent when online',
+            SavedScan(kind: ScanKind.object) =>
+              'Scanned ${Formatting.stamp(scan.createdAt)} · '
+                  'sent to the platform',
+            _ => 'Scanned ${Formatting.stamp(scan.createdAt)}',
+          },
           geometry: scan.geometry,
           walls: scan.walls,
           measurements: scan.measurements,
@@ -292,7 +431,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     CreateOption(
                       icon: Icons.view_in_ar_rounded,
                       label: '3D Space',
-                      onTap: () => _startCapture(ScanView.model),
+                      onTap: _startSpace,
+                    ),
+                    CreateOption(
+                      icon: Icons.chair_alt_outlined,
+                      label: '3D Object',
+                      onTap: _captureObject,
                     ),
                     CreateOption(
                       icon: Icons.stairs_rounded,
@@ -363,6 +507,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 width: tile,
                 child: ScanTile(
                   title: scan.title,
+                  tag: scan.kind.tag,
                   date: Formatting.day(scan.createdAt),
                   thumbnail: scan.thumbnailPath == null
                       ? null

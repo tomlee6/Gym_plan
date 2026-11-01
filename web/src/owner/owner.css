@@ -479,3 +479,47 @@
   padding: 0;
   list-style: none;
 }
+
+/* 3D objects (owner): one card per scanned object. */
+.ow-objects {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ow-object {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.ow-object-icon {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: rgba(0, 202, 178, 0.12);
+  color: #00cab2;
+}
+
+.ow-object-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+}
+
+.ow-object-name {
+  margin: 0;
+  font-size: 16px;
+}
+
+.ow-object-actions {
+  display: flex;
+  gap: 8px;
+}

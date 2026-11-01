@@ -17,6 +17,7 @@ import { router as facilities } from './modules/facilities.js';
 import { router as hubEvents } from './modules/hub-events.js';
 import { router as localStorage } from './modules/local-storage.js';
 import { router as machineModels } from './modules/machine-models.js';
+import { router as objects } from './modules/objects.js';
 import { router as plans } from './modules/plans.js';
 import { router as profile } from './modules/profile.js';
 import { router as review } from './modules/review.js';
@@ -60,6 +61,8 @@ export function createApp() {
   app.use('/v1/captures', captures);
   // Equipment and its 360 video hang off a capture, so they share its path.
   app.use('/v1/captures', equipment);
+  // 3D object scans from the phone: one model each, outside any capture.
+  app.use('/v1/objects', objects);
   app.use('/v1/review', review);
   // Machine models (L-07) share the reviewer's path and its staff-only rule.
   app.use('/v1/review', machineModels);

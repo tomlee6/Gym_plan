@@ -66,6 +66,22 @@ class RoomScanWall {
   final int section;
 }
 
+/// A door, window or open doorway, as the stretch of wall it fills on the
+/// floor plane.
+@immutable
+class RoomScanOpening {
+  const RoomScanOpening({
+    required this.kind,
+    required this.start,
+    required this.end,
+  });
+
+  /// `door`, `window` or `opening`.
+  final String kind;
+  final Offset start;
+  final Offset end;
+}
+
 /// The live state of the scan, sent about ten times a second while it runs.
 @immutable
 class RoomScanUpdate {
@@ -81,6 +97,7 @@ class RoomScanUpdate {
     this.areaM2,
     this.instruction,
     this.section = 1,
+    this.openings = const <RoomScanOpening>[],
   });
 
   factory RoomScanUpdate.fromMap(Map<Object?, Object?> map) {
@@ -93,6 +110,8 @@ class RoomScanUpdate {
     final List<Object?> objects = map['objects'] as List<Object?>? ?? const [];
     final List<Object?> detected =
         map['detected'] as List<Object?>? ?? const [];
+    final List<Object?> openings =
+        map['openings'] as List<Object?>? ?? const [];
     final Object? position = map['position'];
 
     return RoomScanUpdate(
@@ -127,6 +146,17 @@ class RoomScanUpdate {
       areaM2: (map['areaM2'] as num?)?.toDouble(),
       instruction: map['instruction'] as String?,
       section: (map['section'] as num? ?? 1).toInt(),
+      openings: <RoomScanOpening>[
+        for (final Object? raw in openings)
+          () {
+            final Map<Object?, Object?> o = raw! as Map<Object?, Object?>;
+            return RoomScanOpening(
+              kind: o['kind'] as String? ?? 'opening',
+              start: point(o['a']),
+              end: point(o['b']),
+            );
+          }(),
+      ],
     );
   }
 
@@ -139,6 +169,9 @@ class RoomScanUpdate {
   );
 
   final List<RoomScanWall> walls;
+
+  /// Doors, windows and open doorways, from every section.
+  final List<RoomScanOpening> openings;
 
   /// Every recognised object with its measurements, for marking machines
   /// (CHANGE 2.1). [objects] stays the plain footprints the plan draws.
@@ -669,6 +702,174 @@ Future<String?> renderModelThumbnail(String modelPath, String outPath) async {
     );
   } catch (_) {
     return null;
+  }
+}
+
+/// How far a 3D Space scan has got.
+@immutable
+class MeshScanStatus {
+  const MeshScanStatus({
+    required this.elapsed,
+    required this.vertices,
+    required this.limitedTracking,
+  });
+
+  factory MeshScanStatus.fromMap(Map<Object?, Object?> map) => MeshScanStatus(
+    elapsed: Duration(milliseconds: (map['elapsedMs'] as num? ?? 0).toInt()),
+    vertices: (map['vertices'] as num? ?? 0).toInt(),
+    limitedTracking: map['tracking'] == 'limited',
+  );
+
+  static const MeshScanStatus empty = MeshScanStatus(
+    elapsed: Duration.zero,
+    vertices: 0,
+    limitedTracking: false,
+  );
+
+  final Duration elapsed;
+
+  /// Points in the mesh so far.
+  final int vertices;
+
+  /// ARKit is unsure where the phone is: too fast, too dark, or too bare.
+  final bool limitedTracking;
+}
+
+/// The files a finished 3D Space scan leaves on the device.
+@immutable
+class MeshScanExport {
+  const MeshScanExport({
+    required this.objPath,
+    required this.scenePath,
+    required this.bytes,
+    required this.vertexCount,
+    this.widthM,
+    this.lengthM,
+    this.heightM,
+    this.duration = Duration.zero,
+  });
+
+  factory MeshScanExport.fromMap(Map<Object?, Object?> map) => MeshScanExport(
+    objPath: map['objPath']! as String,
+    scenePath: map['scenePath']! as String,
+    bytes: (map['bytes'] as num? ?? 0).toInt(),
+    vertexCount: (map['vertexCount'] as num? ?? 0).toInt(),
+    widthM: (map['widthM'] as num?)?.toDouble(),
+    lengthM: (map['lengthM'] as num?)?.toDouble(),
+    heightM: (map['heightM'] as num?)?.toDouble(),
+    duration: Duration(seconds: (map['durationSeconds'] as num? ?? 0).toInt()),
+  );
+
+  /// The mesh with a colour per vertex, for upload (`v x y z r g b`).
+  final String objPath;
+
+  /// The same mesh as a SceneKit scene, for the 3D viewer.
+  final String scenePath;
+  final int bytes;
+  final int vertexCount;
+
+  /// The mesh's extent along the floor and its height, in metres.
+  final double? widthM;
+  final double? lengthM;
+  final double? heightM;
+  final Duration duration;
+}
+
+/// "3D Space": the whole room as a coloured LiDAR mesh (ARKit scene
+/// reconstruction), Polycam style. The camera is live from [prepare];
+/// [start] begins meshing; [finish] colours the mesh and writes it.
+class MeshScan {
+  const MeshScan._();
+
+  static Future<bool> isSupported() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return false;
+    try {
+      return await RoomScan._call<bool>('mesh.isSupported') ?? false;
+    } on RoomScanException {
+      return false;
+    }
+  }
+
+  static Future<void> prepare() => RoomScan._call<void>('mesh.prepare');
+  static Future<void> start() => RoomScan._call<void>('mesh.start');
+  static Future<void> cancel() => RoomScan._call<void>('mesh.cancel');
+
+  static Future<MeshScanStatus> status() async {
+    final Map<Object?, Object?>? map =
+        await RoomScan._call<Map<Object?, Object?>>('mesh.status');
+    return map == null ? MeshScanStatus.empty : MeshScanStatus.fromMap(map);
+  }
+
+  /// Stops, colours and writes the mesh. Takes a while for a big room.
+  static Future<MeshScanExport> finish() async {
+    final Map<Object?, Object?>? map =
+        await RoomScan._call<Map<Object?, Object?>>('mesh.finish');
+    if (map == null) {
+      throw const RoomScanException('mesh_failed', 'Nothing was exported.');
+    }
+    return MeshScanExport.fromMap(map);
+  }
+}
+
+/// The 3D Space viewfinder: the camera with the mesh forming over it.
+class MeshScanPreview extends StatelessWidget {
+  const MeshScanPreview({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
+      return const ColoredBox(color: Color(0xFF0D1518));
+    }
+    return const UiKitView(
+      viewType: 'flex/mesh_scan_view',
+      creationParamsCodec: StandardMessageCodec(),
+    );
+  }
+}
+
+/// A finished 3D Object: a photo-textured model of one object.
+@immutable
+class ObjectCaptureResult {
+  const ObjectCaptureResult({
+    required this.modelPath,
+    required this.photos,
+    required this.bytes,
+  });
+
+  factory ObjectCaptureResult.fromMap(Map<Object?, Object?> map) =>
+      ObjectCaptureResult(
+        modelPath: map['modelPath']! as String,
+        photos: (map['photos'] as num? ?? 0).toInt(),
+        bytes: (map['bytes'] as num? ?? 0).toInt(),
+      );
+
+  /// The model, `object.usdz`.
+  final String modelPath;
+
+  /// How many photos it was built from.
+  final int photos;
+  final int bytes;
+}
+
+/// "3D Object": Apple's guided Object Capture, shown full screen over the
+/// app; the model is built on the phone (iOS 17, LiDAR iPhones).
+class ObjectCapture {
+  const ObjectCapture._();
+
+  static Future<bool> isSupported() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return false;
+    try {
+      return await RoomScan._call<bool>('object.isSupported') ?? false;
+    } on RoomScanException {
+      return false;
+    }
+  }
+
+  /// Runs the capture and the model build. Null if the surveyor cancels.
+  static Future<ObjectCaptureResult?> capture() async {
+    final Map<Object?, Object?>? map =
+        await RoomScan._call<Map<Object?, Object?>>('object.capture');
+    return map == null ? null : ObjectCaptureResult.fromMap(map);
   }
 }
 

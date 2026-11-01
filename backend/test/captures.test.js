@@ -169,6 +169,28 @@ describe('captures', () => {
     assert.match(res.body.message, /3D model/);
   });
 
+  it('takes a 3D Space capture: the mesh alone, traced by the reviewer', async () => {
+    const { body } = await register('key-space', metadata({ level: 9, coverage: 0, closed: false, tags: [] })).expect(201);
+    const mesh = Buffer.from(['v 0 0 0 0.5 0.5 0.5', 'v 10 0 0 0.5 0.5 0.5', 'v 10 0 6 0.5 0.5 0.5', 'f 1 2 3', ''].join('\n'));
+    const opened = await post(`/v1/captures/${body.captureId}/uploads`)
+      .send({ partSize: PART, files: [{ name: 'scan.obj', kind: 'mesh', bytes: mesh.length, contentType: 'model/obj' }] })
+      .expect(200);
+    await putPart(ctx, opened.body.files[0].parts[0].url, mesh).expect(200);
+    const done = await post(`/v1/captures/${body.captureId}/complete`).send({}).expect(200);
+    assert.equal(done.body.status, 'received');
+
+    // Read into an empty plan that says what to do with it.
+    const [[version]] = await pool.query('SELECT plan_json, status FROM plan_versions WHERE capture_id = ?', [body.captureId]);
+    // Read, and waiting in the reviewer queue (processing, with its plan).
+    assert.ok(version.plan_json, 'the plan was read');
+    const plan = typeof version.plan_json === 'string' ? JSON.parse(version.plan_json) : version.plan_json;
+    assert.equal(plan.walls.length, 0);
+    const flag = plan.flags.find((f) => f.kind === 'meshOnly');
+    assert.ok(flag, 'flagged as a mesh to trace');
+    assert.match(flag.title, /trace the walls/);
+    assert.ok(!plan.flags.some((f) => f.kind === 'unreadable'));
+  });
+
   it('validates the metadata', async () => {
     const res = await register('key-bad', metadata({ floorToFloorM: 40 })).expect(400);
     assert.match(res.body.message, /floorToFloorM/);

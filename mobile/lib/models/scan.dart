@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:room_scan/room_scan.dart';
 
@@ -177,6 +179,22 @@ class WallSegment {
   double get length => (end - start).distance;
 }
 
+/// What fills a gap in a wall.
+enum OpeningKind { door, window, opening }
+
+/// A door, window or open doorway: the stretch of wall it takes up, seen
+/// from above.
+@immutable
+class PlanOpening {
+  const PlanOpening(this.kind, this.start, this.end);
+
+  final OpeningKind kind;
+  final Offset start;
+  final Offset end;
+
+  double get length => (end - start).distance;
+}
+
 /// A top-down floor plan: walls, equipment footprints, and the region of
 /// the plane worth showing.
 ///
@@ -190,11 +208,18 @@ class PlanGeometry {
     this.objects = const <List<Offset>>[],
     this.metresPerUnit = 1,
     this.areaM2,
+    this.openings = const <PlanOpening>[],
+    this.labels = const <String?>[],
+    this.rotation = 0,
   });
 
   /// Fits a frame around scanned walls and objects, in metres, with a margin.
   /// The frame never shrinks below [minSpanM] so an early scan with one wall
   /// is not drawn absurdly zoomed in.
+  ///
+  /// RoomPlan's axes follow wherever the phone pointed when the scan began,
+  /// so the plan is turned to put its main walls square to the screen, and
+  /// the frame is fitted in that turned drawing.
   factory PlanGeometry.fitted({
     required List<WallSegment> walls,
     List<List<Offset>> objects = const <List<Offset>>[],
@@ -202,12 +227,15 @@ class PlanGeometry {
     Offset? include,
     double marginM = 1.0,
     double minSpanM = 8.0,
+    List<PlanOpening> openings = const <PlanOpening>[],
+    List<String?> labels = const <String?>[],
   }) {
+    final double rotation = mainWallAngle(walls);
     final List<Offset> points = <Offset>[
       for (final WallSegment w in walls) ...<Offset>[w.start, w.end],
       for (final List<Offset> o in objects) ...o,
       ?include,
-    ];
+    ].map((Offset p) => _turn(p, -rotation)).toList();
 
     Rect frame;
     if (points.isEmpty) {
@@ -240,7 +268,33 @@ class PlanGeometry {
       objects: objects,
       frame: frame,
       areaM2: areaM2,
+      openings: openings,
+      labels: labels,
+      rotation: rotation,
     );
+  }
+
+  /// The direction most of the wall length runs in, folded into a quarter
+  /// turn (−45° to 45°), in radians. Walls at right angles agree, so a
+  /// rectangular room gives the angle of its sides.
+  static double mainWallAngle(List<WallSegment> walls) {
+    double x = 0, y = 0;
+    for (final WallSegment w in walls) {
+      final Offset d = w.end - w.start;
+      final double angle = 4 * math.atan2(d.dy, d.dx);
+      x += w.length * math.cos(angle);
+      y += w.length * math.sin(angle);
+    }
+    if (x.abs() < 1e-9 && y.abs() < 1e-9) return 0;
+    final double turn = math.atan2(y, x) / 4;
+    // Square already, to rounding: left exactly as it is.
+    return turn.abs() < 1e-6 ? 0 : turn;
+  }
+
+  static Offset _turn(Offset p, double radians) {
+    if (radians == 0) return p;
+    final double c = math.cos(radians), s = math.sin(radians);
+    return Offset(p.dx * c - p.dy * s, p.dx * s + p.dy * c);
   }
 
   final List<WallSegment> walls;
@@ -248,7 +302,27 @@ class PlanGeometry {
   /// Equipment footprints as closed polygons.
   final List<List<Offset>> objects;
 
-  /// The part of the plane the drawing should show.
+  /// What RoomPlan recognised each of [objects] as, e.g. "Table", in the
+  /// same order; null where it has no name for it, as for most machines.
+  final List<String?> labels;
+
+  /// Doors, windows and open doorways in the walls.
+  final List<PlanOpening> openings;
+
+  /// The angle of the main walls, in radians. The plan is drawn turned back
+  /// by it ([toDrawing]); every point stays in the scan's own frame.
+  final double rotation;
+
+  /// A plan point in the squared-up drawing that [frame] is fitted to.
+  Offset toDrawing(Offset p) => _turn(p, -rotation);
+
+  /// The inverse of [toDrawing].
+  Offset fromDrawing(Offset p) => _turn(p, rotation);
+
+  int countOf(OpeningKind kind) =>
+      openings.where((PlanOpening o) => o.kind == kind).length;
+
+  /// The part of the squared-up drawing the plan should show.
   final Rect frame;
   final double metresPerUnit;
 
@@ -264,18 +338,26 @@ class PlanGeometry {
   /// are left out: it is the floor being scanned that has to stay within
   /// what one scan can hold.
   Size? get wallExtentM {
+    final Rect? box = wallBox;
+    if (box == null) return null;
+    return Size(box.width * metresPerUnit, box.height * metresPerUnit);
+  }
+
+  /// The box round the walls in the squared-up drawing, in plan units.
+  Rect? get wallBox {
     if (walls.isEmpty) return null;
-    double left = walls.first.start.dx, right = left;
-    double top = walls.first.start.dy, bottom = top;
+    final Offset first = toDrawing(walls.first.start);
+    double left = first.dx, right = left;
+    double top = first.dy, bottom = top;
     for (final WallSegment w in walls) {
-      for (final Offset p in <Offset>[w.start, w.end]) {
+      for (final Offset p in <Offset>[toDrawing(w.start), toDrawing(w.end)]) {
         if (p.dx < left) left = p.dx;
         if (p.dx > right) right = p.dx;
         if (p.dy < top) top = p.dy;
         if (p.dy > bottom) bottom = p.dy;
       }
     }
-    return Size((right - left) * metresPerUnit, (bottom - top) * metresPerUnit);
+    return Rect.fromLTRB(left, top, right, bottom);
   }
 }
 

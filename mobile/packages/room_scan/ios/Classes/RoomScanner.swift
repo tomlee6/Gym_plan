@@ -435,6 +435,26 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
         .map { [Double($0.x), Double($0.y)] }
     }
 
+    // Doors, windows and open doorways sit in a wall, so from above each is
+    // the stretch of wall it fills, like the wall itself.
+    var openings: [[String: Any]] = []
+    for room in rooms {
+      let kinds: [(String, [CapturedRoom.Surface])] = [
+        ("door", room.doors), ("window", room.windows), ("opening", room.openings),
+      ]
+      for (kind, surfaces) in kinds {
+        for surface in surfaces {
+          let line = Self.segment(of: surface)
+          openings.append([
+            "kind": kind,
+            "a": [Double(line.a.x), Double(line.a.y)],
+            "b": [Double(line.b.x), Double(line.b.y)],
+          ])
+        }
+      }
+    }
+    event["openings"] = openings
+
     /*
      * Each detected object with enough of its measurements to be marked as
      * a gym machine on the phone (CHANGE 2.1).

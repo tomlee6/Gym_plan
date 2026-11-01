@@ -9,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../widgets/detail_widgets.dart';
 import '../widgets/nav_bar.dart';
 import 'scan_viewer_screen.dart';
+import 'mesh_scan_screen.dart';
 import 'scanning_screen.dart';
 
 /// Opens the camera straight away, Polycam style; the scan starts when the
@@ -26,7 +27,12 @@ class NewCaptureScreen extends StatefulWidget {
     this.initialLevel = '2',
     this.captureService,
     this.opensIn = ScanView.model,
+    this.space = false,
   });
+
+  /// "3D Space": a LiDAR mesh of the whole room rather than the
+  /// floor-plan scan. Same checks first; then the mesh scan opens.
+  final bool space;
 
   /// Pre-selects the gym, by name, the user was last looking at.
   final String? initialFacility;
@@ -37,8 +43,8 @@ class NewCaptureScreen extends StatefulWidget {
   /// Injectable so tests can drive the unsupported-device path.
   final CaptureService? captureService;
 
-  /// Whether the finished scan opens on its 3D model or its floor plan:
-  /// "3D Space" or "Floorplan" on the dashboard. Both are the same scan.
+  /// Whether the finished floor-plan scan opens on its 3D model or its
+  /// floor plan.
   final ScanView opensIn;
 
   /// The floor-to-floor height a scan starts with, until the surveyor sets
@@ -124,8 +130,8 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
     Navigator.of(context).pushReplacement(
       PageRouteBuilder<void>(
         transitionDuration: const Duration(milliseconds: 250),
-        pageBuilder: (_, _, _) => ScanningScreen(
-          config: ScanConfig(
+        pageBuilder: (_, _, _) {
+          final ScanConfig config = ScanConfig(
             // The account the capture belongs to, kept with it so the
             // upload goes to the right account even after a switch.
             accountId: AuthSession.instance.currentAccountId,
@@ -133,10 +139,15 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
             facility: facility.name,
             level: int.tryParse(widget.initialLevel) ?? 1,
             heightM: NewCaptureScreen.defaultHeightM,
-          ),
-          facilities: list,
-          opensIn: widget.opensIn,
-        ),
+          );
+          return widget.space
+              ? MeshScanScreen(config: config, facilities: list)
+              : ScanningScreen(
+                  config: config,
+                  facilities: list,
+                  opensIn: widget.opensIn,
+                );
+        },
         transitionsBuilder: (_, Animation<double> animation, _, Widget child) =>
             FadeTransition(opacity: animation, child: child),
       ),

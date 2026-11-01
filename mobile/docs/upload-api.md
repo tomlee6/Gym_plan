@@ -167,6 +167,11 @@ exactly those (with URLs from step 3) before asking again:
 { "status": "incomplete", "missing": [{ "fileId": "file_01H…", "parts": [2] }] }
 ```
 
+A LiDAR capture must carry RoomPlan's model (`model`) **or** a LiDAR mesh
+(`mesh`). A 3D Space capture sends only the mesh: it is read into an empty
+plan with a `meshOnly` flag, and the reviewer traces the walls over the mesh
+in the editor.
+
 Only on `received` does the app delete its copy. Anything else is treated as
 "not yet" and retried. The call must be **idempotent**: calling it again after
 success must return `received` again, because the response can be lost.
@@ -183,6 +188,27 @@ surveyor when it stops an upload.
 | `408`/`429`/`5xx` | Retries with backoff (15 s doubling to 5 min).              |
 | other `4xx`     | Stops and shows `message`; the user can tap *Try again*.    |
 | no connection   | Waits and retries, shown as "Waiting for signal".           |
+
+## 3D object scans
+
+A 3D Object (Apple Object Capture) is one USDZ, outside any capture: it
+makes no plan version and nothing reviews it. The server side is
+`backend/src/modules/objects.js`; the app side is
+`lib/services/object_uploads.dart`. Account roles `owner` and `surveyor`.
+
+| Call | What it does |
+| ---- | ------------ |
+| `POST /v1/objects` | Needs `Idempotency-Key`; the app sends `object-<local id>`, so a resend is the same object. Body: `name`, `bytes`, `contentType` (`model/vnd.usdz+zip`), `partSize`, optional `facilityId`, `photoCount`, `scannedAt`. Answers `201 {objectId, status: 'uploading', file: {fileId, parts}}`, or `200` with the earlier object for a known key. |
+| `POST /v1/objects/:id/uploads/refresh` | `{parts}` → fresh part URLs. |
+| `POST /v1/objects/:id/complete` | `{status: 'ready'}`, or `{status: 'incomplete', missing}` as for a capture. |
+| `GET /v1/objects` | The account's stored objects, newest first; `?facilityId=` for one gym. |
+| `GET /v1/objects/:id` | One object, with a short-lived `downloadUrl`. |
+| `DELETE /v1/objects/:id` | Removes the object and its file. |
+
+Files are stored at `accounts/<account>/objects/<objectId>/object.usdz`. The
+app sends each new object straight after it is saved, and any it could not
+send (no signal) the next time the dashboard loads. Gym owners see them on
+the web under *3D objects*.
 
 ## Running the app against it
 

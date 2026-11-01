@@ -84,10 +84,12 @@ abstract class UploadQueue extends ChangeNotifier {
   /// [equipment] are the gym machines marked during the capture and
   /// [videos] their 360 walkarounds (CHANGE 2, CHANGE 3). Both travel with
   /// the capture: the machines are registered before the scan files go up,
-  /// so plan reading can place them.
+  /// so plan reading can place them. [meshPath] is a 3D Space scan's
+  /// coloured LiDAR mesh (`mesh.obj`), sent as the capture's `mesh` file.
   Future<void> enqueue(
     ScanResult result, {
     ScanExport? export,
+    String? meshPath,
     List<Equipment> equipment = const <Equipment>[],
     Map<String, EquipmentVideo> videos = const <String, EquipmentVideo>{},
   });

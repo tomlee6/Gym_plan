@@ -28,6 +28,24 @@ export function unreadableFlag(detail) {
 }
 
 /**
+ * The flag on a 3D Space capture: the LiDAR mesh of the whole room and no
+ * RoomPlan room, so there are no walls until the reviewer traces them over
+ * the mesh, which the editor shows under the plan (H-03).
+ */
+export function meshOnlyFlag() {
+  return {
+    id: newElementId('f'),
+    kind: 'meshOnly',
+    elementId: null,
+    title: '3D Space: trace the walls',
+    detail:
+      'This capture is a LiDAR mesh of the whole room (the app’s 3D Space), with no RoomPlan walls. ' +
+      'Trace the walls, doors and machines over the mesh, or reject it if the mesh does not cover the level.',
+    status: 'open',
+  };
+}
+
+/**
  * The plan for a capture, from its stored files and typed details. Returns
  * `{ plan, scaleResidualMm }`; the second is what the control distances
  * left over, or null when there were none.
@@ -108,6 +126,8 @@ export async function readCapturePlan(db, captureId) {
     plan.flags.push(
       unreadableFlag(`${problem} Trace the plan from the photos, or reject it as an unreadable source.`),
     );
+  } else if (!roomFile && meshFile) {
+    plan.flags.push(meshOnlyFlag());
   }
   const control = plan.scale?.control;
   return { plan, scaleResidualMm: control?.applied ? control.residualMm : null };
