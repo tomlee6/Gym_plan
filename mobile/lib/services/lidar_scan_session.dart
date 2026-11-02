@@ -176,6 +176,7 @@ class LidarScanSession extends ScanSession {
       modelPath: result.usdzPath,
       dataPath: result.jsonPath,
       bytes: result.bytes,
+      videoPath: result.videoPath,
     );
   }
 

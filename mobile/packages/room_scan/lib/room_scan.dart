@@ -211,6 +211,9 @@ class RoomScanExport {
     required this.jsonPath,
     required this.bytes,
     required this.room,
+    this.videoPath,
+    this.videoBytes = 0,
+    this.videoDuration = Duration.zero,
   });
 
   factory RoomScanExport.fromMap(Map<Object?, Object?> map) {
@@ -221,8 +224,20 @@ class RoomScanExport {
       room: RoomScanUpdate.fromMap(
         map['room'] as Map<Object?, Object?>? ?? const <Object?, Object?>{},
       ),
+      videoPath: map['videoPath'] as String?,
+      videoBytes: (map['videoBytes'] as num? ?? 0).toInt(),
+      videoDuration: Duration(
+        milliseconds: (map['videoDurationMs'] as num? ?? 0).toInt(),
+      ),
     );
   }
+
+  /// The room video recorded in the background of the scan (MP4, no
+  /// sound), from the scan's own camera frames. Null if it could not be
+  /// written; the scan is complete without it.
+  final String? videoPath;
+  final int videoBytes;
+  final Duration videoDuration;
 
   /// The 3D model, for the walkthrough.
   final String usdzPath;

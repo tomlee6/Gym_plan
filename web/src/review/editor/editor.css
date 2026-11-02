@@ -1249,3 +1249,114 @@
   border-color: var(--accent);
   background: var(--accent-bg);
 }
+
+/* Scan check: the 3D scan beside the room video recorded with it. */
+.sc-panel {
+  flex-shrink: 0;
+  margin: 12px 24px 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--rv-card);
+}
+
+.sc-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 8px 12px;
+}
+
+.sc-head .spacer {
+  flex: 1;
+}
+
+.sc-title {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.sc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 0 12px 12px;
+  /* Room for the plan editor below, on a laptop screen too. */
+  height: clamp(220px, 38dvh, 440px);
+}
+
+.sc-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  gap: 6px;
+}
+
+.sc-label {
+  margin: 0;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.sc-model,
+.sc-video {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-viewer, #050a0c);
+}
+
+.sc-video {
+  object-fit: contain;
+  background: #000;
+}
+
+.sc-model canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  touch-action: none;
+}
+
+.sc-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+}
+
+.sc-model-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.sc-model-bar > * {
+  pointer-events: auto;
+}
+
+@media (max-width: 900px) {
+  .sc-grid {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+  .sc-model,
+  .sc-video {
+    flex: none;
+    aspect-ratio: 4 / 3;
+  }
+}

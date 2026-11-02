@@ -303,6 +303,58 @@ void main() {
     expect(queue.active!.status, UploadStatus.uploading);
   });
 
+  test('sends the room video in the same capture as the model', () async {
+    final File video = await File(
+      '${scanDir.path}/room-video.mp4',
+    ).writeAsBytes(List<int>.filled(1500, 3));
+    final BackgroundUploadQueue queue = newQueue();
+    addTearDown(queue.dispose);
+
+    await queue.enqueue(
+      result(),
+      export: ScanExport(
+        modelPath: model.path,
+        dataPath: room.path,
+        bytes: 0,
+        videoPath: video.path,
+      ),
+    );
+    // The usual parts, plus two for the 1500-byte video.
+    await _until(() => transport.enqueued.length == parts() + 2);
+
+    final http.Request open = backend.requests.firstWhere(
+      (http.Request r) => r.url.path == '/v1/captures/cap-1/uploads',
+    );
+    final List<Object?> files =
+        (jsonDecode(open.body) as Map<String, Object?>)['files']!
+            as List<Object?>;
+    final Map<String, Object?> sent =
+        files.cast<Map<String, Object?>>().firstWhere(
+          (Map<String, Object?> f) => f['kind'] == 'room_video',
+        );
+    expect(sent['name'], 'room-video.mp4');
+    expect(sent['contentType'], 'video/mp4');
+    expect(sent['bytes'], 1500);
+    expect(files.map((Object? f) => (f! as Map<String, Object?>)['kind']), containsAll(<String>['model', 'room', 'room_video']));
+
+    transport.finishAll();
+    await _until(() => queue.active!.complete, reason: 'receipt');
+    // Removed with the rest once the platform has it.
+    await _until(() => !video.existsSync(), reason: 'the local video');
+  });
+
+  test('a scan without a video uploads as before', () async {
+    final BackgroundUploadQueue queue = newQueue();
+    addTearDown(queue.dispose);
+
+    await queue.enqueue(result(), export: export());
+    await _until(() => transport.enqueued.length == parts());
+    final http.Request open = backend.requests.firstWhere(
+      (http.Request r) => r.url.path == '/v1/captures/cap-1/uploads',
+    );
+    expect(open.body, isNot(contains('room_video')));
+  });
+
   test('confirms receipt, then deletes the local copy', () async {
     final BackgroundUploadQueue queue = newQueue();
     addTearDown(queue.dispose);

@@ -190,6 +190,10 @@ class BackgroundUploadQueue extends UploadQueue {
       if (export != null) ...<(String, String, String)>[
         (export.modelPath, 'model', 'model/vnd.usdz+zip'),
         (export.dataPath, 'room', 'application/json'),
+        // The room video, in the same capture as the model it was recorded
+        // with, so it can only arrive (and be retried) with it.
+        if (export.videoPath != null)
+          (export.videoPath!, 'room_video', 'video/mp4'),
       ],
       // 3D Space: the coloured LiDAR mesh, which the server reads for
       // machines (F-06) and the reviewer sees under the plan (H-03).
@@ -206,7 +210,11 @@ class BackgroundUploadQueue extends UploadQueue {
       files.add(
         ManifestFile(
           source: UploadManifest.relativise(file.path, root),
-          name: kind == 'photo' ? 'photo-${++photoNumber}.$ext' : 'scan.$ext',
+          name: switch (kind) {
+            'photo' => 'photo-${++photoNumber}.$ext',
+            'room_video' => 'room-video.$ext',
+            _ => 'scan.$ext',
+          },
           kind: kind,
           contentType: type,
           bytes: await file.length(),

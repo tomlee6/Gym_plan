@@ -510,6 +510,67 @@ describe('control distances and scan files (F-03, F-05)', () => {
     ]);
   });
 
+  it('takes the room video with the scan, and waits for it before receiving the capture', async () => {
+    const { body } = await register('key-room-video', metadata({ level: 11 })).expect(201);
+    const room = Buffer.from(JSON.stringify(ROOM));
+    const model = randomBytes(100);
+    const video = randomBytes(300);
+    const up = await post(`/v1/captures/${body.captureId}/uploads`)
+      .send({
+        partSize: PART,
+        files: [
+          { name: 'scan.usdz', kind: 'model', bytes: model.length, contentType: 'model/vnd.usdz+zip' },
+          { name: 'scan.json', kind: 'room', bytes: room.length, contentType: 'application/json' },
+          { name: 'room-video.mp4', kind: 'room_video', bytes: video.length, contentType: 'video/mp4' },
+        ],
+      })
+      .expect(200);
+    const byName = Object.fromEntries(up.body.files.map((f) => [f.name, f]));
+    await putPart(ctx, byName['scan.usdz'].parts[0].url, model).expect(200);
+    await putPart(ctx, byName['scan.json'].parts[0].url, room).expect(200);
+
+    // Not received while the video is still on its way: the app retries it.
+    const early = await post(`/v1/captures/${body.captureId}/complete`).send({}).expect(200);
+    assert.equal(early.body.status, 'incomplete');
+    assert.deepEqual(early.body.missing.map((m) => m.fileId), [byName['room-video.mp4'].fileId]);
+
+    await putPart(ctx, byName['room-video.mp4'].parts[0].url, video).expect(200);
+    const done = await post(`/v1/captures/${body.captureId}/complete`).send({}).expect(200);
+    assert.equal(done.body.status, 'received');
+
+    // Stored with the capture: same account, surveyor and plan version as the model.
+    const [[file]] = await pool.query(
+      `SELECT cf.kind, cf.status, cf.storage_key, c.account_id, c.user_id
+       FROM capture_files cf JOIN captures c ON c.id = cf.capture_id
+       WHERE cf.capture_id = ? AND cf.name = 'room-video.mp4'`,
+      [body.captureId],
+    );
+    assert.equal(file.kind, 'room_video');
+    assert.equal(file.status, 'stored');
+    assert.equal(file.storage_key, `accounts/${file.account_id}/captures/${body.captureId}/room-video.mp4`);
+
+    // The reviewer gets it with a signed link, beside the model.
+    const [[v]] = await pool.query('SELECT id FROM plan_versions WHERE capture_id = ?', [body.captureId]);
+    const { accessToken: reviewer } = await login(ctx, DEMO.reviewer);
+    const detail = await api(ctx).get(`/v1/review/versions/${v.id}`).set('Authorization', `Bearer ${reviewer}`).expect(200);
+    const sent = detail.body.files.find((f) => f.kind === 'room_video');
+    assert.equal(sent.name, 'room-video.mp4');
+    assert.equal(sent.contentType, 'video/mp4');
+    assert.equal(sent.equipmentId, null);
+    assert.ok(sent.url, 'a signed link');
+    assert.ok(detail.body.files.some((f) => f.kind === 'model' && f.url));
+  });
+
+  it('the room video has its own kind, apart from a machine walkaround', async () => {
+    const { body } = await register('key-room-video-sim', metadata({ level: 12 })).expect(201);
+    await post(`/v1/captures/${body.captureId}/uploads`)
+      .send({ partSize: PART, files: [{ name: 'room-video.mp4', kind: 'room_video', bytes: 10, contentType: 'video/mp4' }] })
+      .expect(200);
+    await post(`/v1/captures/${body.captureId}/uploads`)
+      .send({ partSize: PART, files: [{ name: 'room-video.mov', kind: 'video', bytes: 10, contentType: 'video/quicktime' }] })
+      .expect(400);
+  });
+
   it('only keyframe images may sit in a folder', async () => {
     const { body } = await register('key-folder', metadata({ level: 8 })).expect(201);
     await post(`/v1/captures/${body.captureId}/uploads`)

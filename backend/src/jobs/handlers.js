@@ -316,7 +316,7 @@ registerHandler('account.remove', { run: removeAccount });
 /* Retention (E-05).                                                    */
 
 /** The raw capture files that go cold; drawings, thumbnails and the plan stay hot. */
-const COLD_KINDS = ['model', 'room', 'mesh', 'keyframes', 'photo', 'video', 'frames'];
+const COLD_KINDS = ['model', 'room', 'mesh', 'keyframes', 'photo', 'video', 'frames', 'room_video'];
 const RETENTION_BATCH = 500;
 
 registerHandler('retention', {

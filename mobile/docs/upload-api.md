@@ -96,10 +96,20 @@ Response `200`/`201`:
   "files": [
     { "name": "scan.usdz",   "kind": "model", "bytes": 312475648, "contentType": "model/vnd.usdz+zip" },
     { "name": "scan.json",   "kind": "room",  "bytes": 48213,     "contentType": "application/json" },
+    { "name": "room-video.mp4", "kind": "room_video", "bytes": 98304000, "contentType": "video/mp4" },
     { "name": "photo-1.jpg", "kind": "photo", "bytes": 2811004,   "contentType": "image/jpeg" }
   ]
 }
 ```
+
+`room_video` is the room video the app records in the background of every
+LiDAR room scan (MP4, H.264, portrait, no sound, 15 fps at 960 × 720), made
+from the scan's own ARKit frames so no second camera session runs. It is a
+file of the same capture as the model, so it belongs to the same plan
+version, facility level, account and surveyor, and the capture is not
+`received` until it has landed. It is optional: a capture without one (an
+older app build, or a phone that could not write it) is received as before.
+The reviewer watches it beside the 3D scan in the editor's Scan check.
 
 Response:
 

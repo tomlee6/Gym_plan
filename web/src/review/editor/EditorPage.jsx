@@ -13,6 +13,7 @@ import { ApproveDialog, RejectDialog } from '../DecisionDialogs.jsx';
 import Canvas from './Canvas.jsx';
 import { keyframesIndexFile, readKeyframes } from './keyframes.js';
 import { deleteElement, findElement, movePolygon } from './ops.js';
+import ScanCheck from './ScanCheck.jsx';
 import { floorTriangles, meshFile, parseObj, trianglesPath } from './scanMesh.js';
 import Sidebar from './Sidebar.jsx';
 import Toolbar, { TOOLS } from './Toolbar.jsx';
@@ -377,6 +378,9 @@ function Editor({ v, reload }) {
       </Header>
 
       <Notices v={v} actionError={actionError} saveError={save.status === 'conflict' || save.status === 'error' ? save.error : null} onReload={reload} />
+
+      {/* The 3D scan beside the room video, to check the scan against the room. */}
+      <ScanCheck files={v.files} />
 
       <div className="ed-body">
         <div className="ed-main">

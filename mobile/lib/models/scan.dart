@@ -516,10 +516,16 @@ class ScanExport {
     required this.modelPath,
     required this.dataPath,
     required this.bytes,
+    this.videoPath,
   });
 
   /// The 3D model (USDZ) the walkthrough is generated from.
   final String modelPath;
+
+  /// The room video recorded in the background of the LiDAR scan (MP4),
+  /// which the reviewer watches beside the 3D model. Null when the phone
+  /// could not write one; the scan is submitted without it.
+  final String? videoPath;
 
   /// RoomPlan's structured description of the room (JSON): walls, doors,
   /// openings and objects with their dimensions.

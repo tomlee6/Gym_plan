@@ -264,10 +264,16 @@ router.post('/drawings', async (req, res) => {
   res.status(201).json({ captureId });
 });
 
-/** Which file kinds each kind of capture may carry. */
+/**
+ * Which file kinds each kind of capture may carry. `room_video` is the room
+ * video the phone records in the background of a LiDAR scan, for the
+ * reviewer to watch beside the 3D model. It is optional, so captures from
+ * app builds that do not record one are received as before; when it is
+ * sent, the capture is not received until it has landed.
+ */
 const KINDS = {
-  lidar: ['model', 'room', 'photo', 'mesh', 'keyframes'],
-  simulated: ['model', 'room', 'photo', 'mesh', 'keyframes'],
+  lidar: ['model', 'room', 'photo', 'mesh', 'keyframes', 'room_video'],
+  simulated: ['model', 'room', 'photo', 'mesh', 'keyframes', 'room_video'],
   upload: ['source', 'source_image'],
 };
 
@@ -278,7 +284,7 @@ const fileBody = z.object({
     .max(200)
     .regex(/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)?$/, 'File names may only use letters, digits, dot, dash and underscore.')
     .refine((n) => !n.split('/').includes('..'), 'File names may only use letters, digits, dot, dash and underscore.'),
-  kind: z.enum(['model', 'room', 'photo', 'source', 'source_image', 'mesh', 'keyframes']),
+  kind: z.enum(['model', 'room', 'photo', 'source', 'source_image', 'mesh', 'keyframes', 'room_video']),
   bytes: z.number().int().min(0).max(config.uploads.maxFileBytes),
   contentType: z.string().min(1).max(100),
 });

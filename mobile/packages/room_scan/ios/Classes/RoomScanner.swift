@@ -77,6 +77,10 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
   /// because an upload may outlive the app process.
   private let folder: URL
 
+  /// The room video recorded alongside the scan, from the scan's own AR
+  /// frames (ScanVideoRecorder). Made in `init`, once the folder exists.
+  private let video: ScanVideoRecorder
+
   private var latestRoom: CapturedRoom?
   private var instruction: String?
   private var timer: Timer?
@@ -98,6 +102,7 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
       .appendingPathComponent("Scans", isDirectory: true)
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    video = ScanVideoRecorder(folder: folder)
 
     if RoomCaptureSession.isSupported {
       let rcv = RoomCaptureView(frame: .zero, arSession: arSession)
@@ -121,11 +126,16 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
     session.run(configuration: RoomCaptureSession.Configuration())
     // A scan can take ten minutes; do not let the screen lock mid-walk.
     UIApplication.shared.isIdleTimerDisabled = true
+    // The room video starts with the scan, from the same AR session's
+    // frames: no second camera session, nothing for the surveyor to press.
+    let session = self.session
+    video.start(frames: { session.arSession.currentFrame })
     resume()
   }
 
   func resume() {
     guard !finished, timer == nil else { return }
+    video.resume()
     resumedAt = Date()
     timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
       self?.tick()
@@ -141,10 +151,13 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
     resumedAt = nil
     timer?.invalidate()
     timer = nil
+    video.pause()
   }
 
+  /// Ends the scan without keeping it, video and all.
   func stop() {
     pause()
+    video.cancel()
     if !finished {
       finished = true
       endRequested = true
@@ -266,12 +279,21 @@ final class RoomScanner: NSObject, RoomCaptureSessionDelegate {
       try await exportSections(rooms, usdz: usdz, json: json)
     }
 
-    return [
+    var export: [String: Any] = [
       "usdzPath": usdz.path,
       "jsonPath": json.path,
       "bytes": fileSize(usdz) + fileSize(json),
       "room": snapshot(of: rooms, section: rooms.count),
     ]
+    // The room video stopped taking frames when the scan paused above; this
+    // closes the file. Without one (it could not be written), the scan is
+    // submitted on its own, as before.
+    if let recording = await video.finish() {
+      export["videoPath"] = recording.url.path
+      export["videoBytes"] = recording.bytes
+      export["videoDurationMs"] = recording.durationMs
+    }
+    return export
   }
 
   /**
