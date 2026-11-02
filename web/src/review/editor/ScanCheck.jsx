@@ -36,7 +36,15 @@ export default function ScanCheck({ files }) {
         <h2 id="sc-title" className="sc-title">
           Scan check
         </h2>
-        <span className="small muted">Compare the 3D scan with the video of the room recorded while it was scanned.</span>
+        {video ? (
+          <span className="small muted">Compare the 3D scan with the video of the room recorded while it was scanned.</span>
+        ) : (
+          // Said up front, so the reviewer need not open the panel to find out.
+          <span className="sc-novideo small">
+            No room video for this scan: it was made with an app version that did not record one.
+            {model ? ' Show to see the 3D scan.' : ''}
+          </span>
+        )}
         <span className="spacer" />
         <button type="button" className="rv-button ghost small" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
           {open ? 'Hide' : 'Show'}

@@ -49,11 +49,12 @@ describe('ScanCheck', () => {
     expect(screen.getByLabelText(/Video of the room/)).toBeInTheDocument();
   });
 
-  it('a scan from an older app: closed at first, and says there is no video', () => {
+  it('a scan from an older app: says there is no video while still closed', () => {
     render(<ScanCheck files={[MODEL, PHOTO]} />);
-    expect(screen.queryByText(/No room video/)).toBeNull();
+    expect(screen.getByText(/No room video for this scan/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/The scanned room in 3D/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Show' }));
-    expect(screen.getByText(/No room video/)).toBeInTheDocument();
+    expect(screen.getByText(/No room video: this scan was made/)).toBeInTheDocument();
   });
 
   it('a 3D Space scan shows its mesh', () => {

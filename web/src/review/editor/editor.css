@@ -1271,6 +1271,10 @@
   flex: 1;
 }
 
+.sc-novideo {
+  color: var(--warn);
+}
+
 .sc-title {
   margin: 0;
   font-size: 0.95rem;
