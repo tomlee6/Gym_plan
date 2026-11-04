@@ -62,9 +62,12 @@
   color: var(--rv-good);
 }
 
+/* Fills the rest of the screen, but never squeezes the plan below a usable
+   size: with the scan check open on a short screen the page scrolls inside
+   .rv-main instead of crushing the canvas to a strip. */
 .ed-body {
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 520px;
+  min-height: 520px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
 }
@@ -94,6 +97,11 @@
   border-radius: 14px;
   background: rgba(0, 14, 21, 0.94);
   border: 1px solid var(--rv-border);
+  /* Stays inside the editor: scrolls its own tools rather than hanging
+     below the canvas and stretching the page. */
+  max-height: calc(100% - 80px);
+  overflow-y: auto;
+  scrollbar-width: none;
 }
 
 .ed-tool {
@@ -748,6 +756,8 @@
   }
 
   .ed-body {
+    flex: none;
+    min-height: 0;
     grid-template-columns: minmax(0, 1fr);
   }
 
