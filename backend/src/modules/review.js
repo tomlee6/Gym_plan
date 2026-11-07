@@ -745,14 +745,21 @@ router.post('/versions/:id/revise', async (req, res) => {
     const v = await versionRow(db, req.params.id, { lock: true });
     if (!v) throw notFound();
     if (!['ready', 'generation_failed'].includes(v.status)) throw conflict('Only an approved version can be revised.');
+    // A newer version still in hand blocks a revision. One that was sent
+    // back (recapture) is decided and does not; the new version is still
+    // numbered after it.
     const newer = await one(
       db,
-      `SELECT version_no, status FROM plan_versions WHERE plan_id = ? AND version_no > ? ORDER BY version_no DESC LIMIT 1`,
+      `SELECT version_no, status FROM plan_versions
+        WHERE plan_id = ? AND version_no > ? AND status <> 'recapture'
+        ORDER BY version_no DESC LIMIT 1`,
       [v.plan_id, v.version_no],
     );
     if (newer) {
       throw conflict(`Version ${newer.version_no} of this plan already exists (${newer.status.replace('_', ' ')}).`);
     }
+    const { last } = await one(db, 'SELECT MAX(version_no) AS last FROM plan_versions WHERE plan_id = ?', [v.plan_id]);
+    const versionNo = Number(last) + 1;
 
     const plan = { ...v.plan_json, flags: [] };
     const nextId = newId();
@@ -763,14 +770,14 @@ router.post('/versions/:id/revise', async (req, res) => {
           plan_saved_at, plan_saved_by)
        VALUES (?, ?, ?, ?, 'in_review', ?, 'revision', ?, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), ?,
                UTC_TIMESTAMP(3), ?, UTC_TIMESTAMP(3), ?)`,
-      [nextId, v.account_id, v.plan_id, v.version_no + 1, v.capture_id, v.id, req.user.id, JSON.stringify(plan), req.user.id],
+      [nextId, v.account_id, v.plan_id, versionNo, v.capture_id, v.id, req.user.id, JSON.stringify(plan), req.user.id],
     );
     await audit(db, {
       accountId: v.account_id,
       actor: { id: req.user.id },
       action: 'REVISED',
       target: target(v),
-      version: v.version_no + 1,
+      version: versionNo,
       detail: { from: v.version_no },
     });
     return nextId;

@@ -57,10 +57,19 @@ class Account {
   final String id;
   final String name;
 
-  /// `owner` or `surveyor`.
+  /// `owner`, `surveyor` or `installer`.
   final String role;
 
-  String get roleLabel => role == 'owner' ? 'Owner' : 'Surveyor';
+  String get roleLabel => switch (role) {
+    'owner' => 'Owner',
+    'installer' => 'Installer',
+    _ => 'Surveyor',
+  };
+
+  /// Owners and surveyors scan. An installer fits out from the approved
+  /// plan and sends corrections from the web; the platform refuses their
+  /// uploads, so the app does not offer to scan.
+  bool get canScan => role != 'installer';
 
   Map<String, Object?> toJson() => <String, Object?>{
     'id': id,
@@ -183,6 +192,10 @@ class AuthSession extends ChangeNotifier {
   Account? get currentAccount =>
       _accounts.where((Account a) => a.id == _accountId).firstOrNull;
   String? get currentAccountId => currentAccount?.id;
+
+  /// Whether the current account lets this person scan (see
+  /// [Account.canScan]). True before an account is chosen, as before.
+  bool get canScan => currentAccount?.canScan ?? true;
 
   /// A refresh token is enough: the access token may have expired while
   /// the app was closed, and the first call swaps it.

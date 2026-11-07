@@ -130,6 +130,11 @@ class _HomeScreenState extends State<HomeScreen> {
   /// "3D Object": Apple's guided Object Capture, then a name, then it is
   /// kept and opened in the viewer.
   Future<void> _captureObject() async {
+    // Not through NewCaptureScreen, so checked here too.
+    if (!AuthSession.instance.canScan) {
+      showAppToast(context, 'Installers cannot scan in this account.');
+      return;
+    }
     final DeviceCapability device = await ScanBackend.detect();
     final bool supported =
         device.supported && await CaptureModes.objectCaptureSupported();
@@ -419,7 +424,8 @@ class _HomeScreenState extends State<HomeScreen> {
             children: <Widget>[
               _buildHeader(data),
               const SizedBox(height: 22),
-              if (_showCreate) ...<Widget>[
+              // Installers fit out from the plan; they do not scan.
+              if (_showCreate && AuthSession.instance.canScan) ...<Widget>[
                 CreatePanel(
                   onClose: () => setState(() => _showCreate = false),
                   options: <CreateOption>[

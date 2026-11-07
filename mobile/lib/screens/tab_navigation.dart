@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/plan.dart';
+import '../services/auth_session.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/gym_tab_bar.dart';
 import 'new_capture_screen.dart';
@@ -31,6 +32,10 @@ void openTab(
       navigator.popUntil((Route<dynamic> route) => route.isFirst);
       return;
     case GymTab.capture:
+      if (!AuthSession.instance.canScan) {
+        showAppToast(context, 'Installers cannot scan in this account.');
+        return;
+      }
       navigator.push(
         MaterialPageRoute<void>(
           builder: (_) => NewCaptureScreen(initialFacility: facility),

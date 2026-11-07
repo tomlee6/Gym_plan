@@ -104,4 +104,16 @@ describe('corrections from site', () => {
       .expect(201);
     assert.equal(again.version, 4);
   });
+
+  it('a rejected revision does not stop the plan being revised again', async () => {
+    const v1 = DEMO.versions.eb0;
+    const { body: first } = await as('reviewer', 'post', `/v1/review/versions/${v1}/revise`).send({}).expect(201);
+    await as('reviewer', 'post', `/v1/review/versions/${first.id}/reject`).send({ reason: 'Other', note: 'Not needed after all.' }).expect(204);
+
+    const { body: second } = await as('reviewer', 'post', `/v1/review/versions/${v1}/revise`).send({}).expect(201);
+    const { body: v } = await as('reviewer', 'get', `/v1/review/versions/${second.id}`).expect(200);
+    assert.equal(v.version, 3, 'numbered after the rejected one');
+    // Still one at a time.
+    await as('reviewer', 'post', `/v1/review/versions/${v1}/revise`).send({}).expect(409);
+  });
 });

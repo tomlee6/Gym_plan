@@ -63,6 +63,9 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
   String? _loadError;
   bool _noFacilities = false;
 
+  /// An installer opened a capture: they cannot scan in this account.
+  bool _notAllowed = false;
+
   @override
   void initState() {
     super.initState();
@@ -74,7 +77,11 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
       _loadError = null;
       _noFacilities = false;
       _unsupported = null;
+      _notAllowed = !AuthSession.instance.canScan;
     });
+    // Every way into a capture comes through here, so this one check keeps
+    // an installer from scanning wherever they started from.
+    if (_notAllowed) return;
 
     // LiDAR first: without it nothing past this point can work, so the
     // surveyor is told at once and sent back, before anything is loaded.
@@ -181,7 +188,10 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
   @override
   Widget build(BuildContext context) {
     final bool waiting =
-        _loadError == null && !_noFacilities && _unsupported == null;
+        _loadError == null &&
+        !_noFacilities &&
+        _unsupported == null &&
+        !_notAllowed;
 
     return Scaffold(
       // Black while the camera spins up, so the hand-off to the scan is
@@ -198,7 +208,18 @@ class _NewCaptureScreenState extends State<NewCaptureScreen> {
               ),
             ),
             Expanded(
-              child: _loadError != null
+              child: _notAllowed
+                  ? ErrorView(
+                      icon: Icons.lock_outline_rounded,
+                      title: 'Scanning is for owners and surveyors',
+                      message:
+                          'You are an installer in '
+                          '${AuthSession.instance.currentAccount?.name ?? 'this account'}. '
+                          'Open a plan in the Flex web app to send a '
+                          'correction from site.',
+                      onRetry: _loadAndStart,
+                    )
+                  : _loadError != null
                   ? ErrorView(message: _loadError!, onRetry: _loadAndStart)
                   : _noFacilities
                   ? ErrorView(
