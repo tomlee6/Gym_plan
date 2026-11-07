@@ -6,6 +6,7 @@ import '../models/room_measurements.dart';
 import '../models/scan.dart';
 import '../theme/app_theme.dart';
 import '../widgets/floor_plan.dart';
+import '../widgets/plan_navigator.dart';
 import '../widgets/pressable.dart';
 
 /// Which way a finished scan is shown: the 3D model or the measured floor
@@ -108,13 +109,18 @@ class _ScanViewerScreenState extends State<ScanViewerScreen> {
                 : SafeArea(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 64, 72, 150),
-                      child: FloorPlanView(
-                        geometry: widget.geometry,
-                        walls: widget.walls,
-                        showGrid: true,
-                        showDimensions: _measurements,
-                        fit: true,
-                        semanticLabel: 'Measured floor plan of the room',
+                      // Pinch, drag and twist; buttons to zoom, turn and fit.
+                      child: PlanNavigator(
+                        controlsAlignment: Alignment.bottomLeft,
+                        builder: (_, double rotation) => FloorPlanView(
+                          geometry: widget.geometry,
+                          walls: widget.walls,
+                          showGrid: true,
+                          showDimensions: _measurements,
+                          fit: true,
+                          viewRotation: rotation,
+                          semanticLabel: 'Measured floor plan of the room',
+                        ),
                       ),
                     ),
                   ),

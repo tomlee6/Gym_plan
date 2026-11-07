@@ -3,15 +3,18 @@ import 'package:flutter/material.dart';
 
 import '../models/plan.dart';
 import '../models/room_measurements.dart';
+import '../models/room_names.dart';
 import '../models/scan.dart';
 import '../services/capture_service.dart';
 import '../services/scan_library.dart';
 import '../services/upload_queue.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_text_field.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/capture_fields.dart';
 import '../widgets/detail_widgets.dart';
 import '../widgets/floor_plan.dart';
+import '../widgets/plan_navigator.dart';
 import '../widgets/hairline_container.dart';
 import '../widgets/nav_bar.dart';
 import '../widgets/primary_button.dart';
@@ -94,6 +97,18 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
   /// long ones are encouraged.
   List<ControlDistance> _controls = const <ControlDistance>[];
 
+  /// A name for each room the scan found (RoomNames), in the scan's order.
+  /// One room until scan.json has been read, then as many as it has.
+  List<TextEditingController> _roomControllers = _controllersFor(
+    RoomNames.defaults(1),
+  );
+  List<String?> _roomErrors = <String?>[null];
+
+  static List<TextEditingController> _controllersFor(List<String> names) =>
+      <TextEditingController>[
+        for (final String n in names) TextEditingController(text: n),
+      ];
+
   ScanResult get _result => widget.result;
 
   List<Facility> get _facilities {
@@ -107,10 +122,48 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
     super.initState();
     // The header names the level as it is typed.
     _levelController.addListener(() => setState(() {}));
+    _loadRooms();
+  }
+
+  /// Counts the scan's rooms the way the platform will, and offers a name
+  /// field for each, keeping any names already given.
+  Future<void> _loadRooms() async {
+    final int count = await RoomNames.roomCountFromScanJson(
+      widget.export?.dataPath,
+    );
+    if (!mounted) return;
+    final List<String> names = _result.roomNames.length == count
+        ? _result.roomNames
+        : RoomNames.defaults(count);
+    setState(() {
+      for (final TextEditingController c in _roomControllers) {
+        c.dispose();
+      }
+      _roomControllers = _controllersFor(names);
+      _roomErrors = List<String?>.filled(names.length, null);
+    });
+  }
+
+  /// The room names as typed, or null (with the problems shown) when any
+  /// is blank, too long or used twice.
+  List<String>? _validatedRoomNames() {
+    final List<String> typed = <String>[
+      for (final TextEditingController c in _roomControllers) c.text,
+    ];
+    final List<String?> errors = <String?>[
+      for (int i = 0; i < typed.length; i++)
+        RoomNames.roomNameProblem(typed[i], i, typed),
+    ];
+    setState(() => _roomErrors = errors);
+    if (errors.any((String? e) => e != null)) return null;
+    return <String>[for (final String t in typed) RoomNames.tidy(t)];
   }
 
   @override
   void dispose() {
+    for (final TextEditingController c in _roomControllers) {
+      c.dispose();
+    }
     _levelController.dispose();
     _heightController.dispose();
     _levelFocus.dispose();
@@ -127,7 +180,7 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
     setState(() {
       _levelError = level == null ? 'Enter the level.' : null;
       if (height == null) {
-        _heightError = 'Enter the floor-to-floor height.';
+        _heightError = 'Enter the floor-to-ceiling height.';
       } else if (height < _minHeightM || height > _maxHeightM) {
         _heightError =
             'Height must be between ${_minHeightM.toStringAsFixed(1)} and '
@@ -186,11 +239,17 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
       showAppToast(context, 'Check the capture details.');
       return;
     }
+    final List<String>? roomNames = _validatedRoomNames();
+    if (roomNames == null) {
+      showAppToast(context, 'Check the room names.');
+      return;
+    }
     setState(() => _submitting = true);
 
     final ScanResult submitted = _result.copyWith(
       config: config,
       controlDistances: _controls,
+      roomNames: roomNames,
     );
     // Kept on the phone for the dashboard before the upload, which deletes
     // its own copy of the files once the platform has them. Only a help:
@@ -360,18 +419,30 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
                     const SizedBox(height: 16),
                     _buildDetails(),
                     const SizedBox(height: 16),
+                    _buildRooms(),
+                    const SizedBox(height: 16),
                     HairlineContainer(
                       radius: 19,
                       fillColor: AppColors.planCanvas,
                       padding: const EdgeInsets.all(12),
-                      child: FloorPlanView(
-                        geometry: _result.geometry,
-                        walls: _result.walls,
-                        tags: _result.tags,
-                        measurements: <(Offset, Offset?)>[
-                          for (final ControlDistance c in _controls) (c.a, c.b),
-                        ],
-                        semanticLabel: 'Captured outline with tags marked',
+                      child: AspectRatio(
+                        aspectRatio: FloorOutline.canvas.aspectRatio,
+                        child: PlanNavigator(
+                          inScroll: true,
+                          compact: true,
+                          builder: (_, double rotation) => FloorPlanView(
+                            geometry: _result.geometry,
+                            walls: _result.walls,
+                            tags: _result.tags,
+                            measurements: <(Offset, Offset?)>[
+                              for (final ControlDistance c in _controls)
+                                (c.a, c.b),
+                            ],
+                            fit: true,
+                            viewRotation: rotation,
+                            semanticLabel: 'Captured outline with tags marked',
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -418,6 +489,46 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// A name for each room the scan found, so the plan arrives with
+  /// "Free weights" and "Studio" rather than "Room 1" and "Room 2".
+  Widget _buildRooms() {
+    final int count = _roomControllers.length;
+    return HairlineContainer(
+      radius: 17,
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(
+            count > 1 ? 'Rooms · $count found' : 'Room',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Name each room as the gym calls it. The reviewer can change '
+            'the names later.',
+            style: AppTheme.footnote,
+          ),
+          for (int i = 0; i < count; i++) ...<Widget>[
+            const SizedBox(height: 12),
+            AppTextField(
+              label: count > 1 ? 'Room ${i + 1}' : 'Room name',
+              controller: _roomControllers[i],
+              errorText: i < _roomErrors.length ? _roomErrors[i] : null,
+              textInputAction: i < count - 1
+                  ? TextInputAction.next
+                  : TextInputAction.done,
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -481,7 +592,7 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
               const SizedBox(width: 14),
               Expanded(
                 child: LabelledField(
-                  label: 'Floor to floor',
+                  label: 'Floor to ceiling',
                   errorText: _heightError,
                   child: NumericField(
                     controller: _heightController,
@@ -489,7 +600,7 @@ class _ReviewSubmitScreenState extends State<ReviewSubmitScreen> {
                     unit: 'm',
                     decimal: true,
                     hasError: _heightError != null,
-                    semanticLabel: 'Floor to floor height in metres',
+                    semanticLabel: 'Floor to ceiling height in metres',
                   ),
                 ),
               ),
@@ -783,13 +894,18 @@ class _ScanPreviewCardState extends State<_ScanPreviewCard> {
                       color: AppColors.background,
                       child: Padding(
                         padding: const EdgeInsets.all(14),
-                        child: FloorPlanView(
-                          geometry: widget.result.geometry,
-                          walls: widget.result.walls,
-                          tags: widget.result.tags,
-                          showDimensions: true,
-                          fit: true,
-                          semanticLabel: 'Measured floor plan of the room',
+                        child: PlanNavigator(
+                          inScroll: true,
+                          compact: true,
+                          builder: (_, double rotation) => FloorPlanView(
+                            geometry: widget.result.geometry,
+                            walls: widget.result.walls,
+                            tags: widget.result.tags,
+                            showDimensions: true,
+                            fit: true,
+                            viewRotation: rotation,
+                            semanticLabel: 'Measured floor plan of the room',
+                          ),
                         ),
                       ),
                     ),

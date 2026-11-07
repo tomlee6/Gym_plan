@@ -14,7 +14,7 @@
  *   the drawing underneath for the reviewer to trace (the PRD's fallback:
  *   "every plan is completable by hand").
  */
-import { dist, mid, polygonArea, project } from './geometry.js';
+import { dist, mainWallAngle, mid, polygonArea, project } from './geometry.js';
 import { objectsFromMesh, overlapsExisting } from './mesh.js';
 import {
   DEFAULT_CEILING_M,
@@ -22,12 +22,14 @@ import {
   defaultOpeningKind,
   emptyPlan,
   FLAG_THRESHOLD,
+  MAX_SPACE_NAME,
   newElementId,
   openingTypeOf,
   outline,
   roundM,
   spaceFromOutline,
   TAG_TYPES,
+  tidySpaceName,
   wallName,
   withMeasurements,
 } from './model.js';
@@ -144,7 +146,124 @@ function floorElevation(room) {
   return levels.length ? Math.min(...levels) : null;
 }
 
-/** Joins wall ends that nearly meet into one corner. */
+/**
+ * A wall this close to square with the room's main walls (or at right
+ * angles to them) is made exactly square. LiDAR reads a straight wall a
+ * degree or so out; a wall meant to be on the skew is far more than this.
+ * 1.5° over a 10 m wall is 26 cm at the far end, so it matters.
+ */
+const SQUARE_DEG = 1.5;
+/** Two walls meeting at a corner must differ by this much to be crossed, not averaged. */
+const CORNER_MIN_DEG = 10;
+/** An opening runs along its wall: within this of the wall's direction. */
+const OPENING_ALONG_DEG = 20;
+
+const angleOf = (w) => Math.atan2(w.b[1] - w.a[1], w.b[0] - w.a[0]);
+
+/** How far apart two directions are, ignoring which way each runs, 0–90°. */
+function lineAngleDeg(a, b) {
+  const d = Math.abs((((a - b) * 180) / Math.PI) % 180);
+  return Math.min(d, 180 - d);
+}
+
+/** Walls within this of each other count as agreeing on the room's direction. */
+const AGREE_DEG = 0.5;
+
+/**
+ * The direction most of the wall length agrees on (to within AGREE_DEG,
+ * counting walls at right angles as the same direction), averaged over just
+ * those walls. Unlike a plain average, one wall read crooked cannot pull
+ * the straight ones off true.
+ */
+function agreedWallAngle(walls) {
+  const quarter = Math.PI / 2;
+  const fold = (a) => ((a % quarter) + quarter) % quarter; // 0 to 90°
+  const tol = (AGREE_DEG * Math.PI) / 180;
+  const gap = (a, b) => {
+    const d = Math.abs(a - b) % quarter;
+    return Math.min(d, quarter - d);
+  };
+  const items = walls.map((w) => ({ w, a: fold(angleOf(w)), len: dist(w.a, w.b) }));
+  let best = null;
+  for (const c of items) {
+    const agree = items.filter((i) => gap(i.a, c.a) <= tol);
+    const len = agree.reduce((s, i) => s + i.len, 0);
+    if (!best || len > best.len) best = { len, agree };
+  }
+  return best ? mainWallAngle(best.agree.map((i) => i.w)) : 0;
+}
+
+/**
+ * Turns walls that are within SQUARE_DEG of square with the main walls
+ * onto it exactly, each about its own middle, so its length and position
+ * are kept.
+ */
+function squareWalls(walls) {
+  const main = agreedWallAngle(walls);
+  const limit = (SQUARE_DEG * Math.PI) / 180;
+  for (const w of walls) {
+    const rel = angleOf(w) - main;
+    const off = rel - Math.round(rel / (Math.PI / 2)) * (Math.PI / 2);
+    if (Math.abs(off) < 1e-9 || Math.abs(off) > limit) continue;
+    const m = mid(w.a, w.b);
+    const c = Math.cos(-off);
+    const s = Math.sin(-off);
+    const turn = ([x, y]) => [m[0] + (x - m[0]) * c - (y - m[1]) * s, m[1] + (x - m[0]) * s + (y - m[1]) * c];
+    w.a = turn(w.a);
+    w.b = turn(w.b);
+  }
+}
+
+/** Two openings sharing more than this of the narrower one's width are one opening seen twice. */
+const SAME_OPENING_SHARE = 0.5;
+
+/**
+ * RoomPlan can report one gap in a wall twice: as a door and as an open
+ * doorway, or as two overlapping windows. Keeps one: a door or window over
+ * a bare opening (it says more), then the more confident reading.
+ */
+function dropDuplicateOpenings(plan) {
+  const rank = (o) => (o.type === 'opening' ? 0 : 1) * 10 + o.confidence;
+  const drop = new Set();
+  const byWall = new Map();
+  for (const o of plan.openings) {
+    if (!o.wallId) continue;
+    if (!byWall.has(o.wallId)) byWall.set(o.wallId, []);
+    byWall.get(o.wallId).push(o);
+  }
+  for (const list of byWall.values()) {
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const [p, q] = [list[i], list[j]];
+        if (drop.has(p.id) || drop.has(q.id)) continue;
+        const shared = Math.min(p.offset + p.width, q.offset + q.width) - Math.max(p.offset, q.offset);
+        if (shared <= SAME_OPENING_SHARE * Math.min(p.width, q.width)) continue;
+        drop.add(rank(p) >= rank(q) ? q.id : p.id);
+      }
+    }
+  }
+  if (drop.size) plan.openings = plan.openings.filter((o) => !drop.has(o.id));
+}
+
+/** Where the lines through ab and cd cross (not just the segments), or null when parallel. */
+function lineCross(a, b, c, d) {
+  const r = [b[0] - a[0], b[1] - a[1]];
+  const q = [d[0] - c[0], d[1] - c[1]];
+  const denom = r[0] * q[1] - r[1] * q[0];
+  if (Math.abs(denom) < 1e-12) return null;
+  const t = ((c[0] - a[0]) * q[1] - (c[1] - a[1]) * q[0]) / denom;
+  return [a[0] + r[0] * t, a[1] + r[1] * t];
+}
+
+/**
+ * Joins wall ends that nearly meet into one corner.
+ *
+ * Two walls meeting at an angle are run on to where their lines cross:
+ * the true corner, so each keeps its measured line and gets its full
+ * length. Averaging the two ends instead would cut a corner off, up to
+ * half the gap from each wall. Ends of walls in line, or three or more
+ * at once, are still met halfway.
+ */
 function snapEnds(walls) {
   const ends = walls.flatMap((w) => [
     { w, k: 'a' },
@@ -160,6 +279,20 @@ function snapEnds(walls) {
       }
     }
     if (group.length < 2) continue;
+    if (group.length === 2) {
+      const [e1, e2] = group.map((g) => ends[g]);
+      if (lineAngleDeg(angleOf(e1.w), angleOf(e2.w)) >= CORNER_MIN_DEG) {
+        const corner = lineCross(e1.w.a, e1.w.b, e2.w.a, e2.w.b);
+        // The crossing is near both ends: a corner, not two walls aimed past each other.
+        if (corner && dist(corner, e1.w[e1.k]) < SNAP_M * 2 && dist(corner, e2.w[e2.k]) < SNAP_M * 2) {
+          e1.w[e1.k] = corner;
+          e2.w[e2.k] = corner;
+          done.add(group[0]);
+          done.add(group[1]);
+          continue;
+        }
+      }
+    }
     const pts = group.map((g) => ends[g].w[ends[g].k]);
     const c = [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
     for (const g of group) {
@@ -296,6 +429,7 @@ export function planFromScan(scan, capture = {}) {
     const ident = identifierOf(surface);
     if (ident) wallByIdentifier.set(ident, wall);
   }
+  squareWalls(plan.walls);
   snapEnds(plan.walls);
   for (const w of plan.walls) {
     w.a = roundPoint(w.a);
@@ -319,7 +453,11 @@ export function planFromScan(scan, capture = {}) {
     if (parent) {
       best = { wall: parent, hit: project(centre, parent.a, parent.b) };
     } else {
+      // The nearest wall it runs along: at a corner a door is near both
+      // walls, but only cut into the one it is parallel to.
+      const along = Math.atan2(s.b[1] - s.a[1], s.b[0] - s.a[0]);
       for (const wall of plan.walls) {
+        if (lineAngleDeg(along, angleOf(wall)) > OPENING_ALONG_DEG) continue;
         const hit = project(centre, wall.a, wall.b);
         if (hit.distance <= ATTACH_M && (!best || hit.distance < best.hit.distance)) best = { wall, hit };
       }
@@ -375,6 +513,8 @@ export function planFromScan(scan, capture = {}) {
       ...measured,
     });
   }
+
+  dropDuplicateOpenings(plan);
 
   /*
    * Every object RoomPlan recognised is kept (CHANGE 1.5), in the same
@@ -494,9 +634,12 @@ export function planFromScan(scan, capture = {}) {
     plan.tags.push({ id: newElementId('t'), type: t.type, x: round(t.x), y: round(t.y), heightM: t.heightM ?? null });
   }
 
+  // `floorToFloorM` keeps its wire name, but the surveyor now enters it as
+  // the floor-to-ceiling height, the same number the phone's 3D raises the
+  // walls to, so it is taken as the ceiling as it stands.
   const ceilingTag = plan.tags.find((t) => t.type === 'ceiling' && t.heightM > 0);
   plan.ceilingHeightM = round(
-    ceilingTag?.heightM ?? (tallest > 1.8 ? tallest : Math.max(2.4, (capture.floorToFloorM ?? DEFAULT_CEILING_M + 0.3) - 0.3)),
+    ceilingTag?.heightM ?? (tallest > 1.8 ? tallest : Math.max(2.4, capture.floorToFloorM ?? DEFAULT_CEILING_M)),
   );
 
   // A mirror tag marks the wall it sits on as a mirror wall (GEN-03).
@@ -548,11 +691,20 @@ export function planFromScan(scan, capture = {}) {
    */
   const floors = list(room.floors).map(floorPolygon).filter(Boolean);
   const k = control?.applied ? control.factor : 1;
+  // The surveyor's names for the rooms, in the scan's order (from the
+  // phone); any missing, blank or repeated one falls back to the default.
+  const given = list(capture.roomNames).map(tidySpaceName);
+  const nameFor = (i, fallback) => {
+    const name = given[i];
+    if (!name || name.length > MAX_SPACE_NAME) return fallback;
+    const key = name.toLowerCase();
+    return given.findIndex((n) => n.toLowerCase() === key) === i ? name : fallback;
+  };
   if (floors.length > 1) {
     floors.forEach((points, i) => {
       plan.spaces.push({
         id: newElementId('s'),
-        name: `Room ${i + 1}`,
+        name: nameFor(i, `Room ${i + 1}`),
         kind: 'gym_floor',
         points: points.map((p) => [round(p[0] * k), round(p[1] * k)]),
         floorFinish: null,
@@ -561,7 +713,7 @@ export function planFromScan(scan, capture = {}) {
       });
     });
   } else {
-    const space = spaceFromOutline(plan);
+    const space = spaceFromOutline(plan, { name: nameFor(0, 'Gym floor') });
     if (space) plan.spaces.push(space);
   }
 

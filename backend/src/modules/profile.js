@@ -18,7 +18,7 @@ export const router = Router();
 router.use(requireAuth);
 
 /** How a membership role reads on screen (was users.role_label, C-04). */
-export const ROLE_LABELS = { owner: 'Owner & Surveyor', surveyor: 'Surveyor' };
+export const ROLE_LABELS = { owner: 'Owner & Surveyor', surveyor: 'Surveyor', installer: 'Installer' };
 export const STAFF_LABELS = { reviewer: 'Reviewer', admin: 'Platform admin' };
 
 /**

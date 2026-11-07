@@ -102,7 +102,8 @@ const VERSION_COLUMNS = `
   a.name AS organisation, c.source, COALESCE(d.input_type, c.source) AS input_type,
   c.coverage, c.floor_to_floor_m, c.outline_closed, c.override_reason, c.weak_wall_count, c.photo_count,
   c.scale_residual_mm, c.received_at, ${FAILURE} AS failure_reason,
-  (SELECT COUNT(*) FROM capture_tags t WHERE t.capture_id = v.capture_id) AS tag_count`;
+  (SELECT COUNT(*) FROM capture_tags t WHERE t.capture_id = v.capture_id) AS tag_count,
+  cb.name AS corrected_by_name`;
 
 const VERSION_JOINS = `
   FROM plan_versions v
@@ -111,7 +112,8 @@ const VERSION_JOINS = `
   JOIN accounts a ON a.id = v.account_id
   LEFT JOIN captures c ON c.id = v.capture_id
   LEFT JOIN drawing_details d ON d.capture_id = v.capture_id
-  LEFT JOIN users r ON r.id = v.reviewed_by`;
+  LEFT JOIN users r ON r.id = v.reviewed_by
+  LEFT JOIN users cb ON cb.id = v.corrected_by`;
 
 const num = (v) => (v === null || v === undefined ? null : Number(v));
 
@@ -237,6 +239,8 @@ router.get('/versions/:id', async (req, res) => {
     status: v.status,
     origin: v.origin,
     basedOnVersionId: v.based_on_version_id,
+    // An installer's correction from site: what they said was wrong, and who.
+    correction: v.origin === 'correction' ? { note: v.correction_note, by: v.corrected_by_name ?? null } : null,
     facility: v.facility,
     organisation: v.organisation,
     level: v.level,
@@ -437,7 +441,7 @@ const equipment = z
  * format 3 fields (G-02..G-06) are optional, so an older plan saves without
  * gaining any of them.
  */
-const planBody = z.object({
+export const planBody = z.object({
   format: z.enum(SUPPORTED_FORMATS),
   units: z.literal('m').nullish(),
   // Derived on the server from the geometry, so whatever arrives is ignored.

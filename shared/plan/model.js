@@ -46,7 +46,7 @@
  * the geometry, never an independent source of truth. They are recomputed by
  * `withMeasurements` so they can never drift from the points they describe.
  */
-import { arcLength, direction, dist, lerp, polygonArea, project, rectCorners } from './geometry.js';
+import { arcLength, direction, dist, lerp, mainWallAngle, polygonArea, project, rectCorners, squaredExtent } from './geometry.js';
 
 export const FORMAT = 'gymplan/3';
 /** The first format. Still read, never written. */
@@ -378,9 +378,12 @@ export function roomMetrics(plan, { elevationM = null } = {}) {
   const ys = floor.map((p) => p[1]);
   const min = [roundM(Math.min(...xs)), roundM(Math.min(...ys))];
   const max = [roundM(Math.max(...xs)), roundM(Math.max(...ys))];
+  // Width × length along the room's own walls, as the phone shows them;
+  // `min`/`max` stay the box square to the plan's axes.
+  const extent = squaredExtent(floor, mainWallAngle(plan.walls));
   return {
-    widthM: roundM(max[0] - min[0]),
-    lengthM: roundM(max[1] - min[1]),
+    widthM: roundM(extent.widthM),
+    lengthM: roundM(extent.lengthM),
     areaM2: roundM(polygonArea(floor)),
     perimeterM: roundM(ringLength(floor)),
     min,
@@ -548,6 +551,41 @@ const DEFAULT_TEXT = {
   ],
 };
 
+/** Longest room (space) name: enough for "Functional training mezzanine". */
+export const MAX_SPACE_NAME = 60;
+
+/** How a room name is compared: case, spacing and outer spaces ignored. */
+const nameKey = (name) => String(name ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+/** A typed room name tidied for keeping: outer spaces trimmed, runs of spaces made one. */
+export function tidySpaceName(name) {
+  return String(name ?? '').trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * What is wrong with `name` as the name of the room `selfId` among `spaces`,
+ * or null when it is fine. The editor, the plan check and the server all use
+ * this, so a name the editor accepts is one the plan check passes.
+ */
+export function spaceNameProblem(name, spaces = [], selfId = null) {
+  const tidy = tidySpaceName(name);
+  if (!tidy) return 'Give the room a name.';
+  if (tidy.length > MAX_SPACE_NAME) return `Keep the room name to ${MAX_SPACE_NAME} characters.`;
+  const key = nameKey(tidy);
+  const other = (spaces ?? []).find((s) => s.id !== selfId && nameKey(s.name) === key);
+  if (other) return `Another room is already called “${tidySpaceName(other.name)}”.`;
+  return null;
+}
+
+/** "Room 1", or the first "Room n" no room in `spaces` has yet. */
+export function nextSpaceName(spaces = [], base = 'Room') {
+  const taken = new Set((spaces ?? []).map((s) => nameKey(s.name)));
+  for (let n = (spaces?.length ?? 0) + 1; ; n++) {
+    const name = `${base} ${n}`;
+    if (!taken.has(nameKey(name))) return name;
+  }
+}
+
 /** The whole floor outline as one space, or null when the walls do not close. */
 export function spaceFromOutline(plan, { name = 'Gym floor', kind = 'gym_floor' } = {}) {
   const floor = outline(plan);
@@ -567,6 +605,10 @@ export function spaceFromOutline(plan, { name = 'Gym floor', kind = 'gym_floor' 
 export function summary(plan) {
   const floor = outline(plan);
   const ceilingTag = plan.tags.find((t) => t.type === 'ceiling' && t.heightM);
+  // Along the room's own walls, as the phone measures it: RoomPlan's axes
+  // follow the phone's facing at the start, not the building, so a box
+  // square to them over-reads a room scanned at an angle.
+  const extent = floor ? squaredExtent(floor, mainWallAngle(plan.walls)) : null;
   return {
     spaces: plan.spaces?.length ?? 0,
     walls: plan.walls.length,
@@ -578,8 +620,8 @@ export function summary(plan) {
     areaM2: floor ? Math.round(polygonArea(floor) * 10) / 10 : null,
     // Room measurements (CHANGE 1.1). Computed here rather than read from
     // `plan.room`, so a version 1 plan reports them too.
-    widthM: floor ? roundM(Math.max(...floor.map((p) => p[0])) - Math.min(...floor.map((p) => p[0]))) : null,
-    lengthM: floor ? roundM(Math.max(...floor.map((p) => p[1])) - Math.min(...floor.map((p) => p[1]))) : null,
+    widthM: extent ? roundM(extent.widthM) : null,
+    lengthM: extent ? roundM(extent.lengthM) : null,
     perimeterM: floor ? roundM(ringLength(floor)) : null,
     equipment: plan.objects.filter((o) => o.equipment).length,
     ceilingHeightM: plan.ceilingHeightM,

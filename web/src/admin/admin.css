@@ -282,3 +282,30 @@
   padding: 0 12px;
   font-size: 12px;
 }
+
+/* The equipment library page. */
+.rv-header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.ad-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  align-self: end;
+  padding-bottom: 10px;
+}
+
+.ad-archived td {
+  opacity: 0.6;
+}
+
+.ad-import-result {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}

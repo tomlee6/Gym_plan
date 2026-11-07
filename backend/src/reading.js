@@ -113,6 +113,7 @@ export async function readCapturePlan(db, captureId) {
   const equipment = await equipmentForPlan(db, captureId);
   const plan = planFromScan(room, {
     floorToFloorM: num(capture.floor_to_floor_m) ?? undefined,
+    roomNames: Array.isArray(capture.room_names) ? capture.room_names : undefined,
     tags: tags.map((t) => ({ type: t.type, x: num(t.x), y: num(t.y), heightM: num(t.height_m) })),
     controlDistances: controls.map((c) => ({
       a: [num(c.ax), num(c.ay)],

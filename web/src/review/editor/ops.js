@@ -11,6 +11,7 @@ import {
   JOIN_TOLERANCE_M,
   lerp,
   newElementId,
+  nextSpaceName,
   pointInPolygon,
   project,
   wallLength,
@@ -507,9 +508,8 @@ function addPolygon(plan, list, prefix, points, fields) {
 
 /** A space: one room of the floor, with its kind, floor finish and ceiling. */
 export function addSpace(plan, points, { name, kind = 'gym_floor', floorFinish = null, ceilingHeightM = null } = {}) {
-  const n = (plan.spaces?.length ?? 0) + 1;
   return addPolygon(plan, 'spaces', 's', points, {
-    name: name ?? `Space ${n}`,
+    name: name ?? nextSpaceName(plan.spaces),
     kind,
     floorFinish,
     ceilingHeightM: ceilingHeightM ?? plan.ceilingHeightM ?? null,

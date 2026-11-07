@@ -202,6 +202,7 @@ function QueueTable({ versions, now, claiming, onOpen }) {
                 <td data-label="Input">
                   {inputLabel(v.inputType)}
                   {v.origin === 'revision' && <div className="rv-cell-sub">{t('queue.revision')}</div>}
+                  {v.origin === 'correction' && <div className="rv-cell-sub">{t('queue.correction')}</div>}
                 </td>
                 <td data-label="Coverage">
                   <span className={`rv-coverage ${coverageTone(v.coverage)}`}>

@@ -19,6 +19,10 @@ export default function Layout() {
   const { pathname } = useLocation();
   const accountRole = accountRoleOf(user);
   const sections = [
+    accountRole === 'installer' && {
+      title: 'MY GYMS',
+      links: [{ to: '/plans', label: 'Plans', icon: PlansIcon }],
+    },
     ROLES.customer.includes(accountRole) && {
       title: 'MY GYMS',
       links: [
@@ -41,6 +45,7 @@ export default function Layout() {
           icon: AccountsIcon,
           active: (path) => path === '/admin' || path.startsWith('/admin/accounts'),
         },
+        { to: '/admin/library', label: 'Equipment library', icon: CubeIcon },
         { to: '/admin/staff', label: 'Staff', icon: StaffIcon },
         { to: '/admin/audit', label: 'Audit log', icon: AuditIcon },
       ],

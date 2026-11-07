@@ -55,6 +55,8 @@ const registerBody = z.object({
   coverage: z.number().min(0).max(1),
   closed: z.boolean(),
   overrideReason: z.string().max(500).nullish(),
+  // The surveyor's name for each room the scan found, in the scan's order.
+  roomNames: z.array(z.string().trim().min(1).max(60)).max(100).nullish(),
   areaM2: z.number().min(0).max(100000).nullish(),
   durationSeconds: z.number().int().min(0),
   photoCount: z.number().int().min(0).max(65535),
@@ -134,11 +136,12 @@ async function registerCapture(db, req, { facility, level, key, source, row, det
   await db.query(
     `INSERT INTO captures
        (id, account_id, user_id, idempotency_key, source, floor_to_floor_m, coverage, outline_closed,
-        override_reason, area_m2, duration_s, photo_count, weak_wall_count, captured_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        override_reason, room_names, area_m2, duration_s, photo_count, weak_wall_count, captured_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id, accountId, req.user.id, key, source,
       row.floorToFloorM ?? null, row.coverage ?? null, row.closed ?? null, row.overrideReason ?? null,
+      row.roomNames?.length ? JSON.stringify(row.roomNames) : null,
       row.areaM2 ?? null, row.durationSeconds ?? null, row.photoCount ?? null, row.weakWallCount ?? null,
       row.capturedAt ? new Date(row.capturedAt) : null,
     ],

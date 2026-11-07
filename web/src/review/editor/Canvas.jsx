@@ -1,8 +1,9 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { bounds, centroid, dist, openingSegment, project, rectCorners } from '@shared/plan/index.js';
+import { bounds, centroid, dist, openingSegment, pointInPolygon, project, rectCorners } from '@shared/plan/index.js';
 
 import { TAG_LABELS } from '../../lib/format.js';
+import { LIBRARY_DRAG_TYPE } from './EquipmentLibrary.jsx';
 import { clearanceToWall, nearestEquipment, wallLabels } from './measure.js';
 import {
   addBeam,
@@ -108,6 +109,9 @@ const Canvas = forwardRef(function Canvas(
     placing = null,
     onPlaced,
     meshPath = '',
+    onRenameSpace,
+    onRotationChange,
+    onDropEquipment,
   },
   ref,
 ) {
@@ -121,6 +125,15 @@ const Canvas = forwardRef(function Canvas(
   const [draft, setDraft] = useState(null);
   const gesture = useRef(null);
   const spaceDown = useRef(false);
+  /** Touches on the plan now, by pointer id: two make a pinch. */
+  const touches = useRef(new Map());
+  /** The draft and plan as the last touch landed, so a pinch can take back what that touch did. */
+  const landed = useRef(null);
+  const planRef = useRef(planProp);
+  planRef.current = planProp;
+  // A finger is far less exact than a mouse: bigger handles and hit lines.
+  const [coarse] = useState(() => typeof window !== 'undefined' && Boolean(window.matchMedia?.('(pointer: coarse)').matches));
+  const grip = coarse ? 1.8 : 1;
 
   useLayoutEffect(() => {
     const el = host.current;
@@ -136,13 +149,13 @@ const Canvas = forwardRef(function Canvas(
   const fit = useCallback(() => {
     const b = bounds(planPoints(plan, underlay, showSource ? source : null));
     if (!b) {
-      setView({ cx: 10, cy: 10, s: 30 });
+      setView((v) => ({ cx: 10, cy: 10, s: 30, r: v?.r ?? 0 }));
       return;
     }
     const w = Math.max(b.maxX - b.minX, 2);
     const h = Math.max(b.maxY - b.minY, 2);
     const s = Math.min(size.w / (w * 1.15), size.h / (h * 1.15));
-    setView({ cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2, s: Math.max(MIN_SCALE, Math.min(MAX_SCALE, s)) });
+    setView((v) => ({ cx: (b.minX + b.maxX) / 2, cy: (b.minY + b.maxY) / 2, s: Math.max(MIN_SCALE, Math.min(MAX_SCALE, s)), r: v?.r ?? 0 }));
   }, [plan, underlay, source, showSource, size]);
 
   // Fit once the size is known, and again when a different plan loads.
@@ -158,6 +171,16 @@ const Canvas = forwardRef(function Canvas(
   useEffect(() => {
     if (view) onZoomChange?.(view.s);
   }, [view, onZoomChange]);
+
+  useEffect(() => {
+    if (view) onRotationChange?.(view.r ?? 0);
+  }, [view, onRotationChange]);
+
+  /** Turns the plan on screen by `deg` about the middle of the view; any angle, a full 360°. */
+  const rotateBy = useCallback((deg) => {
+    setView((v) => (v ? { ...v, r: (((v.r ?? 0) + deg) % 360 + 360) % 360 } : v));
+  }, []);
+  const resetRotation = useCallback(() => setView((v) => (v ? { ...v, r: 0 } : v)), []);
 
   const zoomBy = useCallback(
     (factor, at) => {
@@ -185,9 +208,11 @@ const Canvas = forwardRef(function Canvas(
     setDraft(null);
   }, [draft, plan, history, onSelect, selection]);
 
-  useImperativeHandle(ref, () => ({ fit, zoomBy, cancelDraft, finishDraft, hasDraft: () => draft !== null }), [
+  useImperativeHandle(ref, () => ({ fit, zoomBy, rotateBy, resetRotation, cancelDraft, finishDraft, hasDraft: () => draft !== null }), [
     fit,
     zoomBy,
+    rotateBy,
+    resetRotation,
     cancelDraft,
     finishDraft,
     draft,
@@ -232,13 +257,86 @@ const Canvas = forwardRef(function Canvas(
   const vb = [view.cx - size.w / 2 / view.s, view.cy - size.h / 2 / view.s, size.w / view.s, size.h / view.s];
   const px = (n) => n / view.s; // Screen pixels in metres.
 
+  /*
+   * The plan can be turned on screen (any angle). The drawing is rotated by
+   * `turn` about the middle of the view, so a point on screen is turned
+   * back by the same angle to find where it is on the plan.
+   */
+  const turn = view.r ?? 0;
+  const rad = (turn * Math.PI) / 180;
+  const unturn = ([x, y]) => {
+    if (!turn) return [x, y];
+    const c = Math.cos(-rad);
+    const sn = Math.sin(-rad);
+    const dx = x - view.cx;
+    const dy = y - view.cy;
+    return [view.cx + dx * c - dy * sn, view.cy + dx * sn + dy * c];
+  };
+  /** Keeps a label level on screen, however the plan is turned. */
+  const level = (x, y) => (turn ? `rotate(${-turn} ${x} ${y})` : undefined);
+  /** A label's angle along a wall, flipped if turning the plan would put it upside down. */
+  const readable = (deg) => {
+    const onScreen = ((((deg + turn) % 360) + 540) % 360) - 180;
+    return Math.abs(onScreen) > 90 ? deg + 180 : deg;
+  };
+
   function toPlan(e) {
     const el = svg.current;
     const r = el.getBoundingClientRect();
-    return [vb[0] + ((e.clientX - r.left) / r.width) * vb[2], vb[1] + ((e.clientY - r.top) / r.height) * vb[3]];
+    return unturn([vb[0] + ((e.clientX - r.left) / r.width) * vb[2], vb[1] + ((e.clientY - r.top) / r.height) * vb[3]]);
   }
 
   const snap = (p, opts = {}) => snapPoint(plan, p, { pxPerM: view.s, ...opts });
+
+  /** Screen point (client px) relative to the middle of the plan's box. */
+  function fromMiddle(x, y) {
+    const r = svg.current.getBoundingClientRect();
+    return [x - r.left - r.width / 2, y - r.top - r.height / 2];
+  }
+  /** The plan point at offset `o` from the middle, for a given view. */
+  function planAtView(v, o) {
+    const a = (-(v.r ?? 0) * Math.PI) / 180;
+    const x = o[0] / v.s;
+    const y = o[1] / v.s;
+    return [v.cx + x * Math.cos(a) - y * Math.sin(a), v.cy + x * Math.sin(a) + y * Math.cos(a)];
+  }
+  function pinchFacts() {
+    const [a, b] = [...touches.current.values()];
+    return {
+      mid: fromMiddle((a.x + b.x) / 2, (a.y + b.y) / 2),
+      span: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)),
+      angle: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI,
+    };
+  }
+
+  /**
+   * Two fingers: pinch to zoom, move to pan and twist to turn the plan,
+   * all about the point between the fingers. Whatever the first finger
+   * started (a drag, a wall end, a point of a shape) is called off.
+   */
+  function startPinch() {
+    const g = gesture.current;
+    if (g && g.type !== 'pan' && g.type !== 'pinch') history.cancel();
+    const was = landed.current;
+    if (was && performance.now() - was.at < 450) {
+      // The first finger landed a moment ago: what it did was the start of a pinch.
+      setDraft(was.draft);
+      if (planRef.current !== was.plan && history.canUndo) history.undo();
+    }
+    const f = pinchFacts();
+    gesture.current = { type: 'pinch', view, ...f, anchor: planAtView(view, f.mid) };
+    setHover(null);
+  }
+
+  function movePinch() {
+    const g = gesture.current;
+    const f = pinchFacts();
+    const s = Math.max(MIN_SCALE, Math.min(MAX_SCALE, (g.view.s * f.span) / g.span));
+    const r = ((((g.view.r ?? 0) + f.angle - g.angle) % 360) + 360) % 360;
+    // Keep the plan point first under the fingers under them still.
+    const off = planAtView({ cx: 0, cy: 0, s, r }, f.mid);
+    setView({ s, r, cx: g.anchor[0] - off[0], cy: g.anchor[1] - off[1] });
+  }
 
   function hitOf(e) {
     const el = e.target.closest?.('[data-hit]');
@@ -248,6 +346,16 @@ const Canvas = forwardRef(function Canvas(
   }
 
   function onPointerDown(e) {
+    if (e.pointerType === 'touch') {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.current.size === 2) {
+        svg.current.setPointerCapture?.(e.pointerId);
+        startPinch();
+        return;
+      }
+      if (touches.current.size > 2) return;
+      landed.current = { at: performance.now(), draft, plan: planRef.current };
+    }
     if (e.button === 1 || e.button === 2 || spaceDown.current || tool === 'pan') {
       startPan(e);
       return;
@@ -372,6 +480,13 @@ const Canvas = forwardRef(function Canvas(
   }
 
   function onPointerMove(e) {
+    if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (gesture.current?.type === 'pinch') {
+        if (touches.current.size >= 2) movePinch();
+        return;
+      }
+    }
     const p = toPlan(e);
     const g = gesture.current;
     if (!g) {
@@ -383,7 +498,10 @@ const Canvas = forwardRef(function Canvas(
       const dx = e.clientX - g.x;
       const dy = e.clientY - g.y;
       if (Math.abs(dx) + Math.abs(dy) > 3) g.moved = true;
-      setView({ ...g.view, cx: g.view.cx - dx / g.view.s, cy: g.view.cy - dy / g.view.s });
+      const a = (-(g.view.r ?? 0) * Math.PI) / 180;
+      const pdx = dx * Math.cos(a) - dy * Math.sin(a);
+      const pdy = dx * Math.sin(a) + dy * Math.cos(a);
+      setView({ ...g.view, cx: g.view.cx - pdx / g.view.s, cy: g.view.cy - pdy / g.view.s });
       return;
     }
     g.moved = true;
@@ -416,7 +534,13 @@ const Canvas = forwardRef(function Canvas(
     }
   }
 
-  function onPointerUp() {
+  function onPointerUp(e) {
+    if (e?.pointerType === 'touch') touches.current.delete(e.pointerId);
+    // A pinch ends when either finger lifts; the other does nothing more.
+    if (gesture.current?.type === 'pinch') {
+      if (touches.current.size < 2) gesture.current = null;
+      return;
+    }
     const g = gesture.current;
     gesture.current = null;
     setHover(null);
@@ -428,17 +552,33 @@ const Canvas = forwardRef(function Canvas(
     if (g.moved) history.commit();
   }
 
-  function onDoubleClick() {
+  function onDoubleClick(e) {
     if (draft?.kind === 'polygon') finishDraft();
     else if (draft?.kind === 'wall') setDraft(null);
+    else if (tool === 'select' && !readOnly) {
+      // Double-clicking a room's floor goes straight to its name, ready to retype.
+      const hit = hitOf(e);
+      if (hit && hit.kind !== 'space' && hit.kind !== 'czone') return;
+      const at = toPlan(e);
+      const space =
+        hit?.kind === 'space'
+          ? plan.spaces.find((s) => s.id === hit.id)
+          : plan.spaces.find((s) => pointInPolygon(at, s.points));
+      if (space) {
+        onSelect(space.id);
+        onRenameSpace?.(space.id);
+      }
+    }
   }
 
   const cursor = gesture.current?.type === 'pan' ? 'grabbing' : tool === 'select' || readOnly ? 'default' : tool === 'pan' ? 'grab' : 'crosshair';
   const selected = selection;
   const gridStep = view.s < 8 ? 10 : view.s < 30 ? 5 : 1;
   const gridLines = [];
-  for (let x = Math.floor(vb[0] / gridStep) * gridStep; x <= vb[0] + vb[2]; x += gridStep) gridLines.push(['v', x]);
-  for (let y = Math.floor(vb[1] / gridStep) * gridStep; y <= vb[1] + vb[3]; y += gridStep) gridLines.push(['h', y]);
+  const half = turn ? Math.hypot(vb[2], vb[3]) / 2 : 0;
+  const gb = turn ? [view.cx - half, view.cy - half, 2 * half, 2 * half] : vb;
+  for (let x = Math.floor(gb[0] / gridStep) * gridStep; x <= gb[0] + gb[2]; x += gridStep) gridLines.push(['v', x]);
+  for (let y = Math.floor(gb[1] / gridStep) * gridStep; y <= gb[1] + gb[3]; y += gridStep) gridLines.push(['h', y]);
 
   const wallColour = (w) => {
     if (w.id === selected) return '#00CAB2';
@@ -467,14 +607,29 @@ const Canvas = forwardRef(function Canvas(
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={() => {
+        onPointerCancel={(e) => {
+          touches.current.delete(e.pointerId);
+          if (gesture.current?.type !== 'pinch') history.cancel();
           gesture.current = null;
-          history.cancel();
         }}
         onPointerLeave={() => !gesture.current && setHover(null)}
         onDoubleClick={onDoubleClick}
+        onDragOver={(e) => {
+          // A machine dragged from the equipment library.
+          if (readOnly || !onDropEquipment || !e.dataTransfer?.types?.includes(LIBRARY_DRAG_TYPE)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDrop={(e) => {
+          const key = e.dataTransfer?.getData(LIBRARY_DRAG_TYPE);
+          if (readOnly || !onDropEquipment || !key) return;
+          e.preventDefault();
+          onDropEquipment(key, snap(toPlan(e), { free: true }).point);
+        }}
         onContextMenu={(e) => e.preventDefault()}
       >
+        {/* Everything on the plan turns together; see `turn`. */}
+        <g transform={turn ? `rotate(${turn} ${view.cx} ${view.cy})` : undefined}>
         {showSource && underlay && (
           <image
             href={underlay.url}
@@ -490,9 +645,9 @@ const Canvas = forwardRef(function Canvas(
         <g className="ed-grid">
           {gridLines.map(([d, at]) =>
             d === 'v' ? (
-              <line key={`v${at}`} x1={at} y1={vb[1]} x2={at} y2={vb[1] + vb[3]} />
+              <line key={`v${at}`} x1={at} y1={gb[1]} x2={at} y2={gb[1] + gb[3]} />
             ) : (
-              <line key={`h${at}`} x1={vb[0]} y1={at} x2={vb[0] + vb[2]} y2={at} />
+              <line key={`h${at}`} x1={gb[0]} y1={at} x2={gb[0] + gb[2]} y2={at} />
             ),
           )}
         </g>
@@ -661,7 +816,7 @@ const Canvas = forwardRef(function Canvas(
               <line x1={o.x} y1={o.y} x2={tip[0]} y2={tip[1]} aria-hidden="true" />
               <polygon points={polygonPoints([tip, left, right])} aria-hidden="true" />
               {isSelected && !readOnly && (
-                <circle className="ed-facing-handle" data-hit={`facing:${o.id}`} cx={tip[0]} cy={tip[1]} r={px(7)}>
+                <circle className="ed-facing-handle" data-hit={`facing:${o.id}`} cx={tip[0]} cy={tip[1]} r={px(7 * grip)}>
                   <title>Drag to turn the machine’s front</title>
                 </circle>
               )}
@@ -674,7 +829,7 @@ const Canvas = forwardRef(function Canvas(
           plan.spaces.map((s) => {
             const c = centroid(s.points);
             return c ? (
-              <text key={`l${s.id}`} className="ed-space-label" x={c[0]} y={c[1]} fontSize={px(11)} strokeWidth={px(3)} textAnchor="middle" aria-hidden="true">
+              <text key={`l${s.id}`} className="ed-space-label" x={c[0]} y={c[1]} transform={level(c[0], c[1])} fontSize={px(11)} strokeWidth={px(3)} textAnchor="middle" aria-hidden="true">
                 {s.name || kindLabel(s.kind)}
               </text>
             ) : null;
@@ -686,7 +841,7 @@ const Canvas = forwardRef(function Canvas(
             <g key={t.id} data-hit={`tag:${t.id}`} className={`ed-tag ${t.id === selected ? 'selected' : ''}`}>
               <circle cx={t.x} cy={t.y} r={px(9)} fill="transparent" stroke={colour} />
               <circle cx={t.x} cy={t.y} r={px(4.5)} fill={colour} />
-              <text x={t.x + px(12)} y={t.y + px(4)} fontSize={px(11)} strokeWidth={px(3)} fill={colour}>
+              <text x={t.x + px(12)} y={t.y + px(4)} transform={level(t.x, t.y)} fontSize={px(11)} strokeWidth={px(3)} fill={colour}>
                 {TAG_LABELS[t.type]}
                 {t.type === 'ceiling' && t.heightM ? ` ${Number(t.heightM).toFixed(2)} m` : ''}
               </text>
@@ -713,7 +868,7 @@ const Canvas = forwardRef(function Canvas(
                 fontSize={px(11)}
                 strokeWidth={px(3)}
                 textAnchor="middle"
-                transform={`rotate(${label.angleDeg} ${label.mid[0] + label.normal[0] * px(11)} ${label.mid[1] + label.normal[1] * px(11)})`}
+                transform={`rotate(${readable(label.angleDeg)} ${label.mid[0] + label.normal[0] * px(11)} ${label.mid[1] + label.normal[1] * px(11)})`}
               >
                 {label.text}
               </text>
@@ -726,6 +881,7 @@ const Canvas = forwardRef(function Canvas(
                   className="ed-equipment-label"
                   x={o.x}
                   y={o.y + px(4)}
+                  transform={level(o.x, o.y)}
                   fontSize={px(10)}
                   strokeWidth={px(3)}
                   textAnchor="middle"
@@ -750,6 +906,7 @@ const Canvas = forwardRef(function Canvas(
                   key={i}
                   x={selectedObject.x}
                   y={selectedObject.y + px(16) + i * px(13)}
+                  transform={level(selectedObject.x, selectedObject.y)}
                   fontSize={px(10)}
                   strokeWidth={px(3)}
                   textAnchor="middle"
@@ -765,6 +922,7 @@ const Canvas = forwardRef(function Canvas(
             <text
               x={(selectedWall.a[0] + selectedWall.b[0]) / 2}
               y={(selectedWall.a[1] + selectedWall.b[1]) / 2 - px(10)}
+              transform={level((selectedWall.a[0] + selectedWall.b[0]) / 2, (selectedWall.a[1] + selectedWall.b[1]) / 2)}
               fontSize={px(12)}
               strokeWidth={px(3)}
               textAnchor="middle"
@@ -783,7 +941,7 @@ const Canvas = forwardRef(function Canvas(
                 className={`ed-handle ${w.id === selected ? 'selected' : ''}`}
                 cx={w[end][0]}
                 cy={w[end][1]}
-                r={px(w.id === selected ? 6 : 4)}
+                r={px((w.id === selected ? 6 : 4) * grip)}
               />
             )),
           )}
@@ -801,7 +959,7 @@ const Canvas = forwardRef(function Canvas(
               className="ed-handle selected"
               cx={p[0]}
               cy={p[1]}
-              r={px(5)}
+              r={px(5 * grip)}
             />
           ))}
 
@@ -815,6 +973,7 @@ const Canvas = forwardRef(function Canvas(
               className="ed-draft-label"
               x={(anchor[0] + hover.point[0]) / 2}
               y={(anchor[1] + hover.point[1]) / 2 - px(10)}
+              transform={level((anchor[0] + hover.point[0]) / 2, (anchor[1] + hover.point[1]) / 2)}
               fontSize={px(12)}
               strokeWidth={px(3)}
               textAnchor="middle"
@@ -826,7 +985,25 @@ const Canvas = forwardRef(function Canvas(
         {hover && hover.kind !== 'free' && (
           <circle className={`ed-snap ${hover.kind}`} cx={hover.point[0]} cy={hover.point[1]} r={px(7)} />
         )}
+        </g>
       </svg>
+      {draft && !readOnly && (
+        <div className="ed-draft-actions" role="group" aria-label="Drawing">
+          {draft.kind === 'polygon' && (
+            <button type="button" className="rv-button small primary" disabled={draft.points.length < 3} onClick={finishDraft}>
+              Finish shape
+            </button>
+          )}
+          {draft.kind !== 'polygon' && (
+            <button type="button" className="rv-button small primary" onClick={cancelDraft}>
+              Done
+            </button>
+          )}
+          <button type="button" className="rv-button small ghost" onClick={cancelDraft}>
+            Cancel
+          </button>
+        </div>
+      )}
     </div>
   );
 });

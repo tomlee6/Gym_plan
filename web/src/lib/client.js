@@ -361,6 +361,8 @@ export const plansApi = {
   model: (id) => request('GET', `/v1/plans/${enc(id)}/model`),
   share: (id) => request('POST', `/v1/plans/${enc(id)}/share-links`, {}),
   revokeShare: (id) => request('DELETE', `/v1/plans/${enc(id)}/share-links`),
+  // A correction from site: the corrected plan, waiting for review.
+  correct: (id, body) => request('POST', `/v1/plans/${enc(id)}/corrections`, body),
 };
 
 /** Owner: 3D objects scanned with the app (backend/src/modules/objects.js). */
@@ -402,6 +404,11 @@ export const reviewApi = {
   turnModel: (modelId, turnDeg) => request('POST', `/v1/review/models/${enc(modelId)}/turn`, { turnDeg }),
 };
 
+/** The equipment library (backend/src/modules/equipment-library.js), for anyone signed in. */
+export const libraryApi = {
+  list: () => request('GET', '/v1/equipment-library'),
+};
+
 /** Platform admin (B-09). People are invited by email, never given a password. */
 export const adminApi = {
   accounts: () => request('GET', '/v1/admin/accounts'),
@@ -420,6 +427,14 @@ export const adminApi = {
   audit: (params = {}) => request('GET', `/v1/admin/audit${q(params)}`),
   auditCsv: (params = {}) => download(`/v1/admin/audit.csv${q(params)}`),
   reviewers: () => request('GET', '/v1/admin/reviewers'),
+  // The equipment library and its manufacturers.
+  library: () => request('GET', '/v1/admin/equipment-library'),
+  addLibraryItem: (body) => request('POST', '/v1/admin/equipment-library', body),
+  updateLibraryItem: (id, body) => request('PATCH', `/v1/admin/equipment-library/${enc(id)}`, body),
+  importLibrary: (body) => request('POST', '/v1/admin/equipment-library/import', body),
+  manufacturers: () => request('GET', '/v1/admin/equipment-manufacturers'),
+  addManufacturer: (body) => request('POST', '/v1/admin/equipment-manufacturers', body),
+  updateManufacturer: (id, body) => request('PATCH', `/v1/admin/equipment-manufacturers/${enc(id)}`, body),
 };
 
 /** Test hook: forget everything held in memory and in this tab. */

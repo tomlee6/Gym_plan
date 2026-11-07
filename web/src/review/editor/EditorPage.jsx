@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 
-import { approvalBlockers, emptyPlan, planFromScan, validate } from '@shared/plan/index.js';
+import { approvalBlockers, emptyPlan, libraryPlacement, planFromScan, validate } from '@shared/plan/index.js';
 
 import { useAuth } from '../../lib/auth.jsx';
 import { reviewApi } from '../../lib/client.js';
@@ -12,11 +12,12 @@ import { useTitle } from '../../lib/useTitle.js';
 import { ApproveDialog, RejectDialog } from '../DecisionDialogs.jsx';
 import Canvas from './Canvas.jsx';
 import { keyframesIndexFile, readKeyframes } from './keyframes.js';
-import { deleteElement, findElement, movePolygon } from './ops.js';
+import { deleteElement, findElement, movePolygon, placeEquipment } from './ops.js';
 import ScanCheck from './ScanCheck.jsx';
 import { floorTriangles, meshFile, parseObj, trianglesPath } from './scanMesh.js';
 import Sidebar from './Sidebar.jsx';
 import Toolbar, { TOOLS } from './Toolbar.jsx';
+import { useLibrary } from './useLibrary.js';
 import { useActivity, useAutosave, usePlanHistory } from './useEditorState.js';
 import './editor.css';
 
@@ -188,8 +189,13 @@ function Editor({ v, reload }) {
   const [placing, setPlacing] = useState(null);
   const [showMesh, setShowMesh] = useState(false);
   const [selection, setSelection] = useState(null);
+  // A double-clicked room: its name field takes the cursor. `n` changes on
+  // every request, so the same room can be asked for again.
+  const [renameRequest, setRenameRequest] = useState(null);
+  const renameSpace = useCallback((id) => setRenameRequest((r) => ({ id, n: (r?.n ?? 0) + 1 })), []);
   const [showSource, setShowSource] = useState(true);
   const [zoom, setZoom] = useState(null);
+  const [rotation, setRotation] = useState(0);
   const [dialog, setDialog] = useState(null);
   const [scaleLine, setScaleLine] = useState(null);
   const [actionError, setActionError] = useState(null);
@@ -205,6 +211,20 @@ function Editor({ v, reload }) {
     setSelection(null);
     setTool('place');
   }, []);
+
+  // The equipment library: Place, then click the plan; or drag one onto it.
+  // The equipment library from the database (the built-in list if it cannot be loaded).
+  const library = useLibrary();
+  const placeFromLibrary = (entry) => startPlacing(libraryPlacement(entry, plan, v?.equipment ?? []));
+  const dropFromLibrary = (key, point) => {
+    const entry = library.items.find((i) => i.key === key);
+    if (!entry || readOnly) return;
+    const { plan: next, id } = placeEquipment(plan, libraryPlacement(entry, plan, v?.equipment ?? []), point);
+    if (!id) return;
+    history.change(next);
+    setTool('select');
+    setSelection(id);
+  };
 
   // Leaving the placing tool by any route forgets the machine being placed.
   useEffect(() => {
@@ -296,6 +316,12 @@ function Editor({ v, reload }) {
         canvas.current?.zoomBy(1 / 1.25);
       } else if (k === '0') {
         canvas.current?.fit();
+      } else if (k === '[' || k === '{' || k === ']' || k === '}') {
+        // Turn the plan: 15° a press, 90° with Shift.
+        const step = e.shiftKey ? 90 : 15;
+        canvas.current?.rotateBy(k === '[' || k === '{' ? -step : step);
+      } else if (k === '\\') {
+        canvas.current?.resetRotation();
       } else if (k.startsWith('arrow') && selection && !readOnly) {
         e.preventDefault();
         nudge(k, e.shiftKey ? 0.1 : 0.01);
@@ -393,6 +419,9 @@ function Editor({ v, reload }) {
             zoom={zoom}
             onZoom={(f) => canvas.current?.zoomBy(f)}
             onFit={() => canvas.current?.fit()}
+            rotation={rotation}
+            onRotate={(deg) => canvas.current?.rotateBy(deg)}
+            onResetRotation={() => canvas.current?.resetRotation()}
             history={history}
             showSource={showSource}
             onShowSource={setShowSource}
@@ -430,9 +459,12 @@ function Editor({ v, reload }) {
             problems={problems}
             onScaleLine={(a, b) => setScaleLine({ a, b })}
             onZoomChange={setZoom}
+            onRotationChange={setRotation}
+            onDropEquipment={dropFromLibrary}
             placing={placing}
             onPlaced={() => setTool('select')}
             meshPath={showMesh ? mesh.path : ''}
+            onRenameSpace={renameSpace}
           />
         </div>
         <Sidebar
@@ -447,6 +479,9 @@ function Editor({ v, reload }) {
           placing={placing}
           onPlace={startPlacing}
           keyframes={keyframes}
+          renameRequest={renameRequest}
+          onPlaceFromLibrary={placeFromLibrary}
+          library={library}
         />
       </div>
 
@@ -551,6 +586,12 @@ function Notices({ v, actionError, saveError, onReload }) {
   const approved = v.status === 'ready' || v.status === 'superseded';
   return (
     <div className="ed-notices">
+      {v.correction && (
+        <p className="rv-notice" role="status">
+          Correction from site{v.correction.by ? ` by ${v.correction.by}` : ''}: “{v.correction.note}”. Compare it with the approved version before
+          approving; the approved plan stays live until then.
+        </p>
+      )}
       {takenBy && (
         <p className="rv-notice" role="status">
           {takenBy.name} is reviewing this plan. You can look, but only they can change or decide it.

@@ -323,6 +323,8 @@ class BackgroundUploadQueue extends UploadQueue {
         'coverage': r.coverage,
         'closed': r.closed,
         'overrideReason': r.overrideReason,
+        // What the surveyor called each room, in the scan's order.
+        if (r.roomNames.isNotEmpty) 'roomNames': r.roomNames,
         'areaM2': r.areaM2,
         'durationSeconds': r.elapsed.inSeconds,
         'photoCount': r.photos,

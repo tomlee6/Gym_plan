@@ -100,6 +100,45 @@ export function bounds(points) {
   return { minX, minY, maxX, maxY };
 }
 
+/**
+ * The angle of a plan's main walls, in radians, in (-π/4, π/4]: each wall's
+ * direction counted four times round, so walls at right angles to each
+ * other agree, weighted by length. The phone squares its plan up by the
+ * same rule (`PlanGeometry.mainWallAngle`), so both measure a room along
+ * its own walls rather than along whichever way the phone faced when the
+ * scan began.
+ */
+export function mainWallAngle(walls) {
+  let x = 0;
+  let y = 0;
+  for (const w of walls ?? []) {
+    const dx = w.b[0] - w.a[0];
+    const dy = w.b[1] - w.a[1];
+    const len = Math.hypot(dx, dy);
+    const angle = 4 * Math.atan2(dy, dx);
+    x += len * Math.cos(angle);
+    y += len * Math.sin(angle);
+  }
+  if (Math.abs(x) < 1e-9 && Math.abs(y) < 1e-9) return 0;
+  const turn = Math.atan2(y, x) / 4;
+  return Math.abs(turn) < 1e-6 ? 0 : turn;
+}
+
+/**
+ * Width and length of `points` measured along the main walls (see
+ * `mainWallAngle`): the room's own width × length, the same numbers the
+ * phone shows. Null for no points.
+ */
+export function squaredExtent(points, angle) {
+  if (!points?.length) return null;
+  const c = Math.cos(-angle);
+  const s = Math.sin(-angle);
+  const turned = points.map(([x, y]) => [x * c - y * s, x * s + y * c]);
+  const xs = turned.map((p) => p[0]);
+  const ys = turned.map((p) => p[1]);
+  return { widthM: Math.max(...xs) - Math.min(...xs), lengthM: Math.max(...ys) - Math.min(...ys) };
+}
+
 /** The centroid of a polygon's corners: good enough to label or test a shape. */
 export function centroid(points) {
   if (!points?.length) return null;

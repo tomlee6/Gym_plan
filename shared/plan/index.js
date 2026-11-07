@@ -4,3 +4,4 @@ export * from './mesh.js';
 export * from './model.js';
 export * from './reading.js';
 export * from './validate.js';
+export * from './library.js';

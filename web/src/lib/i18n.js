@@ -138,6 +138,8 @@ const en = {
       history: 'Version history',
       noVersions: 'No versions yet.',
       revisedByFlex: 'Revised by Flex',
+      correctedOnSite: 'Correction from site',
+      correct: 'Correct this plan',
       by: 'by {name}',
       columns: {
         version: 'VERSION',
@@ -258,6 +260,7 @@ const en = {
     },
     submitted: '{organisation} · submitted {time}',
     revision: 'Revision',
+    correction: 'Correction from site',
     none: 'None',
     you: 'You',
     unclaimed: 'Unclaimed',

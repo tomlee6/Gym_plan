@@ -24,7 +24,13 @@ class FloorPlanView extends StatelessWidget {
     this.measurements = const <(Offset, Offset?)>[],
     this.showDimensions = false,
     this.fit = false,
+    this.viewRotation = 0,
   });
+
+  /// How far the plan is turned on screen, in radians, by a
+  /// [PlanNavigator] around it. Labels are drawn against it, so they read
+  /// the right way up whichever way the plan faces.
+  final double viewRotation;
 
   /// Control distances drawn over the plan (F-03): each a line from its
   /// first end to its second, or a lone end while the second is picked.
@@ -88,6 +94,7 @@ class FloorPlanView extends StatelessWidget {
         showGrid: showGrid,
         measurements: measurements,
         showDimensions: showDimensions,
+        viewRotation: viewRotation,
         // The painter has no context: labels take the app's font from here.
         fontFamily: DefaultTextStyle.of(context).style.fontFamily,
       ),
@@ -117,10 +124,24 @@ class _FloorPlanPainter extends CustomPainter {
     required this.showGrid,
     required this.measurements,
     required this.showDimensions,
+    this.viewRotation = 0,
     this.fontFamily,
   });
 
   final String? fontFamily;
+
+  /// See [FloorPlanView.viewRotation].
+  final double viewRotation;
+
+  /// [angle], or [angle] turned half round, whichever reads the right way
+  /// up once the plan is turned by [viewRotation].
+  double _readable(double angle) {
+    final double onScreen = math.atan2(
+      math.sin(angle + viewRotation),
+      math.cos(angle + viewRotation),
+    );
+    return onScreen.abs() > math.pi / 2 + 1e-6 ? angle + math.pi : angle;
+  }
 
   /// Grid spacing on the floor.
   static const double _gridM = 2.5;
@@ -427,10 +448,13 @@ class _FloorPlanPainter extends CustomPainter {
       if (text.width > bounds.width + 6 || text.height > bounds.height + 2) {
         continue;
       }
-      text.paint(
-        canvas,
-        bounds.center - Offset(text.width / 2, text.height / 2),
-      );
+      canvas
+        ..save()
+        ..translate(bounds.center.dx, bounds.center.dy)
+        // Level on screen, however the plan is turned.
+        ..rotate(-viewRotation);
+      text.paint(canvas, Offset(-text.width / 2, -text.height / 2));
+      canvas.restore();
     }
   }
 
@@ -477,7 +501,7 @@ class _FloorPlanPainter extends CustomPainter {
       canvas
         ..save()
         ..translate(at.dx, at.dy);
-      if (upright) canvas.rotate(-math.pi / 2);
+      canvas.rotate(_readable(upright ? -math.pi / 2 : 0));
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromCenter(
@@ -567,8 +591,7 @@ class _FloorPlanPainter extends CustomPainter {
       )..layout();
 
       // Kept upright: a wall drawn right to left reads the same way round.
-      double angle = math.atan2(along.dy, along.dx);
-      if (angle > math.pi / 2 || angle < -math.pi / 2) angle += math.pi;
+      final double angle = _readable(math.atan2(along.dy, along.dx));
 
       final Rect pill = Rect.fromCenter(
         center: Offset.zero,
@@ -697,6 +720,7 @@ class _FloorPlanPainter extends CustomPainter {
       old.showGrid != showGrid ||
       old.measurements != measurements ||
       old.showDimensions != showDimensions ||
+      old.viewRotation != viewRotation ||
       old.fontFamily != fontFamily;
 }
 

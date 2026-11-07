@@ -28,7 +28,7 @@ class ScanConfig {
   final String facility;
   final int level;
 
-  /// Floor-to-floor height the 3D model raises the walls to.
+  /// Floor-to-ceiling height the 3D model raises the walls to.
   final double heightM;
 
   /// "Northgate · Level 2", as shown in the scanning pill.
@@ -455,6 +455,7 @@ class ScanResult {
     this.overrideReason,
     this.detected = const <RoomScanObject>[],
     this.controlDistances = const <ControlDistance>[],
+    this.roomNames = const <String>[],
   });
 
   /// Photos the reviewer asks for: one per corner of the room.
@@ -486,11 +487,16 @@ class ScanResult {
   /// Laser checks of the scan's scale added on the review screen (F-03).
   final List<ControlDistance> controlDistances;
 
+  /// The surveyor's name for each room the scan found, in the scan's order
+  /// (see RoomNames). Empty: the platform names them Room 1, Room 2...
+  final List<String> roomNames;
+
   double? get areaM2 => geometry.areaM2;
 
   ScanResult copyWith({
     ScanConfig? config,
     List<ControlDistance>? controlDistances,
+    List<String>? roomNames,
   }) => ScanResult(
     config: config ?? this.config,
     geometry: geometry,
@@ -504,6 +510,7 @@ class ScanResult {
     overrideReason: overrideReason,
     detected: detected,
     controlDistances: controlDistances ?? this.controlDistances,
+    roomNames: roomNames ?? this.roomNames,
   );
 
   int get coveragePercent => (coverage * 100).round();

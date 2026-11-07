@@ -561,7 +561,7 @@ void main() {
 
     expect(find.text('Capture details'), findsOneWidget);
     final Finder level = _fieldFor('Level');
-    final Finder height = _fieldFor('Floor to floor');
+    final Finder height = _fieldFor('Floor to ceiling');
     expect(level, findsOneWidget);
     expect(height, findsOneWidget);
 

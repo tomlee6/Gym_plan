@@ -20,6 +20,10 @@ const AuthContext = createContext(null);
 
 export const ROLES = {
   customer: ['owner', 'surveyor'],
+  // Plans and walkthroughs: the customer roles and installers, who fit out
+  // from the approved plan and may send a correction from site.
+  plans: ['owner', 'surveyor', 'installer'],
+  correct: ['owner', 'installer'],
   review: ['reviewer', 'admin'],
   admin: ['admin'],
 };
@@ -135,6 +139,15 @@ export function AuthProvider({ children }) {
     [state, signIn, completeSignIn, completeLinkSignIn, switchAccount, signOut],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+/**
+ * The role in the current account, or null: signed out, staff, or a page
+ * shown on its own (as in a test) with no sign-in around it.
+ */
+export function useAccountRole() {
+  const ctx = useContext(AuthContext);
+  return accountRoleOf(ctx?.user ?? null);
 }
 
 export function useAuth() {

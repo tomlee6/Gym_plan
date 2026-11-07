@@ -17,7 +17,7 @@ import 'scanning_screen.dart';
 ///
 /// It checks for LiDAR first and, without it, says so and goes back. Then
 /// it only waits for the account's facilities. The
-/// facility, level and floor-to-floor height are confirmed on the review
+/// facility, level and floor-to-ceiling height are confirmed on the review
 /// screen after the walk; the scan starts with the gym the user was looking
 /// at, [initialLevel] and [defaultHeightM] filled in.
 class NewCaptureScreen extends StatefulWidget {
@@ -47,7 +47,7 @@ class NewCaptureScreen extends StatefulWidget {
   /// floor plan.
   final ScanView opensIn;
 
-  /// The floor-to-floor height a scan starts with, until the surveyor sets
+  /// The floor-to-ceiling height a scan starts with, until the surveyor sets
   /// it on the review screen.
   static const double defaultHeightM = 3.20;
 

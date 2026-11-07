@@ -12,7 +12,9 @@ import { cors } from './middleware/cors.js';
 import { router as admin } from './modules/admin.js';
 import { router as auth } from './modules/auth.js';
 import { router as captures } from './modules/captures.js';
+import { router as corrections } from './modules/corrections.js';
 import { router as equipment } from './modules/equipment.js';
+import { adminRouter as equipmentLibraryAdmin, router as equipmentLibrary } from './modules/equipment-library.js';
 import { router as facilities } from './modules/facilities.js';
 import { router as hubEvents } from './modules/hub-events.js';
 import { router as localStorage } from './modules/local-storage.js';
@@ -58,6 +60,8 @@ export function createApp() {
   app.use('/v1/me', profile);
   app.use('/v1/facilities', facilities);
   app.use('/v1/plans', plans);
+  // Corrections from site (installers) hang off a plan, so they share its path.
+  app.use('/v1/plans', corrections);
   app.use('/v1/captures', captures);
   // Equipment and its 360 video hang off a capture, so they share its path.
   app.use('/v1/captures', equipment);
@@ -67,6 +71,9 @@ export function createApp() {
   // Machine models (L-07) share the reviewer's path and its staff-only rule.
   app.use('/v1/review', machineModels);
   app.use('/v1/share', share);
+  // The equipment library: read by anyone signed in, kept by admins.
+  app.use('/v1/equipment-library', equipmentLibrary);
+  app.use('/v1/admin', equipmentLibraryAdmin);
   app.use('/v1/admin', admin);
 
   app.use((_req, _res, next) => next(notFound()));

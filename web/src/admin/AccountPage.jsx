@@ -15,6 +15,7 @@ import './admin.css';
 export const ACCOUNT_ROLES = [
   ['owner', 'Owner & Surveyor'],
   ['surveyor', 'Surveyor'],
+  ['installer', 'Installer'],
 ];
 
 const roleLabel = (role) => ACCOUNT_ROLES.find(([value]) => value === role)?.[1] ?? role;

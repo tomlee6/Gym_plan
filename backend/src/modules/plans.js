@@ -26,7 +26,7 @@ import { approvedModelsOn } from '../assets/walkthrough.js';
 import { audit, planEventsSql, planLabel } from '../audit.js';
 import { config } from '../config.js';
 import { many, one, pool, transaction } from '../db/pool.js';
-import { conflict, notFound } from '../errors.js';
+import { conflict, forbidden, notFound } from '../errors.js';
 import { linkFields } from '../generator/links.js';
 import { isId, newId, newToken, sha256 } from '../ids.js';
 import { requireAccount, requireAuth } from '../middleware/auth.js';
@@ -219,6 +219,8 @@ export async function modelFor(db, accountId, planId, { withLevels = true } = {}
 
   return {
     planId: row.plan_id,
+    // The approved version shown, which a correction from site is based on.
+    versionId: row.version_id,
     site: row.facility,
     organisation: row.organisation,
     level: row.level,
@@ -259,6 +261,7 @@ router.get('/:planId/model', async (req, res) => {
  * to copy again, since the old one's token was never kept.
  */
 router.post('/:planId/share-links', async (req, res) => {
+  if (req.account.role === 'installer') throw forbidden('Only the account’s owners and surveyors can share a plan.');
   const { expiresInDays } = z
     .object({ expiresInDays: z.number().int().min(1).max(365).optional() })
     .parse(req.body ?? {});
@@ -290,6 +293,7 @@ router.post('/:planId/share-links', async (req, res) => {
 });
 
 router.delete('/:planId/share-links', async (req, res) => {
+  if (req.account.role === 'installer') throw forbidden('Only the account’s owners and surveyors can share a plan.');
   const row = await planOr404(req.account.id, req.params.planId);
   await transaction(async (db) => {
     const [result] = await db.query(

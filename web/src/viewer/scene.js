@@ -13,8 +13,11 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
+import { pointInPolygon } from '@shared/plan/index.js';
+
 import { WALL_THICKNESS_M } from './buildModel.js';
 import { hideLevelMachines, placeMachines } from './machines.js';
+import { FINISHES, finishOf, machineColour, paintFinish } from './materials.js';
 
 export const COLOURS = {
   background: 0x0a1114,
@@ -22,8 +25,11 @@ export const COLOURS = {
   sky: 0xcfdde6,
   floor: 0x3a4146,
   floorLine: 0x4b5358,
-  wall: 0xd8dbd9,
-  ceiling: 0xeef0ef,
+  // Warm white, as painted plaster reads under gym lighting.
+  wall: 0xe8e5df,
+  skirting: 0x2b2f31,
+  ceiling: 0xf2f2ef,
+  lightPanel: 0xfdfcf6,
   column: 0xc4c8c6,
   object: 0x2f4650,
   stairVoid: 0x050707,
@@ -34,19 +40,15 @@ export const COLOURS = {
   measure: 0x00cab2,
 };
 
-/** A tiled floor texture, one tile per metre, so walking has a sense of pace. */
-function floorTexture() {
+/** A floor texture for a finish (rubber, timber, ...), one metre to a repeat. */
+function floorTexture(finish = 'rubber') {
   const size = 256;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
-  ctx.fillStyle = `#${COLOURS.floor.toString(16).padStart(6, '0')}`;
-  ctx.fillRect(0, 0, size, size);
-  ctx.strokeStyle = `#${COLOURS.floorLine.toString(16).padStart(6, '0')}`;
-  ctx.lineWidth = 3;
-  ctx.strokeRect(0, 0, size, size);
+  paintFinish(ctx, size, finish);
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
@@ -82,16 +84,60 @@ function block({ x, y, w, d, angle = 0 }, bottom, top) {
 }
 
 /** A wall piece: a box along a -> b. */
-function wallBox(piece) {
+function wallBox(piece, thickness = WALL_THICKNESS_M) {
   const dx = piece.b[0] - piece.a[0];
   const dy = piece.b[1] - piece.a[1];
   const len = Math.hypot(dx, dy);
   return block(
-    { x: (piece.a[0] + piece.b[0]) / 2, y: (piece.a[1] + piece.b[1]) / 2, w: len + WALL_THICKNESS_M * 0.5, d: WALL_THICKNESS_M, angle: Math.atan2(dy, dx) },
+    { x: (piece.a[0] + piece.b[0]) / 2, y: (piece.a[1] + piece.b[1]) / 2, w: len + WALL_THICKNESS_M * 0.5, d: thickness, angle: Math.atan2(dy, dx) },
     piece.bottom,
     piece.top,
   );
 }
+
+/** A geometry painted one colour, so differently coloured pieces can share one mesh. */
+function coloured(geom, hex) {
+  const g = geom.index ? geom.toNonIndexed() : geom;
+  if (g !== geom) geom.dispose();
+  const c = new THREE.Color(hex);
+  // The top a shade lighter (a seat, a deck, a frame catching the light),
+  // so a machine reads as a shape rather than a dark box.
+  const top = c.clone().lerp(new THREE.Color(0xffffff), 0.12);
+  const n = g.attributes.position.count;
+  const normals = g.attributes.normal;
+  const colours = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const k = normals && normals.getY(i) > 0.5 ? top : c;
+    colours[i * 3] = k.r;
+    colours[i * 3 + 1] = k.g;
+    colours[i * 3 + 2] = k.b;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+  return g;
+}
+
+/** Ceiling light panels, 1.2 × 0.6 m on a 3 m grid, where they fall over the floor. */
+function lightPanels(floor, height) {
+  const xs = floor.map((q) => q[0]);
+  const ys = floor.map((q) => q[1]);
+  const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const panels = [];
+  const step = 3;
+  for (let x = minX + step / 2; x < maxX; x += step) {
+    for (let y = minY + step / 2; y < maxY; y += step) {
+      if (!pointInPolygon([x, y], floor)) continue;
+      panels.push(flatShape(rectPoints(x, y, 1.2, 0.6), height - 0.01));
+    }
+  }
+  return panels;
+}
+
+const rectPoints = (x, y, w, d) => [
+  [x - w / 2, y - d / 2],
+  [x + w / 2, y - d / 2],
+  [x + w / 2, y + d / 2],
+  [x - w / 2, y + d / 2],
+];
 
 function merged(geometries) {
   if (!geometries.length) return null;
@@ -109,27 +155,57 @@ function drawPlan(model, add) {
   // Floor and ceiling.
   let ceiling = null;
   if (model.floor?.length >= 3) {
-    const tex = floorTexture();
-    add(
-      flatShape(model.floor, 0),
-      new THREE.MeshStandardMaterial({ color: tex ? 0xffffff : COLOURS.floor, map: tex, roughness: 0.95, side: THREE.DoubleSide }),
-      { name: 'floor' },
-    );
+    const floorMaterial = (finish) => {
+      const tex = floorTexture(finish);
+      const f = FINISHES[finish] ?? FINISHES.rubber;
+      return new THREE.MeshStandardMaterial({ color: tex ? 0xffffff : f.base, map: tex, roughness: f.roughness, side: THREE.DoubleSide });
+    };
+    // The whole floor in the main room's finish; each room laid over it in its own.
+    const spaces = model.spaces ?? [];
+    const base = spaces.length === 1 ? finishOf(spaces[0]) : 'rubber';
+    add(flatShape(model.floor, 0), floorMaterial(base), { name: 'floor' });
+    if (spaces.length > 1) {
+      const byFinish = new Map();
+      for (const sp of spaces) {
+        const f = finishOf(sp);
+        if (!byFinish.has(f)) byFinish.set(f, []);
+        byFinish.get(f).push(flatShape(sp.points, 0.003));
+      }
+      for (const [finish, shapes] of byFinish) add(merged(shapes), floorMaterial(finish), { name: `floor-${finish}` });
+    }
     ceiling = add(
       flatShape(model.floor, model.ceiling),
-      new THREE.MeshStandardMaterial({ color: COLOURS.ceiling, roughness: 1, side: THREE.DoubleSide }),
+      // Lit by the panels in it, not only from below: a little glow keeps it white.
+      new THREE.MeshStandardMaterial({ color: COLOURS.ceiling, emissive: COLOURS.ceiling, emissiveIntensity: 0.35, roughness: 1, side: THREE.DoubleSide }),
       { name: 'ceiling' },
     );
+    // Light panels go with the ceiling, so the overhead view lifts both off.
+    const panels = merged(lightPanels(model.floor, model.ceiling));
+    if (ceiling && panels) {
+      const lights = new THREE.Mesh(panels, new THREE.MeshBasicMaterial({ color: COLOURS.lightPanel, side: THREE.DoubleSide }));
+      lights.name = 'lights';
+      ceiling.add(lights);
+    }
   }
 
   // Walls: plain ones merged; mirror walls reflective (GEN-03).
   // Door and window heads are their own mesh so the overhead view can hide
   // them and show the openings.
-  const wallMat = new THREE.MeshStandardMaterial({ color: COLOURS.wall, roughness: 0.85 });
-  add(merged(model.walls.filter((p) => !p.mirror && p.kind !== 'head').map(wallBox)), wallMat, { name: 'walls' });
-  const heads = add(merged(model.walls.filter((p) => p.kind === 'head').map(wallBox)), wallMat.clone(), { name: 'heads' });
+  const wallMat = new THREE.MeshStandardMaterial({ color: COLOURS.wall, roughness: 0.9 });
+  add(merged(model.walls.filter((p) => !p.mirror && p.kind !== 'head').map((p) => wallBox(p))), wallMat, { name: 'walls' });
+  // A dark skirting board along the foot of every wall that reaches the floor.
   add(
-    merged(model.walls.filter((p) => p.mirror && p.kind !== 'head').map(wallBox)),
+    merged(
+      model.walls
+        .filter((p) => p.kind !== 'head' && p.kind !== 'sill' && p.bottom <= 0.01)
+        .map((p) => wallBox({ ...p, bottom: 0, top: 0.1 }, WALL_THICKNESS_M + 0.02)),
+    ),
+    new THREE.MeshStandardMaterial({ color: COLOURS.skirting, roughness: 0.6 }),
+    { hit: false, name: 'skirting' },
+  );
+  const heads = add(merged(model.walls.filter((p) => p.kind === 'head').map((p) => wallBox(p))), wallMat.clone(), { name: 'heads' });
+  add(
+    merged(model.walls.filter((p) => p.mirror && p.kind !== 'head').map((p) => wallBox(p))),
     new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 1, roughness: 0.03, envMapIntensity: 1.6 }),
     { name: 'mirrors' },
   );
@@ -139,9 +215,11 @@ function drawPlan(model, add) {
     new THREE.MeshStandardMaterial({ color: COLOURS.column, roughness: 0.8 }),
     { name: 'columns' },
   );
+  // Machines coloured by kind (graphite cardio, black strength, a timber
+  // platform...), all in one mesh.
   add(
-    merged(model.objects.map((o) => block(o, 0, o.height))),
-    new THREE.MeshStandardMaterial({ color: COLOURS.object, roughness: 0.6, metalness: 0.2 }),
+    merged(model.objects.map((o) => coloured(block(o, 0, o.height), machineColour(o)))),
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.3 }),
     { name: 'objects' },
   );
 

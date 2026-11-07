@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router';
 
 import { equipmentLabel } from '@shared/plan/index.js';
 
+import { ROLES, useAccountRole } from '../lib/auth.jsx';
 import { plansApi } from '../lib/client.js';
 import { area, inputLabel, percent, stamp } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
@@ -23,6 +24,7 @@ const GENERATING_REFRESH_MS = 20_000;
  */
 export default function PlanPage() {
   const { planId } = useParams();
+  const role = useAccountRole();
   const [poll, setPoll] = useState(false);
   const { data: plan, error, reload } = useLoader(() => plansApi.get(planId), planId, {
     intervalMs: poll ? GENERATING_REFRESH_MS : undefined,
@@ -64,6 +66,12 @@ export default function PlanPage() {
       <Header title={planTitle(plan)}>
         <span className={`ow-pill ${status.tone}`}>{status.label}</span>
         <span className="spacer" />
+        {/* Owners and installers correct an approved plan from site. */}
+        {plan.walkthroughVersion != null && ROLES.correct.includes(role) && (
+          <Link to={`/plans/${plan.id}/correct`} className="rv-button">
+            {t('owner.plan.correct')}
+          </Link>
+        )}
         {plan.walkthroughVersion != null && (
           <Link to={`/plans/${plan.id}/walkthrough`} className="rv-button primary">
             <CubeIcon size={15} />
@@ -100,7 +108,7 @@ export default function PlanPage() {
         )}
 
         <div className="ow-detail-grid">
-          <SharePanel plan={plan} onChange={reload} />
+          {role !== 'installer' && <SharePanel plan={plan} onChange={reload} />}
           <section className="rv-card" aria-label={t('owner.plan.facts')}>
             <div className="eyebrow">{t('owner.plan.factsEyebrow')}</div>
             <dl className="rv-facts">
@@ -400,6 +408,7 @@ function History({ history }) {
                     <td data-label="Version">
                       <div className="rv-cell-title">v{h.version}</div>
                       {h.origin === 'revision' && <div className="rv-cell-sub">{t('owner.plan.revisedByFlex')}</div>}
+                      {h.origin === 'correction' && <div className="rv-cell-sub">{t('owner.plan.correctedOnSite')}</div>}
                     </td>
                     <td data-label="State">
                       <span className={`ow-pill ${s.tone}`}>{s.label}</span>

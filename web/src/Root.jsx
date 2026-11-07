@@ -4,6 +4,8 @@ import { Navigate, Route, Routes, useLocation } from 'react-router';
 import AccountPage from './admin/AccountPage.jsx';
 import AccountsPage from './admin/AccountsPage.jsx';
 import AuditPage from './admin/AuditPage.jsx';
+import LibraryPage from './admin/LibraryPage.jsx';
+import CorrectionPage from './owner/CorrectionPage.jsx';
 import StaffPage from './admin/StaffPage.jsx';
 import App from './App.jsx';
 import AppLinkPage from './lib/AppLinkPage.jsx';
@@ -57,6 +59,7 @@ function ShareRoute() {
  *   /plans/:id/walkthrough        the 3D walkthrough (VIEW)
  *   /review, /review/versions/:id reviewer queue and editor (REV)
  *   /admin, /admin/accounts/:id,
+ *   /admin/library                the equipment library and its manufacturers
  *   /admin/staff, /admin/audit    accounts, invites, staff roles and the
  *                                 audit log (ACC-05..07, B-09)
  */
@@ -72,7 +75,7 @@ export default function Root() {
         <Route
           path="/plans/:planId/walkthrough"
           element={
-            <RequireRole roles={ROLES.customer}>
+            <RequireRole roles={ROLES.plans}>
               <WalkthroughPage />
             </RequireRole>
           }
@@ -95,15 +98,23 @@ export default function Root() {
           <Route
             path="/plans"
             element={
-              <RequireRole roles={ROLES.customer}>
+              <RequireRole roles={ROLES.plans}>
                 <PlansPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/plans/:planId/correct"
+            element={
+              <RequireRole roles={ROLES.correct}>
+                <CorrectionPage />
               </RequireRole>
             }
           />
           <Route
             path="/plans/:planId"
             element={
-              <RequireRole roles={ROLES.customer}>
+              <RequireRole roles={ROLES.plans}>
                 <PlanPage />
               </RequireRole>
             }
@@ -161,6 +172,14 @@ export default function Root() {
             element={
               <RequireRole roles={ROLES.admin}>
                 <StaffPage />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/admin/library"
+            element={
+              <RequireRole roles={ROLES.admin}>
+                <LibraryPage />
               </RequireRole>
             }
           />

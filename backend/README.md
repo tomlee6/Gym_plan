@@ -105,6 +105,7 @@ at once.
 | `modules/captures.js`      | `/v1/captures`     | Scan and drawing uploads (`mobile/docs/upload-api.md`), plan reading |
 | `modules/review.js`        | `/v1/review`       | Queue, editor save, claim/release, approve, reject, revise          |
 | `modules/admin.js`         | `/v1/admin`        | Accounts, users, quota, data removal, audit log, reviewer time      |
+| `modules/equipment-library.js` | `/v1/equipment-library`, `/v1/admin` | The equipment library and its manufacturers (migration 006) |
 | `modules/share.js`         | `/v1/share`        | Resolves a share link (no sign-in)                                  |
 | `modules/local-storage.js` | `/storage/local`   | Part uploads and signed downloads when `STORAGE_DRIVER=local`       |
 
@@ -190,6 +191,41 @@ reading and puts the version in the reviewer queue.
   `GET /v1/admin/audit.csv` — the audit log (ACC-06). CSV cells that could
   start a spreadsheet formula are escaped.
 - `GET /v1/admin/reviewers` — each reviewer's weekly median over 8 weeks.
+
+### Corrections from site (installers)
+
+An account member may be an `installer` (migration 007): they see the
+account's plans and walkthroughs but cannot scan, upload or share.
+
+- `POST /v1/plans/:planId/corrections` `{basedOnVersionId, plan, note}` —
+  owners and installers. The corrected plan becomes the plan's next version
+  (`origin: 'correction'`), waiting in the reviewer queue with the note as an
+  open `site_correction` flag. The approved version stays live until the
+  correction is approved; a rejected one changes nothing. One may wait at a
+  time, it must be based on the current approved version, and it does not
+  count against the monthly quota. Reviewers see `correction: {note, by}` on
+  the version.
+
+Room names from the phone (migration 008): a capture's `roomNames` (one per
+room the scan found, in its order) name the plan's spaces when it is read.
+
+### Equipment library
+
+The machines the plan editor offers for a fit-out, with sizes and safe floor
+clearances (`migrations/006_equipment_library.sql`, seeded with the list that
+used to live in `shared/plan/library.js`, which stays as the editor's fallback).
+
+- `GET /v1/equipment-library` — anyone signed in: active machines whose maker
+  (if any) is active, and the active makers.
+- `GET/POST /v1/admin/equipment-library`, `PATCH …/:id` — admins: list every
+  row, add one, edit one or archive/restore it (`{status}`). Rows are never
+  deleted; a plan keeps its own copy of what was placed.
+- `POST /v1/admin/equipment-library/import` `{manufacturer?, dryRun?, rows}` —
+  up to 2000 rows, matched on (manufacturer, key): new keys are added, known
+  ones updated, so the same catalogue can be imported again. `dryRun` reports
+  what would happen without writing. The web admin reads CSV or JSON into it.
+- `GET/POST /v1/admin/equipment-manufacturers`, `PATCH …/:id` — the makers.
+  Archiving a maker takes its machines out of the editor until restored.
 
 ### Share links
 

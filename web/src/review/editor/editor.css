@@ -1374,3 +1374,114 @@
     aspect-ratio: 4 / 3;
   }
 }
+
+/* The equipment library: machines to drag onto the plan. */
+.ed-library-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ed-library-toggle h2::before {
+  content: "▸ ";
+  color: var(--muted);
+}
+
+.ed-library-toggle[aria-expanded="true"] h2::before {
+  content: "▾ ";
+}
+
+.ed-library-body > * + * {
+  margin-top: 10px;
+}
+
+.ed-library-group h3 {
+  margin: 12px 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ed-library-item {
+  cursor: grab;
+}
+
+.ed-library-item:active {
+  cursor: grabbing;
+}
+
+/* While drawing: finish or cancel without a keyboard (tablets). */
+.ed-draft-actions {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(7, 13, 21, 0.9);
+  border: 1px solid var(--line);
+}
+
+/* Fingers: wider wall hit lines and full-size buttons. */
+@media (pointer: coarse) {
+  .ed-hit {
+    stroke-width: 32;
+  }
+
+  .ed-toolbar .rv-icon-button,
+  .ed-tool {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .rv-button.small {
+    min-height: 40px;
+  }
+}
+
+/* The fit-out schedule. */
+.ed-fitout-counts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+}
+
+.ed-fitout-counts li {
+  display: flex;
+  justify-content: space-between;
+}
+
+.ed-fitout-line {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ed-fitout-warning {
+  display: block;
+  color: #ff9d57;
+}
+
+/* Correcting a plan from site. */
+.ed-correction-help {
+  margin: 0;
+  padding: 8px 24px;
+}

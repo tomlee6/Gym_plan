@@ -269,7 +269,7 @@ describe('spaces', () => {
     const { p, space } = withSpace();
     const { change } = show({ plan: p, selection: space.id });
     expect(screen.getByRole('region', { name: 'Selected Space' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Space name')).toHaveValue('Gym floor');
+    expect(screen.getByLabelText('Room name')).toHaveValue('Gym floor');
 
     fireEvent.change(screen.getByLabelText('Space kind'), { target: { value: 'studio' } });
     expect(change.mock.calls.at(-1)[0].spaces[0].kind).toBe('studio');
@@ -277,9 +277,24 @@ describe('spaces', () => {
     expect(change.mock.calls.at(-1)[0].spaces[0].floorFinish).toBe('timber');
     blur(screen.getByLabelText('Space ceiling height'), '4.2');
     expect(change.mock.calls.at(-1)[0].spaces[0].ceilingHeightM).toBe(4.2);
-    blur(screen.getByLabelText('Space name'), 'Free weights');
+    blur(screen.getByLabelText('Room name'), '  Free   weights ');
     expect(change.mock.calls.at(-1)[0].spaces[0].name).toBe('Free weights');
     expect(screen.getByText(/Use the ceiling zone tool/)).toBeInTheDocument();
+  });
+
+  it('will not save a room name that is blank or another room’s', () => {
+    const { p, space } = withSpace();
+    p.spaces.push({ ...space, id: 's2', name: 'Cardio', points: [[0, 0], [1, 0], [1, 1]] });
+    const { change } = show({ plan: p, selection: space.id });
+    const calls = change.mock.calls.length;
+
+    blur(screen.getByLabelText('Room name'), 'cardio');
+    expect(screen.getByRole('alert')).toHaveTextContent('Another room is already called “Cardio”.');
+    expect(change.mock.calls.length).toBe(calls);
+
+    blur(screen.getByLabelText('Room name'), '   ');
+    expect(screen.getByRole('alert')).toHaveTextContent('Give the room a name.');
+    expect(change.mock.calls.length).toBe(calls);
   });
 
   it('edits a ceiling zone’s height inside its space', () => {

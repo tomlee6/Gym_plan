@@ -75,7 +75,7 @@ export function invited({ email, accountName, role, expiresAt }) {
       to: email,
       subject: `You have been invited to ${accountName} on Flex Gym Scan`,
       text:
-        `You have been invited to ${accountName} as ${role === 'owner' ? 'an owner' : 'a surveyor'}.\n\n` +
+        `You have been invited to ${accountName} as ${{ owner: 'an owner', surveyor: 'a surveyor', installer: 'an installer' }[role] ?? 'a member'}.\n\n` +
         `Sign in with this email address (${email}) at\n` +
         `${config.publicWebUrl}/login\n\nor in the Flex Gym Scan iPhone app. ` +
         (config.hub.driver === 'cognito'

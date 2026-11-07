@@ -246,7 +246,8 @@ export function distToSeg(p, a, b) {
  *   ceiling, floor: [[x, y]], floorFromWalls: bool,
  *   walls:   [{ wallId, a, b, bottom, top, mirror, kind }],   // kind: wall | head | sill
  *   columns: [{ x, y, w, d, angle, height }],
- *   objects: [{ x, y, w, d, angle, height, category }],
+ *   objects: [{ x, y, w, d, angle, height, category, type }],
+ *   spaces:  [{ points, finish, kind }],                     // floor finish per room
  *   stairs:  [{ x, y, size, corners }],
  *   tags:    [{ type, x, y, heightM }],
  *   zones:   [{ points }],
@@ -282,7 +283,13 @@ export function buildModel(plan) {
     angle: o.angle ?? 0,
     height: Math.min(ceiling, o.heightM > 0 ? o.heightM : DEFAULT_OBJECT_HEIGHT_M),
     category: o.category ?? 'object',
+    // What kind of machine, for its colour in the 3D (null: not a named machine).
+    type: o.equipment ? (o.equipment.type ?? 'equipment') : null,
   }));
+  // Each room's floor, with its finish, so the 3D floor matches the room.
+  const spaces = (plan.spaces ?? [])
+    .filter((sp) => Array.isArray(sp.points) && sp.points.length >= 3)
+    .map((sp) => ({ points: sp.points, finish: sp.floorFinish ?? null, kind: sp.kind ?? null }));
   const stairs = (plan.tags ?? [])
     .filter((t) => t.type === 'stair')
     .map((t) => ({
@@ -315,6 +322,7 @@ export function buildModel(plan) {
     walls: pieces,
     columns,
     objects,
+    spaces,
     stairs,
     tags: (plan.tags ?? []).map((t) => ({ type: t.type, x: t.x, y: t.y, heightM: t.heightM ?? null })),
     zones: (plan.zones ?? []).map((z) => ({ points: z.points })),

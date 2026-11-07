@@ -524,3 +524,41 @@
     transform: rotate(360deg);
   }
 }
+
+/* Quick navigation: click the minimap, or pick a place to go to. */
+.wt-minimap-map {
+  cursor: crosshair;
+}
+
+.wt-blocked {
+  top: 12px;
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+}
+
+.wt-goto {
+  position: relative;
+  padding-right: 10px;
+}
+
+.wt-goto select {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  max-width: 170px;
+  padding-right: 4px;
+  cursor: pointer;
+}
+
+.wt-goto select:focus-visible {
+  outline: 2px solid var(--wt-accent);
+  outline-offset: 2px;
+}
+
+.wt-goto option,
+.wt-goto optgroup {
+  color: #0b1218;
+}

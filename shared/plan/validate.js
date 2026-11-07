@@ -16,6 +16,7 @@ import {
   OPENING_TYPES,
   outline,
   SPACE_KINDS,
+  spaceNameProblem,
   SUPPORTED_FORMATS,
   VOID_KINDS,
   WALL_KINDS,
@@ -300,6 +301,8 @@ function validateV3(plan, floor, push) {
 
   for (const s of spaces) {
     const label = s.name || 'A space';
+    const nameProblem = spaceNameProblem(s.name, spaces, s.id);
+    if (nameProblem) push('space_name', `${s.name ? `${s.name}: ` : ''}${nameProblem}`, [s.id]);
     if (!isPolygon(s.points)) {
       push('space_shape', `${label} needs at least three corners.`, [s.id]);
       continue;

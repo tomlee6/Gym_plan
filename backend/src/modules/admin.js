@@ -47,7 +47,7 @@ const email = z
   .trim()
   .toLowerCase()
   .pipe(z.email({ message: 'Enter a valid email address.' }).max(254));
-const memberRole = z.enum(['owner', 'surveyor']);
+const memberRole = z.enum(['owner', 'surveyor', 'installer']);
 
 const actor = (req) => ({ id: req.user.id });
 

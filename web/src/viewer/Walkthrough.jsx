@@ -7,6 +7,7 @@ import { isShown, loadMachineModels, machinePlacements } from './machines.js';
 import { distance3, move } from './movement.js';
 import { drawMinimap, PlanSvg } from './plan2d.jsx';
 import { createScene } from './scene.js';
+import { glideAt, GLIDE_S, minimapToPlan, spotsOf, standAt } from './teleport.js';
 import './viewer.css';
 
 const DISCLAIMER =
@@ -77,6 +78,10 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
   const [measuring, setMeasuring] = useState(false);
   const [measured, setMeasured] = useState(null);
   const [share, setShare] = useState(null);
+  // Quick navigation: the rooms and machines to jump to, and whether the
+  // last spot picked was outside the building (shown for a moment).
+  const spots = useMemo(() => spotsOf(plan, model), [plan, model]);
+  const [blocked, setBlocked] = useState(false);
 
   const stage = useRef(null);
   const canvas = useRef(null);
@@ -103,6 +108,8 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
       // Outside view: round the middle of the building, from the south-east, up a little.
       orbit: { yaw: -Math.PI / 4, pitch: 0.55, dist: 1.6 * Math.max(model.bounds.maxX - model.bounds.minX, model.bounds.maxY - model.bounds.minY, 8) },
       roofOff: false,
+      // A jump in progress: { from, to, t0 }; see goTo.
+      glide: null,
     };
   }
   useEffect(() => {
@@ -226,6 +233,20 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
       }
       built.setMeasure(s.measure.a, s.measure.b);
     }
+    // Double-click the floor (walking or from overhead) to go there.
+    function onDblClick(e) {
+      if (s.measuring || s.view === 'outside') return;
+      const rect = el.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      raycaster.setFromCamera(ndc, camera());
+      const hit = raycaster
+        .intersectObjects(built.raycastables, false)
+        .sort((a, b) => a.distance - b.distance)
+        .find((h) => isShown(h.object));
+      // Only the floor: a wall or a machine is not somewhere to stand.
+      if (!hit || hit.point.y > 0.15) return;
+      goToRef.current?.([hit.point.x, hit.point.z]);
+    }
     function onWheel(e) {
       if (s.view === 'outside') {
         e.preventDefault();
@@ -243,6 +264,7 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
     el.addEventListener('pointerup', onUp);
     el.addEventListener('pointercancel', onUp);
     el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('dblclick', onDblClick);
 
     // Keyboard: WASD or arrows to walk and turn, Shift to go faster.
     const typing = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
@@ -276,7 +298,13 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
       last = now;
       const k = s.keys;
 
-      if (s.view === 'walk') {
+      if (s.glide) {
+        const t = (now - s.glide.t0) / 1000 / GLIDE_S;
+        const at = glideAt(s.glide.from, s.glide.to, t);
+        s.pos = at.pos;
+        s.yaw = at.yaw;
+        if (t >= 1) s.glide = null;
+      } else if (s.view === 'walk') {
         const turn = (k.has('arrowleft') || k.has('q') ? -1 : 0) + (k.has('arrowright') || k.has('e') ? 1 : 0);
         s.yaw += turn * TURN_SPEED * dt;
         const forward = (k.has('w') || k.has('arrowup') ? 1 : 0) - (k.has('s') || k.has('arrowdown') ? 1 : 0) + s.joy.y;
@@ -350,6 +378,7 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onUp);
       el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('dblclick', onDblClick);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKey);
       window.removeEventListener('blur', clearKeys);
@@ -358,6 +387,46 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
       renderer.dispose();
     };
   }, [model, webgl, loadingModel, ready]);
+
+  /**
+   * Jumps to a place: a spot from the "Go to" menu ({ x, y, heading }) or a
+   * point picked on the minimap or the floor ([x, y], keeping the facing).
+   * The camera glides there and you carry on walking from it.
+   */
+  const goTo = useCallback((target) => {
+    const s = sim.current;
+    const want = Array.isArray(target) ? target : [target.x, target.y];
+    const at = standAt(s.model, want);
+    if (!at) {
+      setBlocked(true);
+      return;
+    }
+    setBlocked(false);
+    s.keys.clear();
+    s.glide = {
+      from: { pos: s.pos, yaw: s.yaw },
+      to: { pos: at, yaw: Array.isArray(target) ? null : target.heading },
+      t0: performance.now(),
+    };
+    s.pitch = 0;
+    setView('walk');
+  }, []);
+  const goToRef = useRef(goTo);
+  goToRef.current = goTo;
+
+  useEffect(() => {
+    if (!blocked) return undefined;
+    const t = setTimeout(() => setBlocked(false), 2500);
+    return () => clearTimeout(t);
+  }, [blocked]);
+
+  function onMinimapClick(e) {
+    const r = e.currentTarget.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const px = ((e.clientX - r.left) / r.width) * MINIMAP_W;
+    const py = ((e.clientY - r.top) / r.height) * MINIMAP_H;
+    goTo(minimapToPlan(sim.current.model.bounds, MINIMAP_W, MINIMAP_H, px, py));
+  }
 
   // Measure mode on and off; turning it on starts a fresh measurement.
   const toggleMeasure = useCallback(() => {
@@ -486,23 +555,32 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
               ref={canvas}
               className="wt-canvas"
               tabIndex={0}
-              aria-label={`3D walkthrough of ${title}. Use W A S D or the arrow keys to walk, and drag to look around.`}
+              aria-label={`3D walkthrough of ${title}. Use W A S D or the arrow keys to walk, and drag to look around. Double-click the floor, or use Go to, to jump somewhere.`}
             />
             <div className="wt-label" ref={label} aria-hidden="true">
               {measured?.metres != null && `${measured.metres.toFixed(2)} m`}
             </div>
 
             <aside className="wt-panel wt-minimap" aria-label="Minimap">
-              <div className="wt-eyebrow">MINIMAP</div>
+              <div className="wt-eyebrow">MINIMAP · CLICK TO GO</div>
               <canvas
                 ref={minimap}
+                className="wt-minimap-map"
                 width={MINIMAP_W * 2}
                 height={MINIMAP_H * 2}
                 style={{ width: MINIMAP_W, height: MINIMAP_H }}
                 role="img"
-                aria-label="Minimap with your position and facing"
+                aria-label="Minimap with your position and facing. Click a spot to go there."
+                title="Click a spot to go there"
+                onClick={onMinimapClick}
               />
             </aside>
+
+            {blocked && (
+              <p className="wt-toast wt-blocked" role="status">
+                That spot is outside the building. Pick somewhere on the floor.
+              </p>
+            )}
 
             {(measuring || measured) && (
               <aside className="wt-panel wt-measure" aria-live="polite">
@@ -563,6 +641,8 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
                 </button>
               )}
               <span className="wt-sep" aria-hidden="true" />
+              <GoToMenu spots={spots} onGo={goTo} />
+              <span className="wt-sep" aria-hidden="true" />
               <button type="button" className={`wt-tool ${measuring ? 'on' : ''}`} aria-pressed={measuring} onClick={toggleMeasure}>
                 <RulerIcon />
                 Measure
@@ -594,6 +674,53 @@ export default function Walkthrough({ plan, modelUrl = null, machineModels = nul
         {meta && <span className="wt-meta">{meta}</span>}
       </footer>
     </div>
+  );
+}
+
+/**
+ * "Go to": the start, every room and every named machine. Picking one
+ * glides you there, facing into the room or at the machine.
+ */
+function GoToMenu({ spots, onGo }) {
+  if (spots.length < 2) return null;
+  const groups = ['Start', 'Rooms', 'Machines']
+    .map((g) => [g, spots.filter((s) => s.group === g)])
+    .filter(([, list]) => list.length);
+  return (
+    <label className="wt-tool wt-goto">
+      <PinIcon />
+      <select
+        aria-label="Go to a room or machine"
+        value=""
+        onChange={(e) => {
+          const spot = spots.find((s) => s.id === e.target.value);
+          if (spot) onGo(spot);
+          e.target.blur();
+        }}
+      >
+        <option value="" disabled>
+          Go to…
+        </option>
+        {groups.map(([group, list]) => (
+          <optgroup key={group} label={group}>
+            {list.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function PinIcon() {
+  return (
+    <svg {...icon}>
+      <path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z" />
+      <circle cx="12" cy="9.5" r="2.5" />
+    </svg>
   );
 }
 

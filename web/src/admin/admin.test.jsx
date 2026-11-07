@@ -253,7 +253,7 @@ describe('one account', () => {
     renderAt('/admin/accounts/acc_northgate');
     const card = await screen.findByRole('region', { name: /INVITES/ });
     expect(within(card).getByRole('list', { name: 'Open invites' })).toHaveTextContent('priya@northgate.example');
-    expect(within(card).getAllByRole('option').map((o) => o.value)).toEqual(['owner', 'surveyor']);
+    expect(within(card).getAllByRole('option').map((o) => o.value)).toEqual(['owner', 'surveyor', 'installer']);
 
     fireEvent.change(within(card).getByLabelText('Email'), { target: { value: 'priya@northgate.example' } });
     fireEvent.click(within(card).getByRole('button', { name: 'Send invite' }));

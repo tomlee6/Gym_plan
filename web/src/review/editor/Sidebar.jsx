@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import {
   dist,
   EQUIPMENT_TYPES,
   equipmentLabel,
+  MAX_SPACE_NAME,
+  spaceNameProblem,
   summary as summarise,
   TAG_TYPES,
+  tidySpaceName,
   wallAngleDeg,
   wallLength,
   wallName,
@@ -14,6 +17,8 @@ import {
 import { bytes, inputLabel, stamp, STATUS_LABELS, TAG_LABELS } from '../../lib/format.js';
 import { CheckIcon, DownloadIcon, FileIcon, TrashIcon } from '../../lib/icons.jsx';
 import { keyframeUrl, keyframesSeeing } from './keyframes.js';
+import EquipmentLibrary from './EquipmentLibrary.jsx';
+import FitOutSchedule from './FitOutSchedule.jsx';
 import { MachineModelPanel } from './MachineModel.jsx';
 import { clearanceToWall, nearestEquipment } from './measure.js';
 import {
@@ -101,8 +106,16 @@ export default function Sidebar({
   placing = null,
   onPlace,
   keyframes = null,
+  renameRequest = null,
+  onPlaceFromLibrary,
+  library = null,
 }) {
   const [tab, setTab] = useState('review');
+  // Double-clicking a room on the plan asks to rename it: show the panel
+  // with its name field, whichever tab was open.
+  useEffect(() => {
+    if (renameRequest) setTab('review');
+  }, [renameRequest]);
   const photos = v.files.filter((f) => f.kind === 'photo');
   const tabs = [
     ['review', 'Review'],
@@ -138,8 +151,18 @@ export default function Sidebar({
               onSelect={onSelect}
               history={history}
               keyframes={keyframes}
+              renameRequest={renameRequest}
             />
             <Unplaced v={v} plan={plan} readOnly={readOnly} placing={placing} onPlace={onPlace} />
+            <EquipmentLibrary
+              readOnly={readOnly}
+              placing={placing}
+              onPlace={onPlaceFromLibrary}
+              library={library?.items}
+              live={library?.live ?? false}
+              failed={library?.failed ?? false}
+            />
+            <FitOutSchedule plan={plan} onSelect={onSelect} library={library?.items} />
             <Flags plan={plan} readOnly={readOnly} onFocus={onFocus} history={history} />
             <Validation plan={plan} issues={issues} onFocus={onFocus} history={history} readOnly={readOnly} />
           </>
@@ -220,30 +243,64 @@ function KindSelect({ label, value, options, onChange, disabled, allowNone = fal
 }
 
 /** A text input that applies on Enter or blur, so typing a name is one undo step. */
-function TextField({ label, value, onCommit, disabled }) {
+/**
+ * A text field that saves when it loses focus or on Enter; Escape puts it
+ * back. `problem(text)` checks the text as it is typed: while it returns a
+ * message the field shows it and will not save. `focusKey` changing puts
+ * the cursor in the field with the text selected, ready to retype.
+ */
+function TextField({ label, value, onCommit, disabled, problem, tidy = (t) => t.trim(), maxLength, focusKey }) {
   const [text, setText] = useState(null);
+  const input = useRef(null);
   const shown = text ?? value ?? '';
+  const error = text !== null && problem ? problem(text) : null;
+  const errorId = useId();
+
+  useEffect(() => {
+    if (focusKey == null || disabled) return;
+    input.current?.focus();
+    input.current?.select();
+  }, [focusKey, disabled]);
+
   const commit = () => {
-    if (text !== null && text.trim() !== (value ?? '') && text.trim()) onCommit(text.trim());
+    // A name that does not check out stays in the field, with its message,
+    // until it is fixed or Escape puts the old one back.
+    if (error) return;
+    if (text !== null) {
+      const next = tidy(text);
+      if (next && next !== (value ?? '')) onCommit(next);
+    }
     setText(null);
   };
   return (
-    <label className="rv-field">
-      <span>{label}</span>
-      <input
-        value={shown}
-        disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            commit();
-            e.currentTarget.blur();
-          }
-          if (e.key === 'Escape') setText(null);
-        }}
-      />
-    </label>
+    <div className="rv-field">
+      <label className="rv-field">
+        <span>{label}</span>
+        <input
+          ref={input}
+          value={shown}
+          disabled={disabled}
+          maxLength={maxLength}
+          aria-invalid={error ? 'true' : undefined}
+          aria-describedby={error ? errorId : undefined}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              if (error) return;
+              commit();
+              e.currentTarget.blur();
+            }
+            if (e.key === 'Escape') setText(null);
+          }}
+        />
+      </label>
+      {error && (
+        <small id={errorId} className="rv-field-error" role="alert">
+          {error} Press Escape to keep “{value}”.
+        </small>
+      )}
+    </div>
   );
 }
 
@@ -464,7 +521,7 @@ function NumberField({ id, value, min, max, step = 0.01, suffix, onCommit, label
   );
 }
 
-function Inspector({ v, plan, selection, readOnly, onSelect, history, keyframes }) {
+function Inspector({ v, plan, selection, readOnly, onSelect, history, keyframes, renameRequest }) {
   const found = selection ? findElement(plan, selection) : null;
   if (!found) {
     return (
@@ -882,7 +939,17 @@ function Inspector({ v, plan, selection, readOnly, onSelect, history, keyframes 
 
       {kind === 'spaces' && (
         <>
-          <TextField label="Space name" value={el.name} disabled={ro} onCommit={(name) => set({ name })} />
+          <TextField
+            label="Room name"
+            value={el.name}
+            disabled={ro}
+            maxLength={MAX_SPACE_NAME + 20}
+            tidy={tidySpaceName}
+            problem={(text) => spaceNameProblem(text, plan.spaces, el.id)}
+            focusKey={renameRequest?.id === el.id ? renameRequest.n : null}
+            onCommit={(name) => set({ name })}
+          />
+          {!ro && <p className="muted small">Double-click a room on the plan to rename it.</p>}
           <KindSelect label="Space kind" value={el.kind} options={SPACE_KINDS} disabled={ro} onChange={(k) => k && set({ kind: k })} />
           <KindSelect
             label="Floor finish"
@@ -1323,6 +1390,7 @@ function History({ v }) {
             <strong>v{h.version}</strong>
             <span className={`rv-status ${h.status}`}>{STATUS_LABELS[h.status] ?? h.status}</span>
             {h.origin === 'revision' && <span className="rv-chip">Revision</span>}
+            {h.origin === 'correction' && <span className="rv-chip">Correction from site</span>}
           </div>
           <span className="small muted">
             {inputLabel(h.inputType)}

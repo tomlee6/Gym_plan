@@ -14,6 +14,7 @@ import 'services/profile_service.dart';
 import 'services/scan_backend.dart';
 import 'services/upload_queue.dart';
 import 'theme/app_theme.dart';
+import 'widgets/keyboard_dismiss.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -129,7 +130,7 @@ class _FlexGymScanAppState extends State<FlexGymScanApp> {
               maxScaleFactor: 1.2,
             ),
           ),
-          child: child ?? const SizedBox.shrink(),
+          child: dismissesKeyboard(child ?? const SizedBox.shrink()),
         );
       },
     );

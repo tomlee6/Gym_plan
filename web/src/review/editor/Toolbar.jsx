@@ -57,6 +57,9 @@ export default function Toolbar({
   zoom,
   onZoom,
   onFit,
+  rotation = 0,
+  onRotate,
+  onResetRotation,
   history,
   showSource,
   onShowSource,
@@ -152,6 +155,25 @@ export default function Toolbar({
             +<span className="sr-only">Zoom in</span>
           </button>
         </span>
+        {onRotate && (
+          <span className="ed-zoom" role="group" aria-label="Turn the plan">
+            <button type="button" className="rv-icon-button" onClick={() => onRotate(-15)} title="Turn left 15° ([). Shift+[ turns 90°.">
+              ⟲<span className="sr-only">Turn the plan left 15 degrees</span>
+            </button>
+            <button
+              type="button"
+              className="ed-zoom-value small"
+              onClick={onResetRotation}
+              disabled={!rotation}
+              title="Turn back to north up (\)"
+            >
+              {Math.round(rotation)}°<span className="sr-only">, turn back to north up</span>
+            </button>
+            <button type="button" className="rv-icon-button" onClick={() => onRotate(15)} title="Turn right 15° (]). Shift+] turns 90°.">
+              ⟳<span className="sr-only">Turn the plan right 15 degrees</span>
+            </button>
+          </span>
+        )}
       </div>
     </div>
   );
